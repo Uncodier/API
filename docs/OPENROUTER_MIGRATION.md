@@ -2,18 +2,18 @@
 
 ## Runtime direction
 
-OpenRouter handles text, agents, embeddings and video, without
+OpenRouter handles text, agents and embeddings, without
 Portkey in between. **Image generation, text-to-speech and transcription use Azure directly**,
 using existing server credentials; TTS requires its dedicated endpoint and key.
-The existing OpenAI SDK is reused for compatible OpenRouter endpoints; video uses
-its dedicated API. Gateway, model vendor and Azure deployment names are distinct.
+Platform video uses Gemini Omni directly; OpenRouter video is only for selected customer BYOK.
+The existing OpenAI SDK is reused for compatible OpenRouter endpoints. Gateway, model vendor and Azure deployment names are distinct.
 
 | Capability | Default / required selection |
 | --- | --- |
 | Chat and agent tools | `OPENROUTER_CHAT_MODEL`, default `openai/gpt-6.1-sol` |
 | Embeddings | `openai/text-embedding-3-small`, 1536 dimensions by default |
 | Image generation | Azure direct: `AZURE_OPENAI_IMAGE_DEPLOYMENT`, default `gpt-image-2.5-sunburst` |
-| Video generation | Explicit `OPENROUTER_VIDEO_MODEL` required |
+| Video generation | Platform Gemini: `GEMINI_VIDEO_MODEL`, default `gemini-omni-1.2-flash`; selected customer BYOK uses OpenRouter |
 | Text to speech | Azure direct: `AZURE_TTS_DEPLOYMENT`, default `tts-hd` |
 | Speech API version | `AZURE_TTS_API_VERSION`, default `2025-04-01-preview` |
 | Speech voice | `AZURE_TTS_VOICE`, default `alloy` (multilingual Azure OpenAI voice) |
@@ -84,7 +84,9 @@ different embedding model as an automatic fallback.
    `OPENROUTER_TTS_MODEL` / `OPENROUTER_TTS_VOICE`; they are ignored. Old
    `AI_TTS_PROVIDER` and `AI_TRANSCRIPTION_PROVIDER` environment settings cannot
    redirect traffic. See the direct TTS contract below.
-5. Select the video model explicitly after checking the current catalog and pricing.
+5. Configure `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` for platform video.
+   Optional `GEMINI_VIDEO_MODEL` defaults to `gemini-omni-1.2-flash`; verify current model availability and pricing.
+   OpenRouter video requires selected customer BYOK, never the platform OpenRouter key.
    For voice-note ingestion, set `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT=gpt-transcribe`
    on the existing Azure resource. Transcription does not use OpenRouter's catalog,
    credentials or `OPENROUTER_TRANSCRIPTION_MODEL`. See the direct transcription contract below.
@@ -280,9 +282,9 @@ response header and the direct Azure adapter identify the TTS provider.
 
 ## Errors, visibility and billing
 
-AI text and video requests use OpenRouter and reject
-direct provider overrides (`azure`, `gemini`, `vercel`); model vendors are selected
-with qualified OpenRouter IDs. Images, speech and transcription use Azure direct only.
+AI text uses OpenRouter. Video omits provider by default so the server resolves the authorized payer:
+Gemini for platform, OpenRouter only for selected customer BYOK. Explicit providers must match
+that routing; polling uses the retained job payer pin, not current selection. Images, speech and transcription use Azure direct only.
 Legacy provider keys/endpoints are not fallback credentials. Scrapybara supplies
 sandbox tools, not the hosted model for plan execution. Separate telephony
 platform integrations (Zavu/Vapi) are not replaced by this generation gateway.
@@ -294,7 +296,7 @@ Keep returned usage metadata and generation IDs when available. A missing cost
 is unknown, not a free generation. Azure usage is not represented as an invented
 dollar cost; image usage tokens are not currency. OpenRouter activity/logs provide
 visibility only for requests routed through OpenRouter, not direct Azure TTS,
-transcription or images. Product credits remain the application's existing pricing policy,
+transcription, images or Gemini video. Product credits remain the application's existing pricing policy,
 not a promise to bill customers exactly OpenRouter's invoice cost.
 Image asset metadata identifies `cost_scope=generation`: when one request returns
 multiple images, do not sum the repeated request cost across its assets.
@@ -306,6 +308,12 @@ The historical status key `ai_portkey` is retained for stored health-history
 compatibility, but its display label and probe now refer to OpenRouter.
 
 ## Asynchronous video
+
+Omit `provider` for server-authoritative routing. Platform Gemini Omni supports 3–15 seconds (default 8). Veo preview models were
+retired in October 2026; do not use them as a default. Exact 40 seconds cannot be generated in one
+shot: compose separate clips. Reference images guide appearance but do not guarantee branding
+fidelity. OpenRouter is accepted only for selected customer BYOK. Status probes report Gemini
+configuration or passive evidence; they never perform paid video generation.
 
 `POST /api/ai/video` with `site_id` and a prompt returns a retained local `job_id`
 and `status` (`pending`, `in_progress`, `completed`, `failed`). Empty `videos`

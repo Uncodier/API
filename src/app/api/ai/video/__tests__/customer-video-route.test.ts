@@ -19,7 +19,7 @@ jest.mock('@/lib/security/upstash-rest', () => ({ acquireLock: async () => ({ st
   releaseLock: jest.fn(), sha256: async () => 'site-hash' }));
 jest.mock('../customer-video', () => ({ prepareCustomerVideo: jest.fn() }));
 jest.mock('../customer-video-jobs', () => ({ startCustomerVideoJob: jest.fn() }));
-jest.mock('../provider-openrouter', () => ({ prepareOpenRouterVideo: jest.fn() }));
+jest.mock('../provider-gemini', () => ({ prepareGeminiVideo: jest.fn() }));
 jest.mock('../openrouter-jobs', () => ({ startVideoJob: jest.fn(), resumeVideoJob: jest.fn() }));
 jest.mock('@/lib/services/billing/CreditService', () => ({ CreditService: { PRICING: { VIDEO_GENERATION_MINUTE: 24 },
   validateCredits: jest.fn(), deductCredits: jest.fn() } }));
@@ -60,6 +60,19 @@ it('rejects tampered host tickets without customer or platform dispatch', async 
 it('requires a stable operation key before catalog/provider I/O', async () => {
   expect((await POST(await request({ key: '' }))).status).toBe(400);
   expect(prepareCustomerVideo).not.toHaveBeenCalled();
+});
+it('never switches selected BYOK video to platform Gemini', async () => {
+  const response = await POST(await request({ body: { provider: 'gemini' } }));
+  expect(response.status).toBe(400);
+  expect(prepareCustomerVideo).not.toHaveBeenCalled();
+  expect(startCustomerVideoJob).not.toHaveBeenCalled();
+  expect(startVideoJob).not.toHaveBeenCalled();
+});
+it('accepts explicit OpenRouter only with authorized customer selection', async () => {
+  const response = await POST(await request({ body: { provider: 'openrouter' } }));
+  expect(response.status).toBe(202);
+  expect(startCustomerVideoJob).toHaveBeenCalledWith(expect.objectContaining({ provider: 'openrouter' }), prepared, 'operation-1');
+  expect(CreditService.validateCredits).not.toHaveBeenCalled();
 });
 it.each([401, 403])('denies principal/site with %s before resolving customer selection', async status => {
   if (status === 401) jest.mocked(resolveToolRequestPrincipal).mockResolvedValue(null);

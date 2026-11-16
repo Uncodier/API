@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 afterAll(() => { global.fetch = originalFetch; process.env = originalEnv; });
 
-it.each(['azure', 'gemini', 'vercel'])('rejects direct provider %s without requests, including video polling', async provider => {
+it.each(['azure', 'vercel'])('rejects direct provider %s without requests, including video polling', async provider => {
   const params = { prompt: 'cat', site_id: 'site', provider, model: 'raw-deployment' } as any;
   expect(await VideoGenerationService.generateVideo({ ...params, job_id: randomUUID() })).toMatchObject({ success: false, error: 'Unsupported video provider' });
   expect(fetchMock).not.toHaveBeenCalled();
@@ -143,7 +143,7 @@ it('does not retry or use Gemini when either media API fails and does not expose
   expect(JSON.stringify({ image, video })).not.toContain(secret);
   expect(fetchMock).toHaveBeenCalledTimes(2);
   expect(JSON.parse(fetchMock.mock.calls[0][1].body).provider).toBe('azure');
-  expect(JSON.parse(fetchMock.mock.calls[1][1].body).provider).toBe('openrouter');
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty('provider');
 });
 
 it('retains pending video job ids and polls via GET instead of submitting again', async () => {
@@ -157,4 +157,49 @@ it('retains pending video job ids and polls via GET instead of submitting again'
   expect(fetchMock.mock.calls[1][1].method).toBe('GET');
   expect(fetchMock.mock.calls[1][1].body).toBeUndefined();
   expect(fetchMock.mock.calls[1][0].searchParams.get('job_id')).toBe(jobId);
+  expect(fetchMock.mock.calls[1][0].searchParams.has('provider')).toBe(false);
+});
+
+it('rejects explicit OpenRouter without trusted customer routing before dispatch', async () => {
+  expect(await VideoGenerationService.generateVideo({ prompt: 'cat', site_id: 'site', provider: 'openrouter' })).toMatchObject({ success: false, error: 'OpenRouter video requires authorized customer BYOK routing' });
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it.each([undefined, 'openrouter'] as const)('permits customer video routing without forcing default provider: %s', async provider => {
+  const executionRouting = { payer: 'customer' as const, siteId: 'site', connectionId: randomUUID(), policyVersion: 1, credentialVersion: 1 };
+  fetchMock.mockResolvedValueOnce(Response.json({ provider: 'openrouter', status: 'pending', job_id: randomUUID(), videos: [] }, { status: 202 }));
+  const result = await VideoGenerationService.generateVideo({ prompt: 'cat', site_id: 'site', provider, executionRouting, operationId: 'offline-video:step' });
+  expect(result).toMatchObject({ success: true, provider: 'openrouter', status: 'pending' });
+  const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+  expect(body.provider).toBe(provider);
+  expect(body).not.toHaveProperty('executionRouting');
+  expect(fetchMock.mock.calls[0][1].headers['Idempotency-Key']).toBe('offline-video:step');
+});
+
+it('accepts explicit Gemini and preserves actionable local Omni duration errors and response job_id', async () => {
+  const job_id = randomUUID();
+  fetchMock.mockResolvedValueOnce(Response.json({ error: 'Gemini Omni video duration_seconds must be a whole second from 3 to 15', job_id }, { status: 400 }));
+  const result = await VideoGenerationService.generateVideo({ prompt: 'cat', site_id: 'site', provider: 'gemini', duration_seconds: 40 });
+  expect(result).toMatchObject({ success: false, provider: 'gemini', job_id });
+  expect(result.error).toContain('Gemini Omni video duration_seconds must be a whole second from 3 to 15');
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body).provider).toBe('gemini');
+});
+
+it.each(['raw', 'prefixed', 'nested', 'oversized', 'malformed'])('never leaks untrusted video API errors: %s', async kind => {
+  const secret = randomBytes(32).toString('hex');
+  const username = randomBytes(12).toString('hex');
+  const password = randomBytes(24).toString('hex');
+  const url = new URL('https://example.invalid/video');
+  url.username = username; url.password = password; url.searchParams.set('token', secret);
+  const error = `${url} Authorization: Bearer ${secret}`;
+  const body = kind === 'raw' ? JSON.stringify({ error })
+    : kind === 'prefixed' ? JSON.stringify({ error: `Gemini Omni video duration_seconds must be a whole second from 3 to 15 ${error}` })
+    : kind === 'nested' ? JSON.stringify({ error: { message: error }, job_id: secret })
+    : kind === 'oversized' ? JSON.stringify({ error: 'Gemini Omni video duration_seconds must be a whole second from 3 to 15', details: error + 'x'.repeat(16 * 1024) })
+    : `{${error}`;
+  fetchMock.mockResolvedValueOnce(new Response(body, { status: 422 }));
+  const result = await VideoGenerationService.generateVideo({ prompt: 'cat', site_id: 'site' });
+  expect(result.error).toBe('Video API request failed (422); retry status only if a job_id exists');
+  for (const sensitive of [secret, username, password]) expect(JSON.stringify(result)).not.toContain(sensitive);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });

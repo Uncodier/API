@@ -70,7 +70,7 @@ Before you begin, ensure you have the following installed:
    - `SERVICE_API_KEY` - Internal API key for service-to-service communication
    - `CRON_SECRET` - Bearer secret used by Vercel Cron
    - `ENCRYPTION_KEY` - 32-byte encryption key for API keys
-   - `OPENROUTER_API_KEY` for chat, embeddings and video through OpenRouter; transcription uses direct Azure credentials and `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT`
+   - `OPENROUTER_API_KEY` for chat and embeddings through OpenRouter; transcription uses direct Azure credentials and `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT`
    - `AZURE_TTS_ENDPOINT` / `AZURE_TTS_API_KEY` for direct Azure text-to-speech, using the existing dedicated resource credentials
     - Azure endpoint/key credentials and an existing reasoning-enabled deployment for Bing web search; see [Azure Bing web search](#azure-bing-web-search) for pair and deployment precedence
 
@@ -183,12 +183,14 @@ Key environment variables (see `src/config/env.example` for complete list):
 - `ENCRYPTION_KEY` - 32-byte encryption key
 
 ### AI Providers
-- `OPENROUTER_API_KEY` - Gateway key for chat, model tools, embeddings and video (not web search, images, TTS or transcription)
+- `OPENROUTER_API_KEY` - Gateway key for chat, model tools and embeddings (not platform video, web search, images, TTS or transcription)
 - `OPENROUTER_CHAT_MODEL` - Defaults to `openai/gpt-6.1-sol`
 - `AZURE_OPENAI_IMAGE_DEPLOYMENT` - Direct Azure image deployment, default `gpt-image-2.5-sunburst`
 - `MICROSOFT_AZURE_OPENAI_ENDPOINT` / `MICROSOFT_AZURE_OPENAI_API_KEY` - Existing Azure resource credentials for images; optional dedicated `AZURE_OPENAI_IMAGE_ENDPOINT` / `AZURE_OPENAI_IMAGE_API_KEY`
 - `AZURE_OPENAI_IMAGE_API_VERSION` - Default `preview` on `/openai/v1/images`; separate from the chat API version
-- `OPENROUTER_VIDEO_MODEL` - Explicit video model selection required
+- `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` - Platform Gemini video credentials
+- `GEMINI_VIDEO_MODEL` - Platform video model (default `gemini-omni-1.2-flash`); verify current account availability
+- Video provider defaults are delegated to authorized payer routing: Gemini for platform, OpenRouter only for selected customer BYOK. Gemini Omni durations are 3–15 seconds (default 8). Exact 40 seconds requires composing clips; reference branding is not guaranteed.
 - `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT` - Required direct Azure transcription deployment; existing deployment is `gpt-transcribe`
 - `AZURE_OPENAI_TRANSCRIPTION_API_VERSION` - Default `2024-10-21`; independent of the chat API version
 - Transcription reuses `MICROSOFT_AZURE_OPENAI_ENDPOINT` / `MICROSOFT_AZURE_OPENAI_API_KEY` (or generic `AZURE_OPENAI_*` credentials); optional dedicated `AZURE_OPENAI_TRANSCRIPTION_ENDPOINT` / `AZURE_OPENAI_TRANSCRIPTION_API_KEY` take precedence

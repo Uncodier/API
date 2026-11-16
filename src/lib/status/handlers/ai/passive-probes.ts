@@ -25,8 +25,8 @@ export function getImageObservationKey(deployment: string): string {
   return modelKey('ai_image_azure', deployment);
 }
 
-export function getVideoObservationKey(model: string): string {
-  return modelKey('ai_video_openrouter', model);
+export function getVideoObservationKey(model: string, provider: 'gemini' | 'openrouter' = 'gemini'): string {
+  return modelKey(`ai_video_${provider}`, model);
 }
 
 /** Read evidence from real requests only; configuration is still required. */

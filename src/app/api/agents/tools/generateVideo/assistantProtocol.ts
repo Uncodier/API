@@ -11,7 +11,7 @@ import type { UbuntuInstance } from 'scrapybara';
 
 export interface GenerateVideoToolParams {
   prompt: string;
-  provider?: 'openrouter';
+  provider?: 'gemini' | 'openrouter';
   duration_seconds?: number;
   duration?: number;
   aspect_ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
@@ -33,7 +33,7 @@ export interface GenerateVideoToolParams {
 export function generateVideoTool(site_id: string, instance_id?: string) {
   return {
     name: 'generate_video',
-    description: 'Submit or poll asynchronous OpenRouter video generation. Requires an explicitly configured video model. Return pending job_id to poll; never claim completion while pending. Videos are automatically saved to storage and can be used in conversations or content.',
+    description: 'Submit or poll asynchronous video generation. Omit provider to use authorized payer routing: Gemini for platform, OpenRouter only for selected customer BYOK. Current Gemini Omni supports 3–15 seconds (default 8). Exact 40 seconds cannot be generated in one shot; compose separate clips. Reference branding is guidance, not guaranteed fidelity. Return pending job_id to poll; never claim completion while pending. Videos are automatically saved to storage and can be used in conversations or content.',
     parameters: {
       type: 'object',
       properties: {
@@ -43,20 +43,20 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
         },
         provider: {
           type: 'string',
-          enum: ['openrouter'],
-          description: 'OpenRouter is the only supported provider; no direct provider fallback.'
+          enum: ['gemini', 'openrouter'],
+          description: 'Omit to delegate authorized payer routing. Gemini is platform; OpenRouter is only for selected customer BYOK, never a platform fallback.'
         },
         duration_seconds: {
           type: 'number',
           minimum: 1,
           maximum: 60,
-          description: 'Desired duration of the video in seconds. Must be supported by the selected model; defaults to 4 seconds. No OpenRouter duration coercion.'
+          description: 'Current Gemini Omni supports 3–15 seconds, default 8. Exact 40 seconds needs separately composed clips, not one-shot generation. BYOK durations depend on selected model.'
         },
         duration: {
           type: 'number',
           minimum: 1,
           maximum: 60,
-          description: 'Desired duration of the video in seconds.'
+          description: 'Alias of duration_seconds: Omni 3–15, default 8; exact 40 seconds cannot be one-shot.'
         },
         aspect_ratio: {
           type: 'string',
@@ -68,7 +68,7 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
           items: {
             type: 'string'
           },
-          description: 'Array of image URLs (up to 3) to use as reference/context for generation. IMPORTANT: If there are Image URLs for reference provided in the context, you MUST include them here as strings.'
+          description: 'Array of image URLs (up to 3) to guide generation; Branding fidelity is not guaranteed. IMPORTANT: If there are Image URLs for reference provided in the context, you MUST include them here as strings.'
         },
         first_frame_url: {
           type: 'string',
@@ -87,13 +87,13 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
         resolution: { type: 'string', description: 'Model-supported resolution, e.g. 720p or 1080p.' },
         model: {
           type: 'string',
-          description: 'OpenRouter model override; OPENROUTER_VIDEO_MODEL must be configured. No implicit Sora Pro substitution.'
+          description: 'Optional Gemini video model override for platform, or the selected customer BYOK OpenRouter video model. No provider or payer fallback.'
         }
       },
       required: ['prompt']
     },
     execute: async (args: GenerateVideoToolParams) => {
-      if (args.provider !== undefined && args.provider !== 'openrouter') throw new Error('Unsupported video provider');
+      if (args.provider !== undefined && args.provider !== 'openrouter' && args.provider !== 'gemini') throw new Error('Unsupported video provider');
       try {
         console.log(`[GenerateVideoTool] 🎬 Executing video generation`);
         // Authorization and billing belong exclusively to the local media API.
@@ -116,7 +116,7 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
           prompt: args.prompt,
           site_id: site_id,
           instance_id: instance_id,
-          provider: args.provider ?? 'openrouter',
+          ...(args.provider !== undefined ? { provider: args.provider } : {}),
           duration_seconds: actualDuration,
           aspect_ratio: args.aspect_ratio,
           reference_images: args.reference_images,
@@ -235,23 +235,23 @@ export function createGenerateVideoTool(site_id: string) {
 export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: string) {
   return tool({
     name: 'generate_video',
-    description: 'Submit or poll asynchronous OpenRouter video generation. Requires an explicitly configured video model. Return pending job_id to poll; never claim completion while pending. Videos are automatically saved to storage and can be used in conversations or content.',
+    description: 'Submit or poll asynchronous video generation. Omit provider to use authorized payer routing: Gemini for platform, OpenRouter only for selected customer BYOK. Current Gemini Omni supports 3–15 seconds (default 8). Exact 40 seconds cannot be generated in one shot; compose separate clips. Reference branding is guidance, not guaranteed fidelity. Return pending job_id to poll; never claim completion while pending. Videos are automatically saved to storage and can be used in conversations or content.',
     parameters: z.object({
       prompt: z.string().describe('Detailed text description of the video to generate. Be specific about style, colors, composition, movement, and any important details.'),
-      provider: z.enum(['openrouter']).optional().describe('OpenRouter is the only supported provider; no direct provider fallback.'),
-      duration_seconds: z.number().min(1).max(60).optional().describe('Desired duration of the video in seconds. Must be supported by the selected model; defaults to 4 seconds. No OpenRouter duration coercion.'),
-      duration: z.number().min(1).max(60).optional().describe('Desired duration of the video in seconds.'),
+      provider: z.enum(['gemini', 'openrouter']).optional().describe('Omit to delegate authorized payer routing. Gemini is platform; OpenRouter is only for selected customer BYOK, never a platform fallback.'),
+      duration_seconds: z.number().min(1).max(60).optional().describe('Current Gemini Omni supports 3–15 seconds, default 8. Exact 40 seconds needs separately composed clips, not one-shot generation. BYOK durations depend on selected model.'),
+      duration: z.number().min(1).max(60).optional().describe('Alias of duration_seconds: Omni 3–15, default 8; exact 40 seconds cannot be one-shot.'),
       aspect_ratio: z.enum(['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']).optional().describe('Aspect ratio of the generated video. Must be supported by the selected model; defaults to 16:9.'),
-      reference_images: z.array(z.string()).optional().describe('Array of image URLs (up to 3) to use as reference/context for generation. IMPORTANT: If there are Image URLs for reference provided in the context, you MUST include them here as strings.'),
+      reference_images: z.array(z.string()).optional().describe('Array of image URLs (up to 3) to guide generation; Branding fidelity is not guaranteed. IMPORTANT: If there are Image URLs for reference provided in the context, you MUST include them here as strings.'),
       first_frame_url: z.string().optional().describe('Authoritative first frame URL for image-to-video generation.'),
       last_frame_url: z.string().optional().describe('Last frame URL, only when the selected model advertises last_frame support.'),
       quality: z.enum(['preview', 'standard', 'pro']).optional().describe('Deprecated and rejected. Omit quality and use resolution instead.'),
       job_id: z.string().uuid().optional(),
       resolution: z.string().optional(),
-      model: z.string().optional().describe('OpenRouter model override; OPENROUTER_VIDEO_MODEL must be configured. No implicit Sora Pro substitution.')
+      model: z.string().optional().describe('Optional Gemini video model override for platform, or the selected customer BYOK OpenRouter video model. No provider or payer fallback.')
     }),
     execute: async (args) => {
-      if (args.provider !== undefined && args.provider !== 'openrouter') throw new Error('Unsupported video provider');
+      if (args.provider !== undefined && args.provider !== 'openrouter' && args.provider !== 'gemini') throw new Error('Unsupported video provider');
       try {
         console.log(`[GenerateVideoTool-Scrapybara] 🎬 Executing video generation`);
         // Authorization and billing belong exclusively to the local media API.
@@ -273,7 +273,7 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
         const serviceParams: VideoGenerationParams = {
           prompt: args.prompt,
           site_id: site_id,
-          provider: args.provider ?? 'openrouter',
+          ...(args.provider !== undefined ? { provider: args.provider } : {}),
           duration_seconds: actualDuration,
           aspect_ratio: args.aspect_ratio,
           reference_images: args.reference_images,

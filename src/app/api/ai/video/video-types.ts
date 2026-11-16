@@ -1,4 +1,4 @@
-export type VideoProvider = 'openrouter';
+export type VideoProvider = 'gemini' | 'openrouter';
 export type VideoAspectRatio =
   | '1:1'
   | '4:3'
@@ -30,6 +30,8 @@ export interface VideoGenerationResult {
   status?: 'pending' | 'in_progress' | 'completed' | 'failed';
   job_id?: string;
   error?: string;
+  /** Confirmed rejection before provider acceptance; never inferred from an error string. */
+  submission_rejected?: boolean;
   videos: Array<{ url: string; mimeType: string }>;
   metadata: {
     model: string;

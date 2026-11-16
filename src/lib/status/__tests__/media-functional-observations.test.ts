@@ -15,8 +15,9 @@ jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn(), getLate
 jest.mock('@/lib/security/upstash-rest', () => ({ sha256: jest.fn(), getCachedJson: jest.fn(), setCachedJson: jest.fn() }));
 jest.mock('@/app/api/ai/image/image-storage', () => ({ persistGeneratedImage: jest.fn() }));
 jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn() }));
-jest.mock('@/app/api/ai/video/provider-openrouter', () => ({
-  submitOpenRouterVideo: jest.fn(), pollOpenRouterVideo: jest.fn(), downloadOpenRouterVideo: jest.fn(),
+jest.mock('@/app/api/ai/video/provider-gemini', () => ({
+  getGeminiVideoModel: () => process.env.GEMINI_VIDEO_MODEL?.trim() || 'gemini-omni-1.2-flash',
+  submitGeminiVideo: jest.fn(), pollGeminiVideo: jest.fn(), downloadGeminiVideo: jest.fn(),
 }));
 jest.mock('@/app/api/ai/video/video-storage', () => ({ persistGeneratedVideo: jest.fn() }));
 jest.mock('@/lib/services/billing/CreditService', () => ({
@@ -32,7 +33,7 @@ import { generateWithAzure } from '@/app/api/ai/image/provider-azure';
 import { persistGeneratedImage } from '@/app/api/ai/image/image-storage';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { startVideoJob, resumeVideoJob } from '@/app/api/ai/video/openrouter-jobs';
-import { submitOpenRouterVideo, pollOpenRouterVideo, downloadOpenRouterVideo } from '@/app/api/ai/video/provider-openrouter';
+import { submitGeminiVideo, pollGeminiVideo, downloadGeminiVideo } from '@/app/api/ai/video/provider-gemini';
 import { persistGeneratedVideo } from '@/app/api/ai/video/video-storage';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { MediaRequestError } from '@/lib/services/image/media-request-error';
@@ -49,7 +50,7 @@ const imageOptions = { prompt: 'A synthetic image prompt', siteId: 'site-a', cou
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]).toString('base64');
 const imageOutput = { data: [{ b64_json: png }] };
 const videoBody = { prompt: 'A synthetic video prompt', site_id: 'site-a' };
-const prepared = { model: 'vendor/video-a', prompt: videoBody.prompt, duration: 8, aspect_ratio: '16:9' };
+const prepared = { geminiConfig: {}, model: 'gemini-omni-1.2-flash', prompt: videoBody.prompt, duration: 8, aspect_ratio: '16:9' };
 let fetchMock: jest.SpiedFunction<typeof fetch>;
 let networkGuards: jest.SpyInstance[];
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -63,7 +64,7 @@ beforeEach(() => {
     AZURE_TTS_API_KEY: synthetic(), AZURE_TTS_DEPLOYMENT: 'speech-a',
     AZURE_OPENAI_IMAGE_ENDPOINT: 'https://offline-image.openai.azure.com',
     AZURE_OPENAI_IMAGE_API_KEY: synthetic(), AZURE_OPENAI_IMAGE_DEPLOYMENT: 'image-a',
-    OPENROUTER_API_KEY: synthetic(), OPENROUTER_VIDEO_MODEL: prepared.model,
+    GEMINI_API_KEY: synthetic(), GEMINI_VIDEO_MODEL: prepared.model,
   });
   const forbidden = () => { throw new Error('Actual network forbidden in offline tests'); };
   networkGuards = [jest.spyOn(net, 'connect'), jest.spyOn(net, 'createConnection'), jest.spyOn(tls, 'connect'),
@@ -81,9 +82,9 @@ beforeEach(() => {
   jest.mocked(getCachedJson).mockImplementation(async key => store.has(key) ? JSON.parse(JSON.stringify(store.get(key))) : null);
   jest.mocked(setCachedJson).mockImplementation(async (key, value) => { store.set(key, JSON.parse(JSON.stringify(value))); return true; });
   jest.mocked(persistGeneratedImage).mockResolvedValue({ url: 'https://storage.example.test/image.png', b64_json: null });
-  jest.mocked(submitOpenRouterVideo).mockResolvedValue({ id: 'upstream-a', status: 'pending' });
-  jest.mocked(pollOpenRouterVideo).mockResolvedValue({ id: 'upstream-a', status: 'completed', generation_id: 'gen-a', usage: { cost: 0.4 } });
-  jest.mocked(downloadOpenRouterVideo).mockResolvedValue({ buffer: Buffer.from('synthetic-video'), mimeType: 'video/mp4' });
+  jest.mocked(submitGeminiVideo).mockResolvedValue({ id: 'upstream-a', status: 'pending' });
+  jest.mocked(pollGeminiVideo).mockResolvedValue({ id: 'upstream-a', status: 'completed', generation_id: 'gen-a', usage: { cost: 0.4 } });
+  jest.mocked(downloadGeminiVideo).mockResolvedValue({ buffer: Buffer.from('synthetic-video'), mimeType: 'video/mp4' });
   jest.mocked(persistGeneratedVideo).mockResolvedValue({ url: 'https://storage.example.test/video.mp4', mimeType: 'video/mp4' });
   jest.mocked(CreditService.deductCredits).mockResolvedValue({ success: true });
 });
@@ -199,7 +200,7 @@ describe('image end-to-end completion observations', () => {
 
 describe('video receipts represent completed persisted and billed jobs, not admission', () => {
   it('submit reporting completed is not success until the video has been persisted and billed', async () => {
-    jest.mocked(submitOpenRouterVideo).mockResolvedValueOnce({ id: 'upstream-a', status: 'completed' });
+    jest.mocked(submitGeminiVideo).mockResolvedValueOnce({ id: 'upstream-a', status: 'completed' });
     const accepted = await startVideoJob(videoBody, prepared);
     expect(accepted).toMatchObject({ status: 'in_progress', videos: [] });
     expect(telemetry).not.toHaveBeenCalled(); expect(persistGeneratedVideo).not.toHaveBeenCalled();
@@ -209,7 +210,7 @@ describe('video receipts represent completed persisted and billed jobs, not admi
   it('pending/in-progress and repeated completed reads never manufacture success; completion bills and persists once before awaiting receipt', async () => {
     const accepted = await startVideoJob(videoBody, prepared);
     expect(accepted.status).toBe('pending'); expect(telemetry).not.toHaveBeenCalled();
-    jest.mocked(pollOpenRouterVideo).mockResolvedValueOnce({ id: 'upstream-a', status: 'in_progress' });
+    jest.mocked(pollGeminiVideo).mockResolvedValueOnce({ id: 'upstream-a', status: 'in_progress' });
     expect((await resumeVideoJob(videoBody.site_id, accepted.job_id!)).status).toBe('in_progress');
     expect(telemetry).not.toHaveBeenCalled();
     let emit!: () => void;
@@ -228,14 +229,14 @@ describe('video receipts represent completed persisted and billed jobs, not admi
     expect(await resumeVideoJob(videoBody.site_id, accepted.job_id!)).toEqual(completed);
     expect(await startVideoJob(videoBody, prepared)).toEqual(completed);
     expect(statuses()).toEqual(['up']); expect(persistGeneratedVideo).toHaveBeenCalledTimes(1);
-    expect(CreditService.deductCredits).toHaveBeenCalledTimes(1); expect(submitOpenRouterVideo).toHaveBeenCalledTimes(1);
+    expect(CreditService.deductCredits).toHaveBeenCalledTimes(1); expect(submitGeminiVideo).toHaveBeenCalledTimes(1);
   });
 
   it.each(['submit', 'poll'])('explicit terminal upstream failure emits down, never bills (%s)', async phase => {
-    if (phase === 'submit') jest.mocked(submitOpenRouterVideo).mockResolvedValueOnce({ id: 'upstream-a', status: 'failed' });
+    if (phase === 'submit') jest.mocked(submitGeminiVideo).mockResolvedValueOnce({ id: 'upstream-a', status: 'failed' });
     const accepted = await startVideoJob(videoBody, prepared);
     if (phase === 'poll') {
-      jest.mocked(pollOpenRouterVideo).mockResolvedValueOnce({ id: 'upstream-a', status: 'failed' });
+      jest.mocked(pollGeminiVideo).mockResolvedValueOnce({ id: 'upstream-a', status: 'failed' });
       expect((await resumeVideoJob(videoBody.site_id, accepted.job_id!)).status).toBe('failed');
     }
     expect(statuses()).toEqual(['down']); expect(CreditService.deductCredits).not.toHaveBeenCalled();
@@ -243,13 +244,13 @@ describe('video receipts represent completed persisted and billed jobs, not admi
   });
 
   it('ambiguous submit emits degraded and preserves ownership without retries even when telemetry fails', async () => {
-    jest.mocked(submitOpenRouterVideo).mockRejectedValueOnce(new Error(synthetic()));
+    jest.mocked(submitGeminiVideo).mockRejectedValueOnce(new Error(synthetic()));
     telemetry.mockRejectedValueOnce(new Error(synthetic()));
     const accepted = await startVideoJob(videoBody, prepared);
     expect(accepted.error).toContain('uncertain'); expect(statuses()).toEqual(['degraded']);
     expect(await startVideoJob(videoBody, prepared)).toEqual(accepted);
     expect(await resumeVideoJob(videoBody.site_id, accepted.job_id!)).toEqual(accepted);
-    expect(submitOpenRouterVideo).toHaveBeenCalledTimes(1); expect(pollOpenRouterVideo).not.toHaveBeenCalled();
+    expect(submitGeminiVideo).toHaveBeenCalledTimes(1); expect(pollGeminiVideo).not.toHaveBeenCalled();
     expect(CreditService.deductCredits).not.toHaveBeenCalled();
   });
 
@@ -274,19 +275,19 @@ describe('video receipts represent completed persisted and billed jobs, not admi
   it('customer submission errors and failed admission/authorization never emit outage', async () => {
     jest.mocked(setCachedJson).mockResolvedValueOnce(false);
     await expect(startVideoJob(videoBody, prepared)).rejects.toMatchObject({ status: 503 });
-    expect(submitOpenRouterVideo).not.toHaveBeenCalled();
-    jest.mocked(submitOpenRouterVideo).mockRejectedValueOnce(new MediaRequestError('OpenRouter media request failed (400)'));
+    expect(submitGeminiVideo).not.toHaveBeenCalled();
+    jest.mocked(submitGeminiVideo).mockRejectedValueOnce(new MediaRequestError('Gemini video request failed (400)', 400));
     const accepted = await startVideoJob(videoBody, prepared);
     await expect(resumeVideoJob('foreign-site', accepted.job_id!)).rejects.toMatchObject({ status: 404 });
-    expect(telemetry).not.toHaveBeenCalled(); expect(pollOpenRouterVideo).not.toHaveBeenCalled();
+    expect(telemetry).not.toHaveBeenCalled(); expect(pollGeminiVideo).not.toHaveBeenCalled();
   });
 
   it.each(['422', '404', 'missing-config'])('does not count invalid override/options or absent submit configuration as platform outage: %s', async kind => {
-    const error = new MediaRequestError(kind === 'missing-config' ? 'OpenRouter is not configured: set OPENROUTER_API_KEY'
-      : `OpenRouter media request failed (${kind})`);
-    jest.mocked(submitOpenRouterVideo).mockRejectedValueOnce(error);
+    const error = new MediaRequestError(kind === 'missing-config' ? 'Gemini video is not configured: set GEMINI_API_KEY'
+      : `Gemini video request failed (${kind})`, kind === 'missing-config' ? 503 : Number(kind));
+    jest.mocked(submitGeminiVideo).mockRejectedValueOnce(error);
     await startVideoJob(videoBody, { ...prepared, model: 'vendor/video-override' });
-    expect(telemetry).not.toHaveBeenCalled(); expect(submitOpenRouterVideo).toHaveBeenCalledTimes(1);
+    expect(telemetry).not.toHaveBeenCalled(); expect(submitGeminiVideo).toHaveBeenCalledTimes(1);
   });
 
   it('unsuccessful billing remains unbilled without a success receipt or automatic recharge', async () => {
@@ -320,7 +321,7 @@ describe('passive media readers and security', () => {
     expect(await aiVideoHandler.runCheck()).toMatchObject({ status: 'skipped', checks: { verification: 'configuration' } });
     delete process.env.AZURE_OPENAI_IMAGE_API_KEY;
     expect((await aiImageHandler.runCheck()).status).toBe('down'); // Preserve existing missing-image-config semantics.
-    expect(fetchMock).not.toHaveBeenCalled(); expect(submitOpenRouterVideo).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled(); expect(submitGeminiVideo).not.toHaveBeenCalled();
   });
 
   it('uses real successful receipts for current configured models without new provider calls', async () => {
@@ -333,8 +334,8 @@ describe('passive media readers and security', () => {
     expect(image.summary).toContain('persistence completed');
     expect(video).toMatchObject({ status: 'up', checks: { verification: 'passive' } });
     expect(video.summary).toContain('billing completed');
-    expect(fetchMock).toHaveBeenCalledTimes(1); expect(submitOpenRouterVideo).toHaveBeenCalledTimes(1);
-    expect(pollOpenRouterVideo).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1); expect(submitGeminiVideo).toHaveBeenCalledTimes(1);
+    expect(pollGeminiVideo).toHaveBeenCalledTimes(1);
   });
 
   it('override receipts cannot verify configured models; stale/current-disabled evidence remains unverified', async () => {
@@ -346,11 +347,11 @@ describe('passive media readers and security', () => {
       expect(await handler.runCheck()).toMatchObject({ status: 'skipped', checks: { verification: 'configuration' } });
     }
     process.env.AZURE_OPENAI_IMAGE_DEPLOYMENT = 'image-override';
-    process.env.OPENROUTER_VIDEO_MODEL = 'vendor/video-override';
+    process.env.GEMINI_VIDEO_MODEL = 'vendor/video-override';
     expect((await aiImageHandler.runCheck()).status).toBe('up'); expect((await aiVideoHandler.runCheck()).status).toBe('up');
     for (const receipt of receipts.values()) receipt.created_at = new Date(Date.now() - AI_OBSERVATION_MAX_AGE_MS - 1).toISOString();
     expect((await aiImageHandler.runCheck()).status).toBe('skipped'); expect((await aiVideoHandler.runCheck()).status).toBe('skipped');
-    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.GEMINI_API_KEY;
     expect((await aiVideoHandler.runCheck()).status).toBe('skipped');
   });
 
@@ -359,7 +360,7 @@ describe('passive media readers and security', () => {
       receipts.set(key, { status, message: '', latency_ms: 3, created_at: new Date().toISOString() });
     }
     expect((await aiImageHandler.runCheck()).status).toBe(status); expect((await aiVideoHandler.runCheck()).status).toBe(status);
-    expect(fetchMock).not.toHaveBeenCalled(); expect(submitOpenRouterVideo).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled(); expect(submitGeminiVideo).not.toHaveBeenCalled();
   });
 
   it('emits safe fixed labels without credentials, prompts, bodies or authenticated URLs and preserves errors', async () => {
@@ -367,20 +368,20 @@ describe('passive media readers and security', () => {
     url.username = synthetic(); url.password = synthetic(); url.searchParams.set('token', synthetic());
     const bodySecret = synthetic(); const prompt = synthetic();
     const sensitive = [bodySecret, prompt, url.username, url.password, url.searchParams.get('token')!, url.toString(),
-      process.env.AZURE_TTS_API_KEY!, process.env.AZURE_OPENAI_IMAGE_API_KEY!, process.env.OPENROUTER_API_KEY!];
+      process.env.AZURE_TTS_API_KEY!, process.env.AZURE_OPENAI_IMAGE_API_KEY!, process.env.GEMINI_API_KEY!];
     const rawError = new Error(sensitive.join(' '));
     const logs = [jest.spyOn(console, 'error').mockImplementation(() => {}), jest.spyOn(console, 'warn').mockImplementation(() => {}),
       jest.spyOn(console, 'log').mockImplementation(() => {})];
     fetchMock.mockRejectedValueOnce(rawError).mockRejectedValueOnce(rawError);
     const ttsError = await synthesizeSpeech({ text: prompt }).catch(error => error);
     const imageError = await generateWithAzure({ ...imageOptions, prompt }).catch(error => error);
-    jest.mocked(submitOpenRouterVideo).mockRejectedValueOnce(rawError);
+    jest.mocked(submitGeminiVideo).mockRejectedValueOnce(rawError);
     const video = await startVideoJob({ ...videoBody, prompt }, { ...prepared, prompt });
     expect(statuses()).toEqual(['down', 'down', 'degraded']);
     const safeOutput = JSON.stringify(telemetry.mock.calls) + String(ttsError) + String(imageError) + JSON.stringify(video)
       + JSON.stringify(logs.map(log => log.mock.calls));
     // Prompt is intentionally preserved in private job persistence, but never in public receipts/results/errors.
     for (const value of sensitive) expect(safeOutput).not.toContain(value);
-    expect(fetchMock).toHaveBeenCalledTimes(2); expect(submitOpenRouterVideo).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2); expect(submitGeminiVideo).toHaveBeenCalledTimes(1);
   });
 });

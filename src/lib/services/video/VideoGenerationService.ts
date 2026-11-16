@@ -2,6 +2,7 @@ import type { VideoRequestBody, VideoGenerationResult as ApiResult, VideoAspectR
 import { randomUUID } from 'node:crypto';
 import { getExecutionRouting, getCustomerOperationKey, type ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
 import { executionRoutingHeaders } from '@/lib/services/ai/customer-routing-http';
+import { readVideoApiError } from './video-api-error';
 
 export type AspectRatio = VideoAspectRatio;
 export type VideoQuality = 'preview' | 'standard' | 'pro';
@@ -15,26 +16,30 @@ export interface VideoGenerationResult extends Omit<ApiResult, 'metadata'> {
 /** Async-first wrapper. Pending success means accepted, never a completed video. */
 export class VideoGenerationService {
   static async generateVideo(params: VideoGenerationParams): Promise<VideoGenerationResult> {
-    if (params.provider !== undefined && params.provider !== 'openrouter') {
-      return { success: false, provider: 'openrouter', videos: [], error: 'Unsupported video provider' };
+    if (params.provider !== undefined && params.provider !== 'openrouter' && params.provider !== 'gemini') {
+      return { success: false, provider: 'gemini', videos: [], error: 'Unsupported video provider' };
     }
     if (params.job_id) return this.getVideoJob(params.site_id, params.job_id);
-    return this.call({ ...params, provider: params.provider ?? 'openrouter' });
+    return this.call(params);
   }
 
   static async getVideoJob(siteId: string, jobId: string): Promise<VideoGenerationResult> {
-    return this.call({ site_id: siteId, job_id: jobId, prompt: '', provider: 'openrouter' });
+    return this.call({ site_id: siteId, job_id: jobId, prompt: '' });
   }
 
   private static async call(params: VideoGenerationParams): Promise<VideoGenerationResult> {
-    const provider = params.provider ?? 'openrouter';
+    // Polling uses the retained job's payer pin, not today's customer selection.
+    const routing = params.job_id ? undefined : params.executionRouting ?? getExecutionRouting(params.site_id);
+    const provider = params.provider ?? (routing?.payer === 'customer' ? 'openrouter' : 'gemini');
+    if (!params.job_id && params.provider === 'openrouter' && routing?.payer !== 'customer') {
+      return { success: false, provider, videos: [], error: 'OpenRouter video requires authorized customer BYOK routing' };
+    }
     const url = new URL('/api/ai/video', process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000');
     if (params.job_id) {
       url.searchParams.set('site_id', params.site_id);
       url.searchParams.set('job_id', params.job_id);
     }
     try {
-      const routing = params.executionRouting ?? getExecutionRouting(params.site_id);
       const stableOperation = params.operationId ?? getCustomerOperationKey();
       if (routing?.payer === 'customer' && !params.job_id && !stableOperation) {
         return { success: false, provider, videos: [], error: 'Customer video generation requires a stable operationId' };
@@ -51,7 +56,8 @@ export class VideoGenerationService {
         signal: AbortSignal.timeout(120_000),
       });
       if (!response.ok) {
-        return { success: false, provider, videos: [], job_id: params.job_id, error: `Video API request failed (${response.status}); retry status only if a job_id exists` };
+        const failure = await readVideoApiError(response);
+        return { success: false, provider, videos: [], job_id: failure.job_id ?? params.job_id, error: failure.error };
       }
       const data = await response.json() as ApiResult;
       return {

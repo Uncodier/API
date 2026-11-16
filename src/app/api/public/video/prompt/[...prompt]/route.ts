@@ -7,6 +7,7 @@ import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
 import { canAccessSite } from '@/lib/security/site-access';
 import { acquireLock, releaseLock } from '@/lib/security/upstash-rest';
 import { resolveHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
+import { getGeminiVideoModel } from '@/app/api/ai/video/provider-gemini';
 
 const NO_STORE_HEADERS = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -77,10 +78,10 @@ export async function GET(
     }
 
     const searchParams = request.nextUrl.searchParams;
-    if (searchParams.has('provider') && searchParams.get('provider') !== 'openrouter') {
+    if (searchParams.has('provider') && !['gemini', 'openrouter'].includes(searchParams.get('provider') || '')) {
       return jsonError('Unsupported video provider', 400);
     }
-    let durationSeconds = Number(searchParams.get('duration') || '4');
+    let durationSeconds = Number(searchParams.get('duration') || '8');
     const expectedSiteId = searchParams.get('site_id');
     const ratioParam = searchParams.get('ratio') || '16:9';
 
@@ -114,9 +115,13 @@ export async function GET(
     }
 
     const executionRouting = await resolveHttpExecutionRouting(request, siteId);
+    const provider = searchParams.get('provider');
+    if (provider && provider !== (executionRouting.payer === 'customer' ? 'openrouter' : 'gemini')) {
+      return jsonError('Video provider must match authorized payer routing; OpenRouter requires customer BYOK', 400);
+    }
     const namespace = executionRouting.payer === 'customer'
       ? `v4:customer:${executionRouting.connectionId}:${executionRouting.policyVersion}:${executionRouting.credentialVersion}`
-      : `v3:openrouter:${process.env.OPENROUTER_VIDEO_MODEL || 'unconfigured'}`;
+      : `v5:gemini:${getGeminiVideoModel()}`;
     const hash = getVideoPromptHash(
       `${namespace}:${siteId}:${promptStr}`,
       durationSeconds,

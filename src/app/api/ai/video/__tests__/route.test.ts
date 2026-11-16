@@ -44,11 +44,11 @@ jest.mock('@/lib/services/billing/CreditService', () => ({
     deductCredits: jest.fn(async () => ({ success: true })),
   },
 }));
-jest.mock('../provider-openrouter', () => ({ prepareOpenRouterVideo: jest.fn() }));
+jest.mock('../provider-gemini', () => ({ prepareGeminiVideo: jest.fn() }));
 jest.mock('../openrouter-jobs', () => ({ startVideoJob: jest.fn(), resumeVideoJob: jest.fn() }));
 
 import { POST, GET } from '../route';
-import { prepareOpenRouterVideo } from '../provider-openrouter';
+import { prepareGeminiVideo } from '../provider-gemini';
 import { startVideoJob, resumeVideoJob } from '../openrouter-jobs';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { acquireLock } from '@/lib/security/upstash-rest';
@@ -78,20 +78,33 @@ describe('AI video route', () => {
       method: 'POST', body: JSON.stringify({ prompt: 'cat', site_id: validSiteId, instance_id: '22222222-2222-4222-8222-222222222222' }),
     }));
     expect(response.status).toBe(403);
-    expect(prepareOpenRouterVideo).not.toHaveBeenCalled();
+    expect(prepareGeminiVideo).not.toHaveBeenCalled();
     expect(startVideoJob).not.toHaveBeenCalled();
   });
 
-  it('defaults to async OpenRouter and leaves billing to completion, preserving the job id', async () => {
-    jest.mocked(prepareOpenRouterVideo).mockResolvedValueOnce({ model: 'example/video', prompt: 'cat', duration: 4, aspect_ratio: '16:9' });
-    jest.mocked(startVideoJob).mockResolvedValueOnce({ provider: 'openrouter', status: 'pending', job_id: validSiteId, videos: [], metadata: { model: 'example/video', generated_at: 'now' } });
+  it('defaults to async Gemini and leaves billing to completion, preserving the job id', async () => {
+    jest.mocked(prepareGeminiVideo).mockResolvedValueOnce({ model: 'example/video', prompt: 'cat', duration: 4, aspect_ratio: '16:9', geminiConfig: {} });
+    jest.mocked(startVideoJob).mockResolvedValueOnce({ provider: 'gemini', status: 'pending', job_id: validSiteId, videos: [], metadata: { model: 'example/video', generated_at: 'now' } });
     const response = await POST(new NextRequest('http://localhost/api/ai/video', {
       method: 'POST', body: JSON.stringify({ prompt: 'cat', site_id: validSiteId }),
     }));
     expect(response.status).toBe(202);
     expect(await response.json()).toMatchObject({ status: 'pending', job_id: validSiteId });
     expect(startVideoJob).toHaveBeenCalledTimes(1);
+    expect(startVideoJob).toHaveBeenCalledWith(expect.objectContaining({ provider: 'gemini' }), expect.anything());
     expect(CreditService.deductCredits).not.toHaveBeenCalled();
+  });
+
+  it('returns actionable Gemini duration validation before billing or submission', async () => {
+    const { MediaRequestError } = await import('@/lib/services/image/media-request-error');
+    jest.mocked(prepareGeminiVideo).mockRejectedValueOnce(new MediaRequestError('Gemini Omni video duration_seconds must be a whole second from 3 to 15', 400));
+    const response = await POST(new NextRequest('http://localhost/api/ai/video', {
+      method: 'POST', body: JSON.stringify({ prompt: 'cat', site_id: validSiteId, duration_seconds: 40 }),
+    }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Gemini Omni video duration_seconds must be a whole second from 3 to 15' });
+    expect(CreditService.validateCredits).not.toHaveBeenCalled();
+    expect(startVideoJob).not.toHaveBeenCalled();
   });
 
   it('authorizes polling before looking up a retained job', async () => {
@@ -102,7 +115,7 @@ describe('AI video route', () => {
   });
 
   it('fails closed on missing generation admission', async () => {
-    jest.mocked(prepareOpenRouterVideo).mockResolvedValueOnce({ model: 'example/video', prompt: 'cat', duration: 4, aspect_ratio: '16:9' });
+    jest.mocked(prepareGeminiVideo).mockResolvedValueOnce({ model: 'example/video', prompt: 'cat', duration: 4, aspect_ratio: '16:9', geminiConfig: {} });
     jest.mocked(acquireLock).mockResolvedValueOnce({ state: 'unconfigured' });
     const response = await POST(new NextRequest('http://localhost/api/ai/video', {
       method: 'POST', body: JSON.stringify({ prompt: 'cat', site_id: validSiteId }),
@@ -112,7 +125,7 @@ describe('AI video route', () => {
   });
 
   it('rejects insufficient credits before admitting or submitting a job', async () => {
-    jest.mocked(prepareOpenRouterVideo).mockResolvedValueOnce({ model: 'example/video', prompt: 'cat', duration: 4, aspect_ratio: '16:9' });
+    jest.mocked(prepareGeminiVideo).mockResolvedValueOnce({ model: 'example/video', prompt: 'cat', duration: 4, aspect_ratio: '16:9', geminiConfig: {} });
     jest.mocked(CreditService.validateCredits).mockResolvedValueOnce(false);
     const response = await POST(new NextRequest('http://localhost/api/ai/video', {
       method: 'POST', body: JSON.stringify({ prompt: 'cat', site_id: validSiteId }),
@@ -136,7 +149,7 @@ describe('AI video route', () => {
     expect(response.status).toBe(400);
   });
 
-  it.each(['azure', 'gemini', 'vercel'])('rejects direct provider %s without submitting or billing', async provider => {
+  it.each(['azure', 'openrouter', 'vercel'])('rejects direct provider %s without submitting or billing', async provider => {
     const response = await POST(new NextRequest('http://localhost/api/ai/video', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -152,7 +165,7 @@ describe('AI video route', () => {
     }));
 
     expect(response.status).toBe(400);
-    expect(prepareOpenRouterVideo).not.toHaveBeenCalled();
+    expect(prepareGeminiVideo).not.toHaveBeenCalled();
     expect(startVideoJob).not.toHaveBeenCalled();
     expect(CreditService.validateCredits).not.toHaveBeenCalled();
     expect(CreditService.deductCredits).not.toHaveBeenCalled();

@@ -5,8 +5,10 @@ production build, deployment, or remote migration was executed.
 
 ## Two independent paths
 
-Without selected customer routing, existing Azure image/speech/transcription and
-platform OpenRouter video configuration, pricing and billing remain unchanged.
+Without selected customer routing, images/speech/transcription use the existing
+Azure paths and platform video uses Gemini (default `gemini-omni-1.2-flash`), with
+`GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`. Platform video retains existing
+ownership checks, storage and product-credit billing; it never uses OpenRouter.
 Customer execution uses the authorized pinned `ExecutionRoutingReference`; it
 never substitutes a platform key when discovery, credentials, artifacts or
 persistence fail. Resource/tool/channel charges are independent of inference.
@@ -76,7 +78,9 @@ and resolution. Frame/reference images, legacy quality and provider passthrough
 options fail closed. The dedicated video protocol does not document enforcement
 of chat-style `allow_fallbacks`; the adapter does not invent that field or claim
 strict upstream BYOK-only provider selection. It never falls back to platform
-credentials. Existing global video configuration, provider and billing are unchanged.
+credentials. Omit the request provider to delegate authorized payer routing:
+Gemini for platform, OpenRouter only for selected customer BYOK. Polling does not
+pin a provider or reselect a payer; accepted jobs retain their original pin.
 
 The speech API documents only `mp3` and `pcm`; customer requests for Azure-only
 formats fail before dispatch. Provider voices and speed remain model-dependent:

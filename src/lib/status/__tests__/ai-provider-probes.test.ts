@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { evaluateAiProviders, isAiProbeEnabled } from '@/lib/status/types';
 import type { ProviderProbeResult } from '@/lib/status/types';
 import { createOpenRouterClient } from '@/lib/services/ai/openrouter';
-import { checkAzureImage, checkOpenRouterMedia, checkTranscriptionProvider, checkTtsProvider, probeOpenRouterText } from '@/lib/status/handlers/ai/provider-probes';
+import { checkAzureImage, checkGeminiVideo, checkTranscriptionProvider, checkTtsProvider, probeOpenRouterText } from '@/lib/status/handlers/ai/provider-probes';
 import { aiOpenRouterHandler } from '@/lib/status/handlers/ai/openrouter';
 import { aiTextHandler } from '@/lib/status/handlers/ai/text';
 import { aiImageHandler } from '@/lib/status/handlers/ai/image';
@@ -160,16 +160,23 @@ describe('capability-specific status probes (offline)', () => {
       MICROSOFT_AZURE_OPENAI_API_KEY: randomBytes(32).toString('hex'),
     });
     expect(checkAzureImage()).toMatchObject({ configured: true, model: 'gpt-image-2.5-sunburst', liveProbe: false });
-    for (const mode of ['video'] as const) {
-      expect(checkOpenRouterMedia(mode)).toMatchObject({ configured: false, skipped: true });
-      process.env[`OPENROUTER_${mode.toUpperCase()}_MODEL`] = `test/${mode}`;
-      expect(checkOpenRouterMedia(mode)).toMatchObject({ configured: true, model: `test/${mode}`, verification: 'configuration' });
-    }
+    process.env.OPENROUTER_VIDEO_MODEL = 'vendor/video';
+    expect(checkGeminiVideo()).toMatchObject({ configured: false });
+    process.env.GEMINI_API_KEY = randomBytes(32).toString('hex');
+    process.env.GEMINI_VIDEO_MODEL = 'gemini-omni-1.2-flash';
+    expect(checkGeminiVideo()).toMatchObject({ configured: true, model: 'gemini-omni-1.2-flash', verification: 'configuration' });
     const image = await aiImageHandler.runCheck();
     const video = await aiVideoHandler.runCheck();
     expect(image).toMatchObject({ status: 'skipped', checks: { providers: { azure: { configured: true } } } });
     expect(video).toMatchObject({ status: 'skipped', checks: { verification: 'configuration' } });
     expect(mockCompletion).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('recognizes either existing Gemini key name without any paid video probe', async () => {
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY = randomBytes(32).toString('hex');
+    expect(checkGeminiVideo()).toMatchObject({ configured: true, model: 'gemini-omni-1.2-flash', verification: 'configuration', liveProbe: false });
+    expect(await aiVideoHandler.runCheck()).toMatchObject({ status: 'skipped', checks: { providers: { gemini: { configured: true } } } });
     expect(global.fetch).not.toHaveBeenCalled();
   });
 

@@ -30,7 +30,8 @@ function isPrivateIpv6(address: string): boolean {
   const mappedIpv4 = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
   if (mappedIpv4) return isPrivateIpv4(mappedIpv4);
   return (
-    normalized === '::'
+    normalized.startsWith('::ffff:')
+    || normalized === '::'
     || normalized === '::1'
     || normalized.startsWith('fc')
     || normalized.startsWith('fd')
@@ -68,7 +69,9 @@ export async function assertSafeRemoteUrl(value: string): Promise<URL> {
     throw new Error('Remote URL is not allowed');
   }
 
-  const addresses = await lookup(url.hostname, { all: true });
+  // URL.hostname keeps IPv6 brackets, but dns.lookup expects the bare literal.
+  const hostname = url.hostname.replace(/^\[|\]$/g, '');
+  const addresses = await lookup(hostname, { all: true });
   if (
     addresses.length === 0
     || addresses.some(({ address }) => isPrivateAddress(address))

@@ -14,7 +14,7 @@ import {
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import type { VideoRequestBody } from './video-types';
 import { MediaRequestError } from '@/lib/services/image/openrouter-media';
-import { prepareOpenRouterVideo } from './provider-openrouter';
+import { prepareGeminiVideo } from './provider-gemini';
 import { resumeVideoJob, startVideoJob } from './openrouter-jobs';
 import { mediaInstanceBelongsToSite } from '@/lib/services/ai/media-instance-access';
 import { authorizeInferenceRequest, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
@@ -82,10 +82,14 @@ export async function POST(request: NextRequest) {
     if (!await mediaInstanceBelongsToSite(body.site_id, body.instance_id)) {
       return NextResponse.json({ error: 'Instance does not belong to the authorized site' }, { status: 403 });
     }
-    const provider = body.provider ?? 'openrouter';
-    if (provider !== 'openrouter') {
+    const provider = body.provider ?? (routing?.payer === 'customer' ? 'openrouter' : 'gemini');
+    if (provider !== 'openrouter' && provider !== 'gemini') {
       return NextResponse.json({ error: 'Unsupported video provider' }, { status: 400 });
     }
+    if (routing?.payer === 'customer' ? provider !== 'openrouter' : provider !== 'gemini') {
+      return NextResponse.json({ error: 'Video provider must match authorized routing: Gemini for platform, OpenRouter for customer BYOK only' }, { status: 400 });
+    }
+    body.provider = provider;
     if (
       body.duration_seconds !== undefined
       && (
@@ -130,9 +134,11 @@ export async function POST(request: NextRequest) {
     if (routing?.payer === 'customer' && !/^[A-Za-z0-9:_-]{1,128}$/.test(operationId)) {
       return NextResponse.json({ error: 'Customer videos require a stable Idempotency-Key' }, { status: 400 });
     }
-    const prepared = routing?.payer === 'customer'
-      ? await withHttpExecutionRouting(request, routing, () => prepareCustomerVideo(body))
-      : await prepareOpenRouterVideo(body);
+    const customerPrepared = routing?.payer === 'customer'
+      ? await withHttpExecutionRouting(request, routing, () => prepareCustomerVideo(body)) : undefined;
+    const geminiPrepared = routing?.payer !== 'customer' ? await prepareGeminiVideo(body) : undefined;
+    const prepared = customerPrepared ?? geminiPrepared;
+    if (!prepared) throw new MediaRequestError('Invalid video preparation', 503);
     const duration = prepared.duration;
     const requiredCredits =
       (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
@@ -165,9 +171,13 @@ export async function POST(request: NextRequest) {
     }
     generationLock = { key: lockKey, token: lock.token };
 
-    const result = routing?.payer === 'customer'
-      ? await withHttpExecutionRouting(request, routing, () => startCustomerVideoJob(body, prepared, operationId))
-      : await startVideoJob(body, prepared);
+    let result;
+    if (routing?.payer === 'customer') {
+      result = await withHttpExecutionRouting(request, routing, () => startCustomerVideoJob(body, prepared, operationId));
+    } else {
+      if (!geminiPrepared) throw new MediaRequestError('Invalid Gemini video preparation', 503);
+      result = await startVideoJob(body, geminiPrepared);
+    }
     return NextResponse.json(result, {
       status: result.status === 'completed' ? 200 : 202,
       headers: { 'Cache-Control': 'no-store', 'Retry-After': '30' },
@@ -188,10 +198,10 @@ export async function GET(request: NextRequest) {
   const params = new URL(request.url).searchParams;
   if (!params.has('job_id')) {
     return NextResponse.json({
-      message: 'AI Video Generation API', providers: ['openrouter'],
-      default_provider: 'openrouter', requires: 'OPENROUTER_VIDEO_MODEL',
+      message: 'AI Video Generation API', providers: ['gemini', 'openrouter'],
+      default_provider: 'gemini', openrouter: 'Authorized customer BYOK routing only', requires: 'GEMINI_API_KEY',
       polling: 'GET ?site_id=<site UUID>&job_id=<local job UUID> every 30 seconds',
-      duration_seconds: 'Must match selected OpenRouter model capabilities',
+      duration_seconds: 'Gemini Omni: 3 to 15 seconds. Longer videos require separately composed clips. BYOK: selected model capabilities.',
     });
   }
   let generationLock: { key: string; token: string } | null = null;

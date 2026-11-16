@@ -28,6 +28,7 @@ export default {
     '<rootDir>/src/app/api/agents/tools/router/__tests__/**/*.test.ts',
     '<rootDir>/src/app/api/agents/tools/sandbox/__tests__/sandbox-read-lints.test.ts',
     '<rootDir>/src/lib/security/__tests__/tool-request-principal.test.ts',
+    '<rootDir>/src/lib/security/__tests__/pinned-image-download.test.ts',
     '<rootDir>/src/app/api/mcp/__tests__/screen-principal.test.ts',
     '<rootDir>/src/lib/services/__tests__/UnifiedAIService.test.ts',
     '<rootDir>/src/lib/services/image/__tests__/media-services.test.ts',

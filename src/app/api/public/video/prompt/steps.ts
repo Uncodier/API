@@ -18,18 +18,33 @@ export async function generateAndCacheVideoStep(
 ) {
   'use step';
   
-  // One bounded submit/poll per workflow invocation. Persist the local job id so
+  // At most one submit per invocation. Persist the local job id so
   // subsequent public requests never resubmit a still-running paid generation.
   const key = `ai-video:public:${siteId}:${hash}`;
-  const jobId = await getCachedJson<string>(key);
-  const result = jobId
+  const tracked = await getCachedJson<string | { submission_pending: true }>(key);
+  if (tracked && typeof tracked !== 'string') {
+    return { status: 'pending', error: 'Video submission outcome uncertain; contact support before resubmitting' };
+  }
+  const jobId = tracked;
+  const submit = () => VideoGenerationService.generateVideo({
+    prompt, site_id: siteId, duration_seconds: durationSeconds,
+    aspect_ratio: ratio,
+    ...(executionRouting ? { executionRouting, operationId: `public-video:${hash}` } : {}),
+  });
+  let result = jobId
     ? await VideoGenerationService.getVideoJob(siteId, jobId)
-    : await VideoGenerationService.generateVideo({
-      prompt, site_id: siteId, duration_seconds: durationSeconds,
-      aspect_ratio: ratio, provider: 'openrouter',
-      ...(executionRouting ? { executionRouting, operationId: `public-video:${hash}` } : {}),
-    });
-  if (result.job_id && !jobId) {
+    : await submit();
+  if (jobId && result.job_id === jobId && result.provider === 'gemini'
+    && executionRouting?.payer !== 'customer' && result.status === 'failed' && result.submission_rejected === true) {
+    // Persist intent before replacing the rejected job. A lost submit response
+    // must not leave the old rejection as permission to generate a duplicate.
+    if (!await setCachedJson(key, { submission_pending: true }, 7 * 24 * 60 * 60)
+      || (await getCachedJson<{ submission_pending?: boolean }>(key))?.submission_pending !== true) {
+      return { status: 'failed', job_id: jobId, error: 'Job tracking unavailable; submission was not retried' };
+    }
+    result = await submit();
+  }
+  if (result.job_id && result.job_id !== jobId) {
     if (!await setCachedJson(key, result.job_id, 7 * 24 * 60 * 60)
       || await getCachedJson<string>(key) !== result.job_id) {
       return { status: 'pending', job_id: result.job_id, error: 'Job tracking unavailable; poll this job_id directly' };

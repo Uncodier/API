@@ -2,23 +2,19 @@ import {
   createOpenRouterClient,
   getOpenRouterChatModel,
   isOpenRouterReasoningModel,
-  resolveOpenRouterModel,
 } from '@/lib/services/ai/openrouter';
 import type { ProviderProbeResult } from '@/lib/status/types';
 import { isAiProbeEnabled } from '@/lib/status/types';
 import { getAzureImageConfig } from '@/lib/services/image/azure-image-config';
 import { getAzureTranscriptionConfig } from '@/lib/services/ai/azure-transcription-config';
 import { getAzureTtsConfig } from '@/lib/services/ai/azure-tts-config';
+import { getGeminiVideoModel } from '@/app/api/ai/video/provider-gemini';
 import { getTextObservationKey, readPassiveProviderObservation } from './passive-probes';
 
 const PROBE_TIMEOUT_MS = 15_000;
 
 function getEnv(name: string): string | undefined {
   return process.env[name]?.trim() || undefined;
-}
-
-function hasEnv(...names: string[]): boolean {
-  return names.every((name) => !!getEnv(name));
 }
 
 // Provider errors can contain credentials, URLs and request bodies. Never publish them.
@@ -89,17 +85,6 @@ export async function probeOpenRouterText(options: { passiveOnly?: boolean } = {
   }
 }
 
-/** Readiness only: a text completion does not verify image/video/audio generation. */
-export function checkOpenRouterMedia(
-  capability: 'video',
-): ProviderProbeResult {
-  const model = getEnv(`OPENROUTER_${capability.toUpperCase()}_MODEL`);
-  return configurationResult(
-    model ? resolveOpenRouterModel(model) : `${capability}-model-not-configured`,
-    !!model && hasEnv('OPENROUTER_API_KEY'),
-  );
-}
-
 /** Configuration only: never infer availability, quality or billing from readiness. */
 export function checkAzureImage(): ProviderProbeResult {
   try {
@@ -126,4 +111,10 @@ export function checkTranscriptionProvider(): { provider: string; result: Provid
   } catch {
     return { provider: 'azure-direct', result: skippedResult('azure-transcription-not-configured') };
   }
+}
+
+/** Platform video readiness only; no paid generation in probes. */
+export function checkGeminiVideo(): ProviderProbeResult {
+  return configurationResult(getGeminiVideoModel(),
+    !!(getEnv('GEMINI_API_KEY') || getEnv('GOOGLE_GENERATIVE_AI_API_KEY')));
 }

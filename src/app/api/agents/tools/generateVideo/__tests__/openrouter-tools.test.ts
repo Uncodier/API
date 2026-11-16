@@ -22,7 +22,7 @@ it.each(['assistant', 'scrapybara'])('rejects unsupported providers independentl
   for (const provider of ['openrouter', 'gemini', 'vercel']) {
     await expect(image.execute({ prompt: 'cat', provider, model: 'raw-deployment' })).rejects.toThrow('Unsupported image provider');
   }
-  for (const provider of ['azure', 'gemini', 'vercel']) {
+  for (const provider of ['azure', 'vercel']) {
     await expect(video.execute({ prompt: 'cat', provider, model: 'raw-deployment' })).rejects.toThrow('Unsupported video provider');
   }
   expect(ImageGenerationService.generateImage).not.toHaveBeenCalled();
@@ -37,7 +37,20 @@ it.each(['assistant', 'scrapybara'])('preserves pending video jobs without claim
   expect(result).toMatchObject({ status: 'pending', job_id: jobId, videos: [] });
   expect(result.message).toContain('poll');
   expect(result.message).not.toContain('Successfully generated');
-  expect(VideoGenerationService.generateVideo).toHaveBeenCalledWith(expect.objectContaining({ provider: 'openrouter', site_id: 'site', job_id: jobId }));
+  expect(VideoGenerationService.generateVideo).toHaveBeenCalledWith(expect.objectContaining({ site_id: 'site', job_id: jobId }));
+  expect(jest.mocked(VideoGenerationService.generateVideo).mock.calls[0][0]).not.toHaveProperty('provider');
+});
+
+it('video schemas omit provider defaults and document Gemini limitations', () => {
+  const assistant = generateVideoTool('site');
+  expect(assistant.parameters.properties.provider.enum).toEqual(['gemini', 'openrouter']);
+  expect(assistant.parameters.properties.provider).not.toHaveProperty('default');
+  const scrapybara: any = generateVideoToolScrapybara({} as any, 'site');
+  expect(scrapybara.parameters.parse({ prompt: 'cat' })).not.toHaveProperty('provider');
+  for (const provider of ['gemini', 'openrouter']) expect(scrapybara.parameters.parse({ prompt: 'cat', provider })).toMatchObject({ provider });
+  expect(assistant.description).toContain('Exact 40 seconds');
+  expect(assistant.description).toContain('default 8');
+  expect(assistant.parameters.properties.reference_images.description).toContain('Branding fidelity is not guaranteed');
 });
 
 it.each(['assistant', 'scrapybara'])('defaults image tools to Azure and forwards deployment, size, quality and references: %s', async mode => {

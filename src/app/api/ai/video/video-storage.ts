@@ -52,12 +52,12 @@ export async function persistGeneratedVideo(input: {
     .maybeSingle();
   const asset: Record<string, unknown> = {
     site_id: input.siteId,
-    name: `${input.provider || 'openrouter'}_video_${Date.now()}.${extension}`,
+    name: `${input.provider || 'gemini'}_video_${Date.now()}.${extension}`,
     file_path: url,
     file_type: input.mimeType,
     file_size: input.buffer.length,
     metadata: {
-      provider: input.provider || 'openrouter',
+      provider: input.provider || 'gemini',
       prompt: input.prompt,
       generated_at: new Date().toISOString(),
       model: input.model,

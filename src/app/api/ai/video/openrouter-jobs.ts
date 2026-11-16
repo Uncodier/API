@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { getCachedJson, setCachedJson, sha256 } from '@/lib/security/upstash-rest';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { MediaRequestError } from '@/lib/services/image/openrouter-media';
-import { downloadOpenRouterVideo, pollOpenRouterVideo, submitOpenRouterVideo, type PreparedVideo } from './provider-openrouter';
+import { downloadOpenRouterVideo, pollOpenRouterVideo, type PreparedVideo } from './provider-openrouter';
+import { downloadGeminiVideo, pollGeminiVideo, submitGeminiVideo, type GeminiPreparedVideo } from './provider-gemini';
 import { persistGeneratedVideo } from './video-storage';
 import type { VideoGenerationResult, VideoRequestBody } from './video-types';
 import { recordTelemetry } from '@/lib/status/telemetry';
 import { getVideoObservationKey } from '@/lib/status/handlers/ai/passive-probes';
-import { resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { assertPlatformInference } from '@/lib/services/ai/customer-routing';
 import { resumeCustomerVideoJob, type CustomerVideoJob } from './customer-video-jobs';
 import { loadCustomerVideoJob } from './customer-video-store';
@@ -17,17 +17,20 @@ import { routingStorageEnabled } from '@/lib/integrations/openrouter/types';
 // fail-closed distributed lock in route.ts. Never use process-local job ownership.
 const RETENTION_SECONDS = 7 * 24 * 60 * 60;
 interface Job {
+  // Untagged records are legacy OpenRouter jobs: resume only, never resubmit.
+  provider?: 'gemini' | 'openrouter';
   id: string;
   siteId: string;
   instanceId?: string;
   fingerprint: string;
   upstreamId?: string;
-  request: PreparedVideo;
+  request: PreparedVideo | GeminiPreparedVideo;
   status: 'pending' | 'in_progress' | 'completed' | 'failed';
   createdAt: string;
   billingStarted?: boolean;
   billed?: boolean;
   error?: string;
+  submissionRejected?: boolean;
   videos?: VideoGenerationResult['videos'];
   generationId?: string;
   cost?: number;
@@ -35,17 +38,22 @@ interface Job {
 const jobKey = (id: string) => `ai-video:job:${id}`;
 const activeKey = (site: string) => `ai-video:active:${site}`;
 
-async function observeVideo(model: string, status: 'up' | 'down' | 'degraded', label: string, start: number) {
-  await recordTelemetry(getVideoObservationKey(model), status, label, Date.now() - start).catch(() => {});
+async function observeVideo(model: string, status: 'up' | 'down' | 'degraded', label: string, start: number, provider: 'gemini' | 'openrouter' = 'gemini') {
+  await recordTelemetry(getVideoObservationKey(model, provider), status, label, Date.now() - start).catch(() => {});
 }
 
 function customerSubmissionError(error: unknown, model: string): boolean {
   if (!(error instanceof MediaRequestError)) return false;
   // The media wrapper retains HTTP status only in this fixed message; never inspect raw provider bodies.
-  const httpStatus = /^OpenRouter media request failed \((\d{3})\)$/.exec(error.message)?.[1];
-  return error.status === 400 || error.status === 422 || httpStatus === '400' || httpStatus === '422'
-    || (httpStatus === '404' && model !== resolveOpenRouterModel(process.env.OPENROUTER_VIDEO_MODEL?.trim()))
-    || error.message === 'OpenRouter is not configured: set OPENROUTER_API_KEY';
+  const httpStatus = /^Gemini video request failed \((\d{3})\)$/.exec(error.message)?.[1];
+  // A received client rejection is not an ambiguous transport outcome. Do not
+  // strand site admission after bad credentials, permissions or exhausted quota.
+  const rejectedStatuses = [400, 401, 402, 403, 404, 422, 429];
+  return (httpStatus !== undefined && rejectedStatuses.includes(Number(httpStatus)))
+    || [400, 401, 402, 403, 422, 429].includes(error.status)
+    || ((httpStatus === '404' || error.status === 404) && model !== (process.env.GEMINI_VIDEO_MODEL?.trim() || 'gemini-omni-1.2-flash'))
+    || error.message === 'Gemini video is not configured: set GEMINI_API_KEY'
+    || error.message === 'Gemini video generation is not configured';
 }
 
 async function save(job: Job) {
@@ -61,9 +69,11 @@ async function save(job: Job) {
 
 function result(job: Job): VideoGenerationResult {
   return {
-    provider: 'openrouter', job_id: job.id, status: job.status,
+    provider: job.provider ?? 'openrouter', job_id: job.id, status: job.status,
     videos: job.billed ? job.videos || [] : [],
     ...(job.error ? { error: job.error } : {}),
+    ...(job.provider === 'gemini' && job.status === 'failed' && job.submissionRejected === true && !job.upstreamId
+      ? { submission_rejected: true } : {}),
     metadata: {
       model: job.request.model, duration_seconds: job.request.duration,
       aspect_ratio: job.request.aspect_ratio as VideoRequestBody['aspect_ratio'],
@@ -73,22 +83,29 @@ function result(job: Job): VideoGenerationResult {
   };
 }
 
-export async function startVideoJob(body: VideoRequestBody, prepared: PreparedVideo): Promise<VideoGenerationResult> {
+export async function startVideoJob(body: VideoRequestBody, prepared: GeminiPreparedVideo): Promise<VideoGenerationResult> {
   assertPlatformInference('video');
+  if (body.provider !== undefined && body.provider !== 'gemini') {
+    throw new MediaRequestError('OpenRouter video requires authorized customer BYOK routing', 400);
+  }
   const fingerprint = await sha256(JSON.stringify({ prepared, instance: body.instance_id }));
   const active = await getCachedJson<string>(activeKey(body.site_id));
   if (active) {
     const previous = await getCachedJson<Job>(jobKey(active));
     if (!previous) throw new MediaRequestError('Active video job unavailable; retry status later', 503);
-    if (previous.fingerprint === fingerprint) return result(previous);
+    if (previous.fingerprint === fingerprint && !previous.submissionRejected) return result(previous);
     if (previous.status !== 'completed' && previous.status !== 'failed') {
       if (previous.fingerprint !== fingerprint) throw new MediaRequestError('Another video job is already running for this site', 409);
       return result(previous);
     }
   }
   const job: Job = {
-    id: randomUUID(), siteId: body.site_id, instanceId: body.instance_id,
-    fingerprint, request: prepared, status: 'pending', createdAt: new Date().toISOString(),
+    provider: 'gemini', id: randomUUID(), siteId: body.site_id, instanceId: body.instance_id,
+    // Input image bytes are only needed for this one submit, not for polling.
+    // Never persist multi-megabyte inline images in the job cache.
+    fingerprint, request: { model: prepared.model, prompt: prepared.prompt, duration: prepared.duration,
+      aspect_ratio: prepared.aspect_ratio, resolution: prepared.resolution },
+    status: 'pending', createdAt: new Date().toISOString(),
     error: 'Video submission outcome uncertain; retain job_id and contact support before resubmitting',
   };
   await save(job);
@@ -99,19 +116,25 @@ export async function startVideoJob(body: VideoRequestBody, prepared: PreparedVi
   const start = Date.now();
   let upstreamFailed = false;
   try {
-    const submitted = await submitOpenRouterVideo(prepared);
+    const submitted = await submitGeminiVideo(prepared);
     job.upstreamId = submitted.id;
     delete job.error;
     job.status = submitted.status === 'completed' ? 'in_progress' : submitted.status;
     upstreamFailed = submitted.status === 'failed';
-    if (upstreamFailed) job.error = 'OpenRouter video generation failed';
+    if (upstreamFailed) job.error = 'Gemini video generation failed';
     await save(job);
     if (upstreamFailed) await observeVideo(prepared.model, 'down', 'Video upstream generation failed', start);
   } catch (error) {
     // Keep pending ownership: never retry an ambiguous POST or create another paid job.
     job.error = 'Video submission outcome uncertain; retain job_id and contact support before resubmitting';
+    const rejected = customerSubmissionError(error, prepared.model);
+    if (rejected) {
+      job.status = 'failed';
+      job.submissionRejected = true;
+      job.error = 'Gemini rejected the video request or configuration; correct it before submitting a new job';
+    }
     await save(job).catch(() => undefined);
-    if (!customerSubmissionError(error, prepared.model)) {
+    if (!rejected) {
       await observeVideo(prepared.model, upstreamFailed ? 'down' : 'degraded',
         upstreamFailed ? 'Video upstream generation failed' : 'Video submission completion is uncertain', start);
     }
@@ -133,12 +156,14 @@ export async function resumeVideoJob(siteId: string, id: string): Promise<VideoG
   if (job.billingStarted && !job.billed) {
     return { ...result(job), error: 'Video billing outcome requires reconciliation; do not resubmit' };
   }
-  const upstream = await pollOpenRouterVideo(job.upstreamId);
+  const provider = job.provider ?? 'openrouter';
+  const upstream = provider === 'gemini'
+    ? await pollGeminiVideo(job.upstreamId) : await pollOpenRouterVideo(job.upstreamId);
   job.generationId = upstream.generation_id;
   job.cost = upstream.usage?.cost;
   if (upstream.status === 'failed') {
-    job.status = 'failed'; job.error = 'OpenRouter video generation failed';
-    await observeVideo(job.request.model, 'down', 'Video upstream generation failed', start);
+    job.status = 'failed'; job.error = `${provider === 'gemini' ? 'Gemini' : 'OpenRouter'} video generation failed`;
+    await observeVideo(job.request.model, 'down', 'Video upstream generation failed', start, provider);
     await save(job);
     return result(job);
   }
@@ -149,10 +174,11 @@ export async function resumeVideoJob(siteId: string, id: string): Promise<VideoG
   }
   if (!job.videos?.length) {
     try {
-      const downloaded = await downloadOpenRouterVideo(job.upstreamId);
+      const downloaded = provider === 'gemini'
+        ? await downloadGeminiVideo(job.upstreamId) : await downloadOpenRouterVideo(job.upstreamId);
       job.videos = [await persistGeneratedVideo({
         ...downloaded, siteId, instanceId: job.instanceId, prompt: job.request.prompt,
-        model: job.request.model, provider: 'openrouter',
+        model: job.request.model, provider,
         metadata: {
           job_id: job.id, generation_id: job.generationId, cost: job.cost,
           duration_seconds: job.request.duration, aspect_ratio: job.request.aspect_ratio, resolution: job.request.resolution,
@@ -160,7 +186,7 @@ export async function resumeVideoJob(siteId: string, id: string): Promise<VideoG
       })];
       await save(job);
     } catch (error) {
-      await observeVideo(job.request.model, 'down', 'Video completion failed during download or persistence', start);
+      await observeVideo(job.request.model, 'down', 'Video completion failed during download or persistence', start, provider);
       throw error;
     }
   }
@@ -170,8 +196,8 @@ export async function resumeVideoJob(siteId: string, id: string): Promise<VideoG
   await save(job);
   const deduction = await CreditService.deductCredits(
     siteId, (job.request.duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE,
-    'video_generation', 'OpenRouter video generation', {
-      job_id: job.id, provider: 'openrouter', model: job.request.model,
+    'video_generation', `${provider === 'gemini' ? 'Gemini' : 'OpenRouter'} video generation`, {
+      job_id: job.id, provider, model: job.request.model,
       generation_id: job.generationId, cost: job.cost,
     },
   );
@@ -182,6 +208,6 @@ export async function resumeVideoJob(siteId: string, id: string): Promise<VideoG
   }
   job.billed = true; job.status = 'completed'; delete job.error;
   await save(job);
-  await observeVideo(job.request.model, 'up', 'Video generation completed with persistence and billing', start);
+  await observeVideo(job.request.model, 'up', 'Video generation completed with persistence and billing', start, provider);
   return result(job);
 }

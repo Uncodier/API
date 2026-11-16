@@ -1,16 +1,7 @@
-import { resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { MediaRequestError, openRouterMediaJson, openRouterMediaRequest } from '@/lib/services/image/openrouter-media';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
 import type { VideoRequestBody } from './video-types';
 import { assertPlatformInference } from '@/lib/services/ai/customer-routing';
-
-interface VideoModel {
-  id: string;
-  supported_durations?: number[];
-  supported_aspect_ratios?: string[];
-  supported_resolutions?: string[];
-  supported_frame_images?: string[];
-}
 
 export interface PreparedVideo {
   model: string;
@@ -21,46 +12,10 @@ export interface PreparedVideo {
   frame_images?: Array<{ type: string; image_url: { url: string }; frame_type: string }>;
 }
 
-export async function prepareOpenRouterVideo(body: VideoRequestBody): Promise<PreparedVideo> {
+/** Legacy entry point kept fail-closed. New OpenRouter videos use customer-video.ts. */
+export async function prepareOpenRouterVideo(_body: VideoRequestBody): Promise<PreparedVideo> {
   assertPlatformInference('video');
-  // Deliberately no default Sora 2 Pro substitution: operators must opt in to its pricing.
-  const configured = process.env.OPENROUTER_VIDEO_MODEL?.trim();
-  if (!configured) throw new MediaRequestError('Video generation requires explicit OPENROUTER_VIDEO_MODEL configuration', 503);
-  const modelId = resolveOpenRouterModel(body.model || configured);
-  const models = await openRouterMediaJson<{ data: VideoModel[] }>('/videos/models');
-  const model = models.data?.find(item => item.id === modelId);
-  if (!model) throw new MediaRequestError('Selected model is not available in the OpenRouter Video API', 400);
-  const duration = body.duration_seconds ?? 4;
-  const ratio = body.aspect_ratio ?? '16:9';
-  if (!model.supported_durations?.includes(duration)) {
-    throw new MediaRequestError('Selected video model does not support requested duration_seconds', 400);
-  }
-  if (!model.supported_aspect_ratios?.includes(ratio)) {
-    throw new MediaRequestError('Selected video model does not support requested aspect_ratio', 400);
-  }
-  if (body.quality !== undefined) {
-    throw new MediaRequestError('quality is a legacy Gemini option; use resolution for OpenRouter video', 400);
-  }
-  if (body.resolution && !model.supported_resolutions?.includes(body.resolution)) {
-    throw new MediaRequestError('Selected video model does not support requested resolution', 400);
-  }
-  // The current catalog has no reference-image capability descriptor. Do not silently
-  // turn style references into a first frame (a different generation mode).
-  if (body.reference_images?.length) {
-    throw new MediaRequestError('OpenRouter reference_images are not supported by this integration; use explicit frame URLs', 400);
-  }
-  const frames = [
-    ...(body.first_frame_url ? [{ type: 'image_url', image_url: { url: body.first_frame_url }, frame_type: 'first_frame' }] : []),
-    ...(body.last_frame_url ? [{ type: 'image_url', image_url: { url: body.last_frame_url }, frame_type: 'last_frame' }] : []),
-  ];
-  if (frames.some(frame => !model.supported_frame_images?.includes(frame.frame_type))) {
-    throw new MediaRequestError('Selected video model does not support requested frame images', 400);
-  }
-  return {
-    model: modelId, prompt: body.prompt, duration, aspect_ratio: ratio,
-    ...(body.resolution ? { resolution: body.resolution } : {}),
-    ...(frames.length ? { frame_images: frames } : {}),
-  };
+  throw new MediaRequestError('OpenRouter video requires authorized customer BYOK routing', 400);
 }
 
 export interface OpenRouterVideoJob {
@@ -84,9 +39,9 @@ function validateJob(job: OpenRouterVideoJob): OpenRouterVideoJob {
   };
 }
 
-export async function submitOpenRouterVideo(body: PreparedVideo): Promise<OpenRouterVideoJob> {
-  // No retries: a lost submit response could represent a billed, accepted job.
-  return validateJob(await openRouterMediaJson('/videos', { body, timeout: 30_000 }));
+export async function submitOpenRouterVideo(_body: PreparedVideo): Promise<OpenRouterVideoJob> {
+  assertPlatformInference('video');
+  throw new MediaRequestError('OpenRouter video requires authorized customer BYOK routing', 400);
 }
 
 export async function pollOpenRouterVideo(id: string): Promise<OpenRouterVideoJob> {
