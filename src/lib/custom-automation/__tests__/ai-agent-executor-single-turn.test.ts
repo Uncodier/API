@@ -2,6 +2,7 @@ import { jest } from '@jest/globals';
 import { randomUUID } from 'node:crypto';
 import * as openrouter from '@/lib/services/ai/openrouter';
 import * as chatRequest from '@/lib/services/ai/openrouter-chat-request';
+import * as providerRetry from '@/lib/services/ai/provider-retry-policy';
 import * as zod from 'zod';
 import * as jsonSchema from 'zod-to-json-schema';
 import * as azureVision from '../azure-vision-message-sanitize';
@@ -24,6 +25,7 @@ const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executo
     openai: OfflineOpenAI,
     '@/lib/services/ai/openrouter': { ...openrouter, createOpenRouterClient: () => new OfflineOpenAI() },
     '@/lib/services/ai/openrouter-chat-request': chatRequest,
+    '@/lib/services/ai/provider-retry-policy': providerRetry,
     '@/lib/status/text-execution-observation': { observeCompletedTextRequest: async (_model: string, request: () => PromiseLike<unknown>) => request() },
     'google-auth-library': { GoogleAuth: class {} },
     zod,

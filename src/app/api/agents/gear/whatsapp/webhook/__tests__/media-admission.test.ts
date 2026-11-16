@@ -107,7 +107,11 @@ describe('registered WhatsApp durable media admission', () => {
       '@/lib/services/twilio/TwilioMediaTaskService': { handleTwilioMediaAndCreateTask: service },
     });
     const userLogs = loadRuntimeModule<typeof import('@/app/api/robots/instance/assistant/user-message-log')>(
-      'src/app/api/robots/instance/assistant/user-message-log.ts', { '@/lib/database/supabase-client': { supabaseAdmin: h.db } },
+      'src/app/api/robots/instance/assistant/user-message-log.ts', {
+        '@/lib/database/supabase-client': { supabaseAdmin: h.db },
+        '@/lib/services/robot-instance/assistant-failure-policy': { ASSISTANT_FAILURE_MESSAGE: 'Assistant unavailable' },
+        '@/app/api/cron/shared/runtime-log-context': { redactRuntimeSecrets: () => '[redacted diagnostic]' },
+      },
     );
     const authenticateGearWebhook = jest.fn<AsyncMock>()
       .mockResolvedValueOnce({ ok: true, claim: { eventId: 'image-sid' }, webhookData: {

@@ -13,7 +13,7 @@ const descriptor = (name: string) => ({ name, description: name, parameters: { t
 
 /** Real catalog and router; every I/O dependency is explicitly inert and the loader rejects unmocked imports. */
 function catalog() {
-  const filename = 'src/app/api/robots/instance/assistant/utils.ts';
+  const filename = 'src/app/api/robots/instance/assistant/assistant-tools.ts';
   const dependencies: Record<string, unknown> = {};
   const source = ts.createSourceFile(filename, readFileSync(resolve(filename), 'utf8'), ts.ScriptTarget.Latest, true);
   for (const statement of source.statements) {
@@ -38,6 +38,8 @@ function catalog() {
   };
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
+      './tool-categories': loadRuntimeModule('src/app/api/agents/tools/router/tool-categories.ts', {}),
+      './tool-routing-policy': loadRuntimeModule('src/app/api/agents/tools/router/tool-routing-policy.ts', {}),
       '@/lib/services/embeddings-service': {},
       '../catalog_commerce/batch-admin-tool': { bindCatalogBatchActor: (tool: unknown) => tool },
       './screen-access': { loadToolScreenAccess: async () => ({ isAdmin: true, blockedScreens: [] }),

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 import { AIAgentExecutor } from '../ai-agent-executor';
 import { chargeOpenRouterUsage } from '@/lib/services/billing/openrouter-usage-billing';
+import { getProviderRetryDecision } from '@/lib/services/ai/provider-retry-policy';
 
 jest.mock('@/lib/services/billing/openrouter-usage-billing', () => ({ chargeOpenRouterUsage: jest.fn() }));
 
@@ -126,7 +127,7 @@ it('does not submit another generation after an interrupted stream', async () =>
   (executor as any).client.chat.completions.create = create;
   await expect(executor.act({ prompt: 'Run', tools: [], stream: true,
     onStreamStart: async () => 'log', onStreamChunk: async () => {},
-  })).rejects.toBe(interrupted);
+  })).rejects.toMatchObject({ inferenceAccepted: true });
   expect(create).toHaveBeenCalledTimes(1);
 });
 
@@ -223,6 +224,39 @@ it('rejects a mid-stream error envelope without executing tools or creating anot
     onStreamStart: async () => 'log', onStreamChunk: async () => {} })).rejects.toThrow('after acceptance');
   expect(create).toHaveBeenCalledTimes(1);
   expect(tool.execute).not.toHaveBeenCalled();
+});
+
+it.each(['transport', 'callback'])('marks accepted stream %s errors non-retryable even without provider identity', async stage => {
+  const executor = new AIAgentExecutor({ siteId: 'synthetic-site' });
+  const credential = randomBytes(24).toString('hex');
+  const error = Object.assign(new Error(`password=${credential}`), { status: 503 });
+  const tool = { name: 'write', execute: jest.fn() };
+  const create = jest.fn().mockResolvedValue((async function* () {
+    if (stage === 'transport') throw error;
+    yield { choices: [{ delta: { content: 'partial' } }] };
+  })());
+  (executor as any).client.chat.completions.create = create;
+  let caught: any;
+  try {
+    await executor.act({ prompt: 'Run', tools: [tool], stream: true,
+      onStreamStart: async () => { throw error; }, onStreamChunk: async () => {} });
+  } catch (failure) { caught = failure; }
+  expect(caught).toMatchObject({ inferenceAccepted: true });
+  expect(getProviderRetryDecision(caught)).toBeUndefined();
+  expect(String(caught)).not.toContain(credential);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(tool.execute).not.toHaveBeenCalled();
+});
+
+it('preserves post-completion host errors but marks them unsafe for another inference', async () => {
+  const executor = new AIAgentExecutor();
+  const error = Object.freeze(Object.assign(new Error('Host unavailable'), { status: 503 }));
+  const create = jest.fn().mockResolvedValue({ choices: [{ message: { content: 'Done' }, finish_reason: 'stop' }] });
+  (executor as any).client.chat.completions.create = create;
+  await expect(executor.act({ prompt: 'Run', tools: [], onStep: () => { throw error; } })).rejects.toBe(error);
+  expect(getProviderRetryDecision(error)).toBeUndefined();
+  expect(create).toHaveBeenCalledTimes(1);
 });
 
 it.each([false, true])('settles each generation before tools and preserves actual usage (stream=%s)', async streaming => {
@@ -348,7 +382,7 @@ it('settles stream/callback failure metadata without dispatching again', async (
   })());
   (executor as any).client.chat.completions.create = create;
   await expect(executor.act({ prompt: 'Run', tools: [], stream: true,
-    onStreamStart: async () => { throw new Error('Log unavailable'); }, onStreamChunk: async () => {} })).rejects.toThrow('Log unavailable');
+    onStreamStart: async () => { throw new Error('Log unavailable'); }, onStreamChunk: async () => {} })).rejects.toMatchObject({ inferenceAccepted: true });
   expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ generationId: 'generation-failed', usage: { cost: 0.01 } }));
   expect(create).toHaveBeenCalledTimes(1);
 });

@@ -279,6 +279,8 @@ test('direct cloud catalog descriptors dispatch through the canonical boundary e
     realTools.createCloudFileTools(scope, assertActive, { ...options, store: { write } as any }));
   const { routeTools } = loadRuntimeModule<typeof import('@/app/api/agents/tools/router/assistantProtocol')>(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
+      './tool-categories': loadRuntimeModule('src/app/api/agents/tools/router/tool-categories.ts', {}),
+      './tool-routing-policy': loadRuntimeModule('src/app/api/agents/tools/router/tool-routing-policy.ts', {}),
       '@/lib/services/embeddings-service': {},
       '../catalog_commerce/batch-admin-tool': { bindCatalogBatchActor: (tool: unknown) => tool },
       './screen-access': { loadToolScreenAccess: async () => ({ isAdmin: true, blockedScreens: [] }),

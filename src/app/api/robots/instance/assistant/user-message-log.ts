@@ -1,4 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { ASSISTANT_FAILURE_MESSAGE } from '@/lib/services/robot-instance/assistant-failure-policy';
+import { redactRuntimeSecrets } from '@/app/api/cron/shared/runtime-log-context';
 
 const DUPLICATE_WINDOW_MS = 60_000;
 
@@ -83,9 +85,9 @@ export async function markRemoteInstanceError(params: {
   const insert = async () => supabaseAdmin.from('instance_logs').insert({
     log_type: 'error',
     level: 'error',
-    message: `Assistant failed after retries: ${params.errorMessage}`.slice(0, 2000),
+    message: ASSISTANT_FAILURE_MESSAGE,
     details: {
-      error: params.errorMessage,
+      error: redactRuntimeSecrets(params.errorMessage).slice(0, 2000),
       source: 'assistant_retry_exhausted',
     },
     instance_id: params.instanceId,

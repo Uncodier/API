@@ -23,7 +23,7 @@ beforeEach(() => {
 
 it('registers definitions in the factory shared by MCP stdio, HTTP and assistant tools', () => {
   const root = path.resolve(__dirname, '../../..');
-  const factory = readFileSync(path.join(root, 'app/api/robots/instance/assistant/utils.ts'), 'utf8');
+  const factory = readFileSync(path.join(root, 'app/api/robots/instance/assistant/assistant-tools.ts'), 'utf8');
   const mcp = readFileSync(path.join(root, 'lib/mcp/server.ts'), 'utf8');
   expect(factory).toContain('...createProcurementTools({ siteId, userId })');
   expect(mcp).toContain('getAssistantTools(siteId, userId, instanceId, customTools)');

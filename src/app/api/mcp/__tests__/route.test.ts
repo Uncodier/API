@@ -24,7 +24,7 @@ const reader = loadRuntimeModule<typeof import('@/lib/services/robot-instance/in
 // router/screen-access.test.ts; these tests exercise context/transport only.
 // Unrelated tool factories are inert; no .env, providers or live database.
 function catalog() {
-  const utilsPath = 'src/app/api/robots/instance/assistant/utils.ts';
+  const utilsPath = 'src/app/api/robots/instance/assistant/assistant-tools.ts';
   const dependencies: Record<string, unknown> = {};
   const source = ts.createSourceFile(utilsPath, readFileSync(path.resolve(utilsPath), 'utf8'), ts.ScriptTarget.Latest, true);
   for (const statement of source.statements) {
@@ -54,6 +54,8 @@ function catalog() {
   dependencies['@/lib/services/harness-diagnostics/tools'] = { refreshHarnessToolManifest: (tools: unknown) => tools };
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
+      './tool-categories': loadRuntimeModule('src/app/api/agents/tools/router/tool-categories.ts', {}),
+      './tool-routing-policy': loadRuntimeModule('src/app/api/agents/tools/router/tool-routing-policy.ts', {}),
       '@/lib/services/embeddings-service': {},
       '../catalog_commerce/batch-admin-tool': { bindCatalogBatchActor: (tool: unknown) => tool },
       './screen-access': {

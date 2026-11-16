@@ -18,6 +18,9 @@
  * auto-correct without needing a separate `describe` round-trip when it fails.
  */
 
+import { injectThoughtProcess, isAlwaysOnToolName } from './tool-routing-policy';
+export { DEFAULT_ALWAYS_ON_TOOL_NAMES, isAlwaysOnToolName } from './tool-routing-policy';
+
 import { EmbeddingsService } from '@/lib/services/embeddings-service';
 import { bindCatalogBatchActor } from '../catalog_commerce/batch-admin-tool';
 import {
@@ -32,123 +35,8 @@ export type RoutedTool = {
   execute: (args: any) => Promise<any> | any;
 };
 
-export type ToolCategory =
-  | 'media'
-  | 'messaging'
-  | 'crm'
-  | 'commerce'
-  | 'social'
-  | 'content'
-  | 'infra'
-  | 'research'
-  | 'ui'
-  | 'other';
-
-// Category assignment is best-effort metadata for the `list` action so the
-// model can filter/narrow (e.g. "show me all media tools"). Unknown names
-// fall back to "other".
-export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
-  // media
-  generate_image: 'media',
-  generate_video: 'media',
-  generate_audio: 'media',
-  audio_to_text: 'media',
-
-  // messaging
-  sendEmail: 'messaging',
-  sendWhatsApp: 'messaging',
-  whatsappTemplate: 'messaging',
-  sendBulkMessages: 'messaging',
-  placeVoiceCall: 'messaging',
-  configure_email: 'messaging',
-  configure_whatsapp: 'messaging',
-  conversations: 'messaging',
-  messages: 'messaging',
-
-  // crm / growth
-  leads: 'crm',
-  sales: 'crm',
-  deals: 'crm',
-  sales_order: 'crm',
-  quotations: 'commerce',
-  quotation_items: 'commerce',
-  entitlements: 'commerce',
-  subscription_plan_items: 'commerce',
-  subscriptions: 'commerce',
-  price_lists: 'commerce',
-  pass_redeemable_items: 'commerce',
-  reservation_schedules: 'commerce',
-  calendars: 'crm',
-  reservations: 'commerce',
-  catalog_commerce: 'commerce',
-  promotions: 'commerce',
-  checkout: 'commerce',
-  purchases: 'commerce',
-  purchase_items: 'commerce',
-  procurement_requests: 'commerce',
-  procurement_tenders: 'commerce',
-  procurement_quotations: 'commerce',
-  procurement_orders: 'commerce',
-  procurement_approvals: 'commerce',
-  procurement_policy: 'commerce',
-  transactions: 'commerce',
-  audience: 'crm',
-  segments: 'crm',
-  campaigns: 'crm',
-  analyzeICPTotalCount: 'crm',
-  createIcpMining: 'crm',
-  getFinderCategoryIds: 'crm',
-  search_region_venues: 'crm',
-  categories: 'content',
-
-  // social
-  social_media_accounts: 'social',
-  social_media_publish: 'social',
-  social_media_posts: 'social',
-  social_media_analytics: 'social',
-  publish: 'social',
-
-  // content / assets
-  content: 'content',
-  copywriting: 'content',
-  assets: 'content',
-  site_settings: 'content',
-  record_category: 'content',
-  record: 'content',
-  read_document: 'content',
-
-  // infra / ops
-  create_project: 'infra',
-  create_secret: 'infra',
-  webhooks: 'infra',
-  workflows: 'infra',
-  scheduling: 'infra',
-  system_notification: 'infra',
-  tasks: 'infra',
-  report: 'infra',
-  instance: 'infra',
-  instance_project: 'infra',
-  instance_logs: 'infra',
-  instance_history: 'infra',
-  update_repo: 'infra',
-  createAccount: 'infra',
-  verifyAccount: 'infra',
-  memories: 'infra',
-  save_on_memory: 'infra',
-  get_memories: 'infra',
-
-  // research
-  webSearch: 'research',
-  url_to_markdown: 'research',
-  url_to_sitemap: 'research',
-
-  // ui
-  show_artifact: 'ui',
-};
-
-function categoryOf(name: string): ToolCategory {
-  return TOOL_CATEGORIES[name] ?? 'other';
-}
+import { categoryOf } from './tool-categories';
+export { TOOL_CATEGORIES, type ToolCategory } from './tool-categories';
 
 function shortDescription(desc: string | undefined, max = 180): string {
   if (!desc) return '';
@@ -513,30 +401,6 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
   };
 }
 
-function injectThoughtProcess(tool: RoutedTool): RoutedTool {
-  if (!tool || !tool.parameters || !tool.parameters.properties) return tool;
-  
-  const currentRequired = tool.parameters.required || [];
-  const newRequired = currentRequired.includes('thought_process') 
-    ? currentRequired 
-    : [...currentRequired, 'thought_process'];
-    
-  return {
-    ...tool,
-    parameters: {
-      ...tool.parameters,
-      properties: {
-        ...tool.parameters.properties,
-        thought_process: {
-          type: 'string',
-          description: 'Required. Explain step-by-step why you are calling this tool and what you expect to achieve based on your current objective.'
-        }
-      },
-      required: newRequired
-    }
-  };
-}
-
 /**
  * Partition helper: given the full tools array and a set of always-on tool
  * names, returns `[...alwaysOn, tools(rest)]`.
@@ -562,11 +426,6 @@ export function withToolsRouter(allTools: RoutedTool[], alwaysOnNames: ReadonlyS
   return [...alwaysOn, routerTool];
 }
 
-/**
- * Canonical always-on set (minimal).
- *
- * Shared by orchestrator and executors so behaviour is consistent.
- */
 /** Hoist webSearch-style `{ results, answer }` so `tools` does not return only the search answer. */
 export function hoistRoutedToolResult(result: unknown): { results?: unknown; answer?: unknown; citations?: unknown; sources?: unknown } {
   if (!result || typeof result !== 'object') return {};
@@ -590,58 +449,6 @@ export function hoistRoutedToolResult(result: unknown): { results?: unknown; ans
     }
   }
   return {};
-}
-
-export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
-  // Host-bound requirement capabilities share the same routing/permission guards.
-  'read_files', 'list_files', 'search', 'apply_patch', 'exec', 'process_status', 'process_stop',
-  'read_cloud_file', 'list_cloud_files', 'write_cloud_file',
-  'tracking_install', 'source_archive', 'deployment_trigger', 'deployment_status',
-  'deployment_create', 'deployment_environment_sync', 'platform_key_provision',
-  'capability_manifest', 'requirement_context', 'requirement_progress', 'requirement_plan',
-  'finish_task', 'read_session_history', 'read_result_artifact',
-  // sandbox surface — every agent uses these every turn
-  'webSearch',
-  'skill_lookup',
-  'external_skill_lookup',
-  'sandbox_run_command',
-  'sandbox_read_file',
-  'sandbox_list_files',
-  'sandbox_write_file',
-  'sandbox_push_checkpoint',
-  'sandbox_restore_checkpoint',
-  'sandbox_read_logs',
-  // QA sandbox tools (names from getQaSandboxTools — we keep any whose name starts with sandbox_ or qa_)
-  // They are added dynamically below via the isAlwaysOn() helper if needed.
-
-  // plan + requirement surface — the contract between agents and the workflow
-  'instance_plan',
-  'requirement_status',
-  'requirement_backlog',
-  'requirements',
-  'plan_result',
-  'harness_inspect',
-  'harness_events',
-  'harness_reference',
-  'harness_source',
-  'harness_decide',
-  
-  // direct ui feedback surface
-  'show_artifact',
-]);
-
-/**
- * More permissive check used by the partition helper: treats every tool whose
- * name starts with `sandbox_` or `qa_` as always-on, in addition to the
- * explicit set above. This future-proofs QA/sandbox tool additions without
- * having to update the constant each time.
- */
-export function isAlwaysOnToolName(name: string): boolean {
-  if (DEFAULT_ALWAYS_ON_TOOL_NAMES.has(name)) return true;
-  if (name === 'webSearch') return true;
-  if (name.startsWith('sandbox_')) return true;
-  if (name.startsWith('qa_')) return true;
-  return false;
 }
 
 /**

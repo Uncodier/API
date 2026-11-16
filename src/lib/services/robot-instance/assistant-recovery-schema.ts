@@ -41,6 +41,8 @@ export type AssistantRecoverySnapshot = {
   inFlightSince?: string;
   inFlightKind?: 'turn' | 'plan';
   lastActivityAt?: string;
+  /** Durable admission deadline; maintenance must not claim earlier. */
+  retryNotBefore?: string;
   toolObservations?: RecoveryToolObservation[];
   interruptionContext?: string;
   /** Server-owned restriction: finish the conversation without executing managed work. */
@@ -206,13 +208,13 @@ export function parseRecoverySnapshot(value: unknown): AssistantRecoverySnapshot
   const result = cloneRecoveryJson(value, MAX_RECOVERY_SNAPSHOT_BYTES);
   if (!isRecord(result)) throw new RecoveryError('invalid_state');
   onlyKeys(result, ['version', 'revision', 'execution', 'nodeFingerprint', 'messages', 'continuation', 'inFlight', 'respawnCount', 'lease_token',
-    'inFlightSince', 'inFlightKind', 'lastActivityAt', 'toolObservations', 'interruptionContext', 'conversationOnly']);
+    'inFlightSince', 'inFlightKind', 'lastActivityAt', 'retryNotBefore', 'toolObservations', 'interruptionContext', 'conversationOnly']);
   if (result.version !== 1 || typeof result.revision !== 'string' || !UUID.test(result.revision) || typeof result.inFlight !== 'boolean' ||
       !Number.isSafeInteger(result.respawnCount) || (result.respawnCount as number) < 0 ||
       ('lease_token' in result && (typeof result.lease_token !== 'string' || !UUID.test(result.lease_token)))) {
     throw new RecoveryError('invalid_state');
   }
-  for (const key of ['inFlightSince', 'lastActivityAt']) {
+  for (const key of ['inFlightSince', 'lastActivityAt', 'retryNotBefore']) {
     if (key in result && (typeof result[key] !== 'string' || !Number.isFinite(Date.parse(result[key] as string)))) {
       throw new RecoveryError('invalid_state');
     }

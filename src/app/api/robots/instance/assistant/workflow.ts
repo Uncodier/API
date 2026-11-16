@@ -1,6 +1,8 @@
 'use workflow';
+import { sleep } from 'workflow';
 
 import { processAssistantTurn } from './assistant-turn';
+import { ASSISTANT_FAILURE_MESSAGE } from '@/lib/services/robot-instance/assistant-failure-policy';
 import { prepareAssistantContext } from './steps';
 import { getActiveInstancePlan, getAssistantPlanOwnershipStep, executePlanStep, acquirePlanExecutionLockStep, releasePlanExecutionLockStep } from './plan-steps';
 import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep, pauseUserMessageStep, pauseAssistantForCreditsStep } from './persist-and-fail-steps';
@@ -147,6 +149,18 @@ export async function runAssistantWorkflow(
     if (!await guardRecoveryStep(recoveryScope, true, messages)) return blockedResult;
     turns++;
     const stepResult = await processAssistantTurn(context, messages);
+    if (stepResult.recoverableFailure) {
+      if (typeof stepResult.retryNotBefore === 'number') await sleep(new Date(stepResult.retryNotBefore));
+      if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
+      const spawned = await spawnSilentContinueStep(recoveryScope);
+      if (spawned) return {
+        instance_id: instanceId, success: false, execution_status: 'continuing',
+        message: 'Execution is continuing after a temporary interruption', instance_node_id: instanceNodeId,
+      };
+      // A claim may have succeeded even if workflow admission was ambiguous.
+      // The catch ownership guard must leave that continuation untouched.
+      throw new Error('Safe automatic continuation unavailable');
+    }
     if (stepResult.creditExhausted) {
       if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
       const notice = await pauseAssistantForCreditsStep(instanceId, siteId, userId, userMessageLogId, recoveryScope.generation ?? 0);
@@ -375,12 +389,16 @@ export async function runAssistantWorkflow(
         message: notice.message, assistant_response: notice.message, instance_node_id: instanceNodeId };
     }
     const errMsg = error instanceof Error ? error.message : String(error);
-    console.error(`[Workflow] Assistant failed after retries for instance ${instanceId}:`, errMsg);
+    console.error(`[Workflow] Assistant failed for instance ${instanceId}; persisting a redacted diagnostic`);
     try {
-      await markAssistantFailedStep(instanceId, siteId, userId, errMsg.slice(0, 500), userMessageLogId, recoveryScope?.generation ?? 0);
+      await markAssistantFailedStep(instanceId, siteId, userId, errMsg, userMessageLogId, recoveryScope?.generation ?? 0);
     } catch {
       console.error(`[Workflow] Unable to persist assistant failure for instance ${instanceId}`);
+      // Fail operationally without leaking the diagnostic or replaying the turn.
+      throw new Error('Assistant failure could not be persisted; operational reconciliation required');
     }
-    throw error;
+    return { instance_id: instanceId, success: false, execution_status: 'failed',
+      message: ASSISTANT_FAILURE_MESSAGE, assistant_response: ASSISTANT_FAILURE_MESSAGE,
+      instance_node_id: instanceNodeId };
   }
 }

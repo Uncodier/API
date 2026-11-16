@@ -14,6 +14,8 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 ## Current architecture
 
+- [Assistant video analysis](VIDEO_ANALYSIS_TOOL.md) — configurable frame/audio intervals, transcription, resolution, iterative crop/temporal zoom, safe local extraction and runtime prerequisites.
+
 - [Customer OpenRouter connections](OPENROUTER_CUSTOMER_CONNECTIONS.md) — private encrypted key connection, free catalog discovery, manual policies and forward migration; customer execution activation remains blocked pending full runtime coverage.
 - [Customer OpenRouter completion validation](OPENROUTER_COMPLETION_VALIDATION.md) — automatic setup, consented image verification, immutable dispatch/plan/command references and continuation acceptance evidence.
 - [Customer OpenRouter review repairs](OPENROUTER_REVIEW_REPAIRS.md) — supervisor authorization, complete plan pinning, audio caller compatibility, combined capability contracts and video receipt/concurrency recovery.

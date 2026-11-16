@@ -13,10 +13,14 @@ export type ExecutionRoutingReference = Readonly<{
 export class CustomerRoutingError extends Error {
   /** Confirmed pre-dispatch/rejected request only; prevents legacy uncertain-charge handling. */
   readonly status: number;
-  constructor(readonly code: string = 'CUSTOMER_ROUTE_UNAVAILABLE') {
+  readonly retryNotBefore?: number;
+  constructor(readonly code: string = 'CUSTOMER_ROUTE_UNAVAILABLE', retryNotBefore?: number) {
     super('Customer OpenRouter routing is unavailable; platform fallback is prohibited');
     this.name = 'CustomerRoutingError';
     this.status = code === 'CUSTOMER_FUNDING_REQUIRED' ? 402 : 422;
+    if (code === 'CUSTOMER_PROVIDER_TRANSIENT_REJECTED' && Number.isFinite(retryNotBefore)) {
+      this.retryNotBefore = retryNotBefore;
+    }
   }
 }
 

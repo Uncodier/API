@@ -140,12 +140,12 @@ describe('interactive plan exhaustion and safe resumption', () => {
     expect(h.completeUserMessageStep).toHaveBeenCalledWith('route-user-log', 0);
   });
 
-  it('preserves the original workflow failure even when writing its error log fails', async () => {
+  it('fails operationally with sanitized text when writing its error log fails', async () => {
     const h = harness();
     const original = new Error('Context failed');
     h.prepareAssistantContext.mockRejectedValue(original);
     h.markAssistantFailedStep.mockRejectedValue(new Error('Error log unavailable'));
-    await expect(h.run()).rejects.toBe(original);
+    await expect(h.run()).rejects.toThrow('Assistant failure could not be persisted; operational reconciliation required');
     expect(h.markAssistantFailedStep).toHaveBeenCalled();
   });
 
@@ -253,7 +253,9 @@ describe('interactive plan exhaustion and safe resumption', () => {
       return write(request, options);
     });
     h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Finished'));
-    await expect(h.run()).rejects.toThrow('Failed to persist plan step completion: completion unavailable');
+    expect(await h.run()).toMatchObject({ success: false, execution_status: 'failed' });
+    expect(h.markAssistantFailedStep).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.any(String),
+      expect.stringContaining('Failed to persist plan step completion: completion unavailable'), expect.any(String), 0);
     expect(h.completeUserMessageStep).not.toHaveBeenCalled();
     expect(h.markAssistantFailedStep).toHaveBeenCalledTimes(1);
     expect(h.redis.eval).toHaveBeenCalledTimes(1);

@@ -155,6 +155,63 @@ describe('trusted action lifecycle and CAS', () => {
 });
 
 describe('checkpoint, token ownership, and effect fencing', () => {
+  async function readyConversation() {
+    const { instanceNodeId: _node, ...conversation } = execution;
+    await recovery.initializeAssistantRecovery(scope, conversation);
+    await recovery.checkpointAssistantRecovery(scope, { messages: receipts, continuation: { responseNodeIds: ['response-1'] } });
+  }
+  it('releases a settled no-tool turn while preserving prior receipts and continuation', async () => {
+    await readyConversation();
+    await recovery.markAssistantRecoveryInFlight(scope, receipts);
+    await recovery.releaseFailedAssistantTurn(scope);
+    expect(database.snapshot()).toMatchObject({ inFlight: false, messages: receipts, continuation: { responseNodeIds: ['response-1'] } });
+    expect((await recovery.claimAssistantRecovery(scope)).snapshot.respawnCount).toBe(1);
+  });
+  it('blocks maintenance and concurrent claims until the durable provider deadline', async () => {
+    await readyConversation();
+    await recovery.markAssistantRecoveryInFlight(scope, receipts);
+    const deadline = Date.now() + 3600000;
+    await recovery.releaseFailedAssistantTurn(scope, deadline);
+    expect(database.snapshot().retryNotBefore).toBe(new Date(deadline).toISOString());
+    await expect(recovery.claimAssistantRecovery(scope)).rejects.toMatchObject({ code: 'in_flight' });
+    expect(database.snapshot().respawnCount).toBe(0);
+    database.snapshot().retryNotBefore = new Date(Date.now() - 1000).toISOString();
+    expect((await recovery.claimAssistantRecovery(scope)).snapshot.respawnCount).toBe(1);
+  });
+
+  it.each(['unknown', 'returned', 'threw'] as const)('never releases a failed turn after a tool %s observation', async outcome => {
+    await readyConversation();
+    await recovery.markAssistantRecoveryInFlight(scope, receipts);
+    database.snapshot().toolObservations = [{ name: 'publish', args: '{}', outcome, observedAt: new Date().toISOString() }];
+    await expect(recovery.releaseFailedAssistantTurn(scope)).rejects.toMatchObject({ code: 'in_flight' });
+    expect(database.snapshot().inFlight).toBe(true);
+  });
+
+  it('rejects missing observations, plans, fan-outs, cancellation and stale owners', async () => {
+    await readyConversation();
+    await recovery.markAssistantRecoveryInFlight(scope, receipts);
+    delete database.snapshot().toolObservations;
+    await expect(recovery.releaseFailedAssistantTurn(scope)).rejects.toMatchObject({ code: 'in_flight' });
+    database.snapshot().toolObservations = [];
+    database.snapshot().inFlightKind = 'plan';
+    await expect(recovery.releaseFailedAssistantTurn(scope)).rejects.toMatchObject({ code: 'in_flight' });
+    database.snapshot().inFlightKind = 'turn';
+    database.snapshot().execution.expectedResultsAmount = 2;
+    await expect(recovery.releaseFailedAssistantTurn(scope)).rejects.toMatchObject({ code: 'in_flight' });
+    database.snapshot().execution.expectedResultsAmount = 1;
+    await expect(recovery.releaseFailedAssistantTurn({ ...scope, generation: 1 })).rejects.toMatchObject({ code: 'conflict' });
+    database.action().details.status = 'cancelled';
+    await expect(recovery.releaseFailedAssistantTurn(scope)).rejects.toMatchObject({ code: 'inactive' });
+  });
+
+  it('does not unlock node turns that can create or update response nodes outside tools', async () => {
+    database.tables.instance_nodes.push({ id: 'node', instance_id: scope.instanceId, site_id: scope.siteId,
+      type: 'prompt', parent_node_id: null, prompt: 'Publish', settings: {}, status: 'active' });
+    await recovery.initializeAssistantRecovery(scope, { ...execution, instanceNodeId: 'node' });
+    await recovery.checkpointAssistantRecovery(scope, { messages: receipts });
+    await recovery.markAssistantRecoveryInFlight(scope, receipts);
+    await expect(recovery.releaseFailedAssistantTurn(scope)).rejects.toMatchObject({ code: 'in_flight' });
+  });
   it('never replays ambiguous in-flight work and does permit current-owner tool guards', async () => {
     await ready();
     await recovery.markAssistantRecoveryInFlight(scope);

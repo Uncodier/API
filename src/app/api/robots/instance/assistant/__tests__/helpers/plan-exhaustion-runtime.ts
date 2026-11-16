@@ -75,6 +75,8 @@ export function harness() {
   const prepareRecoveryStep = jest.fn<AsyncMock>().mockResolvedValue({ ok: true });
   const workflow = loadRuntimeModule<typeof import('../../workflow')>(
     'src/app/api/robots/instance/assistant/workflow.ts', {
+      workflow: { sleep: async () => undefined },
+      '@/lib/services/robot-instance/assistant-failure-policy': { ASSISTANT_FAILURE_MESSAGE: 'Assistant unavailable; check task status before retrying.' },
       '@/lib/services/robot-instance/assistant-image-content': { buildAssistantUserContent },
       '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
       './assistant-turn': { processAssistantTurn },

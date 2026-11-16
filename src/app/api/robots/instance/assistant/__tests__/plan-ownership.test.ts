@@ -130,6 +130,8 @@ describe('post-conversation plan ownership', () => {
       '@/lib/utils/redis-client': { getRedisClient: lock },
     });
     const workflow = loadRuntimeModule<typeof import('../workflow')>('src/app/api/robots/instance/assistant/workflow.ts', {
+      workflow: { sleep: async () => undefined },
+      '@/lib/services/robot-instance/assistant-failure-policy': { ASSISTANT_FAILURE_MESSAGE: 'Assistant unavailable; check task status before retrying.' },
       './plan-steps': planSteps,
       './steps': { prepareAssistantContext: async () => context },
       './assistant-turn': { processAssistantTurn: async (_context: any, messages: any[]) => {

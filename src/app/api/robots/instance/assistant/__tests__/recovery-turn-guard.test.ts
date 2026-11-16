@@ -9,12 +9,14 @@ const toolExecute = jest.fn<AsyncMock>();
 const getTools = jest.fn<AsyncMock>();
 const observeTool = jest.fn<AsyncMock>();
 const statusRead = jest.fn<AsyncMock>();
+const releaseFailedTurn = jest.fn<AsyncMock>();
 jest.unstable_mockModule('../conversation-recovery-tools', () => ({
   CONVERSATION_RECOVERY_INSTRUCTION: 'CONVERSATION-ONLY RECOVERY: do not execute the plan',
   getConversationRecoveryTools: () => [{ name: 'conversation_status', execute: statusRead }],
 }));
 jest.unstable_mockModule('@/lib/services/robot-instance/assistant-recovery', () => ({
   assertAssistantRecoveryActive: assertActive, runAssistantRecoveryTool: observeTool,
+  releaseFailedAssistantTurn: releaseFailedTurn,
 }));
 jest.unstable_mockModule('../publish-node-binding', () => ({ resolvePublishNodeBinding: resolveBinding }));
 jest.unstable_mockModule('@/lib/services/robot-instance/assistant-executor', () => ({ executeAssistantStep: execute }));
@@ -46,6 +48,41 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); });
 
 describe('per-turn and per-tool recovery guards', () => {
+  it('carries a settled transient error as recoverable data only after a safe release', async () => {
+    execute.mockRejectedValue(Object.assign(new Error('Provider unavailable'), { statusCode: 503 }));
+    expect(await processAssistantTurn(context, [{ role: 'user', content: 'Publish' }])).toMatchObject({ recoverableFailure: true });
+    expect(releaseFailedTurn).toHaveBeenCalledWith(scope, expect.any(Number));
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when transient failure has uncertain effects', async () => {
+    const error = Object.assign(new Error('Provider unavailable'), { statusCode: 503 });
+    execute.mockRejectedValue(error);
+    releaseFailedTurn.mockRejectedValue(new Error('in_flight'));
+    await expect(processAssistantTurn(context, [])).rejects.toBe(error);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { generationId: 'synthetic-generation' }, { usage: { cost: 0.01 } },
+    { error: { metadata: { generation_id: 'synthetic-generation' } } },
+    { inferenceAccepted: true }, { cause: { usage: { cost: 0.01 } } },
+  ])('never releases a transient error with acceptance evidence %j', async evidence => {
+    const error = Object.assign(new Error('Provider error'), { status: 503 }, evidence);
+    execute.mockRejectedValue(error);
+    await expect(processAssistantTurn(context, [])).rejects.toBe(error);
+    expect(releaseFailedTurn).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not release application errors or failures without durable recovery', async () => {
+    const error = new Error('Invalid arguments');
+    execute.mockRejectedValue(error);
+    await expect(processAssistantTurn(context, [])).rejects.toBe(error);
+    execute.mockRejectedValue(Object.assign(error, { status: 503 }));
+    await expect(processAssistantTurn({ ...context, recoveryScope: undefined }, [])).rejects.toBe(error);
+    expect(releaseFailedTurn).not.toHaveBeenCalled();
+  });
   it('forwards authoritative content binding and same response-node continuation', async () => {
     await processAssistantTurn(context, []);
     const options = execute.mock.calls[0][2];

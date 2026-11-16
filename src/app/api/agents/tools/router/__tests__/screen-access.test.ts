@@ -70,6 +70,18 @@ it('maps actual assistant protocol names and never grants access to unknown name
   }
 });
 
+it('uses the transcription screen policy for video analysis and denies dispatch when blocked', async () => {
+  expect(mapping.tools.analyze_video).toEqual(mapping.tools.audio_to_text);
+  const video = tool('analyze_video');
+  const router = toolsRouterTool([video, tool('audio_to_text')], scope);
+  expect(await router.execute({ action: 'list', category: 'media' })).toMatchObject({ count: 2 });
+  blocked = ['contentCreator'];
+  expect(await router.execute({ action: 'list', category: 'media' })).toMatchObject({ count: 0 });
+  expect(await router.execute({ action: 'describe', name: 'analyze_video' })).toMatchObject({ status: 403 });
+  expect(await router.execute({ action: 'call', name: 'analyze_video', args: '{}' })).toMatchObject({ status: 403 });
+  expect(video.execute).not.toHaveBeenCalled();
+});
+
 it('uses exact navigation keys and all required screens, not category or role strings', () => {
   expect(canUseToolScreen('transactions', { isAdmin: false, blockedScreens: ['transactions'] })).toBe(false);
   expect(canUseToolScreen('sales', { isAdmin: false, blockedScreens: ['transactions'] })).toBe(true);

@@ -18,7 +18,7 @@ jest.mock('@vercel/sandbox', () => ({ Sandbox: {} }));
 const siteId = randomUUID();
 const instanceId = randomUUID();
 const nodeId = randomUUID();
-const utilsPath = 'src/app/api/robots/instance/assistant/utils.ts';
+const utilsPath = 'src/app/api/robots/instance/assistant/assistant-tools.ts';
 
 // Execute the actual catalog and router with fail-closed I/O. All unrelated
 // catalog factories are inert, so this never imports provider clients or .env.
@@ -58,6 +58,8 @@ function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true,
   };
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
+      './tool-categories': loadRuntimeModule('src/app/api/agents/tools/router/tool-categories.ts', {}),
+      './tool-routing-policy': loadRuntimeModule('src/app/api/agents/tools/router/tool-routing-policy.ts', {}),
       '@/lib/services/embeddings-service': {},
       '../catalog_commerce/batch-admin-tool': { bindCatalogBatchActor: (tool: unknown) => tool },
       // Provenance is not authority. This suite isolates private context wiring;
@@ -71,6 +73,49 @@ function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true,
 }
 
 describe('assistant private execution context wiring', () => {
+  it('registers video analysis beside transcription with host scope in every UI output mode', async () => {
+    const execute = jest.fn(async () => ({ description: 'Offline video description' }));
+    const analyzeVideoTool = jest.fn(() => ({ name: 'analyze_video', description: 'Analyze video',
+      parameters: { type: 'object', properties: {} }, execute }));
+    const audioToTextTool = () => ({ name: 'audio_to_text', description: 'Transcribe audio',
+      parameters: { type: 'object', properties: {} }, execute: jest.fn() });
+    const tools = catalog(undefined, {
+      '@/app/api/agents/tools/analyzeVideo/assistantProtocol': { analyzeVideoTool },
+      '@/app/api/agents/tools/audioToText/assistantProtocol': { audioToTextTool },
+    });
+    for (const output of [undefined, 'text', 'image', 'audio', 'video'] as const) {
+      const definitions = tools.getAssistantToolDefinitions(siteId, undefined, instanceId, [],
+        undefined, undefined, undefined, output);
+      const names = definitions.map(tool => tool.name);
+      expect(names.filter(name => name === 'analyze_video')).toHaveLength(1);
+      expect(names.indexOf('analyze_video')).toBe(names.indexOf('audio_to_text') + 1);
+    }
+    expect(analyzeVideoTool).toHaveBeenCalledWith(siteId, instanceId);
+    const routed = await tools.getInstanceAssistantTools(siteId, undefined, instanceId);
+    const router = routed.find(tool => tool.name === 'tools')!;
+    expect(await router.execute({ action: 'list', category: 'media' })).toMatchObject({
+      tools: expect.arrayContaining([expect.objectContaining({ name: 'analyze_video', category: 'media' })]),
+    });
+    expect(await router.execute({ action: 'describe', name: 'analyze_video' })).toMatchObject({ success: true });
+    expect(await router.execute({ action: 'call', name: 'analyze_video', args: '{}' })).toMatchObject({ success: true });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the public utils tool-factory exports without a runtime back edge', () => {
+    const tools = catalog();
+    const compatibility = loadRuntimeModule<typeof import('../utils')>(
+      'src/app/api/robots/instance/assistant/utils.ts', {
+        './assistant-tools': tools,
+        '@/lib/database/supabase-client': {}, '@/lib/helpers/agent-finder': {},
+        '@/lib/services/agent-memory-tools-service': {}, '@/lib/timezone': {},
+        '@/lib/agentbase/services/agent/BackgroundServices/BackgroundBuilder': {},
+        '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher': {},
+      });
+    expect(compatibility.getAssistantToolDefinitions).toBe(tools.getAssistantToolDefinitions);
+    expect(compatibility.getAssistantTools).toBe(tools.getAssistantTools);
+    expect(compatibility.getInstanceAssistantTools).toBe(tools.getInstanceAssistantTools);
+  });
+
   it('passes the host-owned site and user into router authorization, separately from model arguments', async () => {
     const userId = randomUUID();
     const loadAccess = jest.fn(async (_scope: unknown) => ({ isAdmin: true, blockedScreens: [] }));
@@ -201,6 +246,9 @@ describe('assistant private execution context wiring', () => {
     const { processAssistantTurn } = loadRuntimeModule<typeof import('../assistant-turn')>(
       'src/app/api/robots/instance/assistant/assistant-turn.ts', {
         './assistant-turn-core': { processAssistantTurn: processTurn },
+        '@/lib/services/robot-instance/assistant-recovery': { releaseFailedAssistantTurn: jest.fn() },
+        '@/lib/services/robot-instance/assistant-failure-policy': { getProviderRetryDecision: () => undefined },
+        './requirement-host': { readRequirementAssistantHost: () => undefined },
       });
     const context = {} as Parameters<typeof processAssistantTurn>[0];
     const messages: Parameters<typeof processAssistantTurn>[1] = [];

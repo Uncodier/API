@@ -39,6 +39,7 @@
     "assets": { "screens": ["assets"] },
     "audience": { "screens": ["people", "leads"] },
     "audio_to_text": { "screens": ["contentCreator"] },
+    "analyze_video": { "screens": ["contentCreator"] },
     "block_calendar_time": { "screens": ["calendar"] },
     "calendars": { "screens": ["calendar", "team", "catalog"] },
     "campaigns": { "screens": ["campaigns"] },

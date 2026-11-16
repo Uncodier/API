@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { captureRecoveryNodeFingerprint } from './assistant-recovery-fingerprint';
 import { buildInterruptedRecoveryContext, mergeInterruptedRecoveryContext, summarizeRecoveryTool } from './assistant-recovery-context';
 import { IN_FLIGHT_STALL_MS } from './assistant-respawn-policy';
+import { MAX_PROVIDER_RETRY_DELAY_MS } from '@/lib/services/ai/provider-retry-policy';
 import { isWorkflowManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
 import {
   assertRecoveryScope, canonicalRecoveryJson, cloneRecoveryJson, isRecord,
@@ -163,6 +164,27 @@ export async function markAssistantRecoveryInFlight(
   });
 }
 
+/** A settled failed model turn is retryable only when no tool could have run.
+ * Never discard observations or use this to unlock a timed-out/live worker.
+ */
+export async function releaseFailedAssistantTurn(scope: AssistantRecoveryScope, retryAt?: number): Promise<void> {
+  return safeRecovery(async () => {
+    const active = await readRecovery(scope);
+    assertOwner(scope, active.snapshot);
+    if (retryAt !== undefined && (!Number.isFinite(retryAt) || retryAt - Date.now() > MAX_PROVIDER_RETRY_DELAY_MS)) {
+      throw new RecoveryError('invalid_state');
+    }
+    if (!active.snapshot.inFlight || active.snapshot.inFlightKind !== 'turn' ||
+        active.snapshot.execution.instanceNodeId ||
+        !Array.isArray(active.snapshot.toolObservations) || active.snapshot.toolObservations.length ||
+        (active.snapshot.execution.expectedResultsAmount ?? 1) !== 1 ||
+        !active.snapshot.messages.length) throw new RecoveryError('in_flight');
+    const { inFlightSince: _started, inFlightKind: _kind, toolObservations: _tools, ...snapshot } = active.snapshot;
+    await compareAndSwap(scope, active, { ...snapshot, inFlight: false, lastActivityAt: new Date().toISOString(),
+      ...(retryAt !== undefined ? { retryNotBefore: new Date(retryAt).toISOString() } : {}) });
+  });
+}
+
 export async function checkpointAssistantRecovery(
   scope: AssistantRecoveryScope,
   checkpoint: { messages: unknown[]; continuation?: { responseNodeIds: string[] } },
@@ -242,6 +264,9 @@ export async function claimAssistantRecovery(scope: AssistantRecoveryScope, opti
   return safeRecovery(async () => {
     const active = await readRecovery(scope);
     if (active.snapshot.lease_token) throw new RecoveryError('conflict');
+    if (active.snapshot.retryNotBefore && Date.parse(active.snapshot.retryNotBefore) > Date.now()) {
+      throw new RecoveryError('in_flight');
+    }
     if (options?.conversationOnly && !active.snapshot.conversationOnly) {
       // The cron hint is not authority: re-read the phase and managed plan here.
       if (active.snapshot.inFlightKind !== 'turn' || active.snapshot.execution.instanceNodeId) {

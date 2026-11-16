@@ -1,5 +1,7 @@
 import { insertUserActionLog, markRemoteInstanceError, setUserMessageStatus, withRetries } from '../user-message-log';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { randomBytes } from 'node:crypto';
+import { ASSISTANT_FAILURE_MESSAGE } from '@/lib/services/robot-instance/assistant-failure-policy';
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -88,6 +90,19 @@ describe('insertUserActionLog', () => {
 });
 
 describe('markRemoteInstanceError', () => {
+  it('keeps technical paths out of public text and redacts diagnostic credentials', async () => {
+    const credential = randomBytes(24).toString('hex');
+    const update = createChain({ error: null });
+    const insert = createChain({ error: null });
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(update).mockReturnValueOnce(insert);
+    await markRemoteInstanceError({ instanceId: 'instance', siteId: 'site',
+      errorMessage: `FatalError: step//internal/assistant-turn password=${credential}` });
+    const row = insert.insert.mock.calls[0][0];
+    expect(row.message).toBe(ASSISTANT_FAILURE_MESSAGE);
+    expect(row.message).not.toContain('step//');
+    expect(row.details.error).toContain('FatalError');
+    expect(JSON.stringify(row)).not.toContain(credential);
+  });
   beforeEach(() => {
     jest.clearAllMocks();
   });

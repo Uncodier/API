@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { buildAssistantUserContent } from '@/lib/services/robot-instance/assistant-image-content';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
+import { ASSISTANT_FAILURE_MESSAGE } from '@/lib/services/robot-instance/assistant-failure-policy';
 
 type AsyncMock = (...args: any[]) => Promise<any>;
 function setup() {
@@ -16,6 +17,7 @@ function setup() {
   const guardRecoveryStep = jest.fn<AsyncMock>().mockResolvedValue(true);
   const checkpointRecoveryStep = jest.fn<AsyncMock>().mockResolvedValue(true);
   const spawnSilentContinueStep = jest.fn<AsyncMock>().mockResolvedValue(true);
+  const sleep = jest.fn<AsyncMock>().mockResolvedValue(undefined);
   const completeUserMessageStep = jest.fn<AsyncMock>();
   const pauseUserMessageStep = jest.fn<AsyncMock>();
   const markAssistantFailedStep = jest.fn<AsyncMock>();
@@ -26,6 +28,8 @@ function setup() {
     messages, text, isDone, continuation: { responseNodeIds: ['response'] }, steps: [], usage: {}, output: null,
   });
   const workflow = loadRuntimeModule<typeof import('../workflow')>('src/app/api/robots/instance/assistant/workflow.ts', {
+    workflow: { sleep },
+    '@/lib/services/robot-instance/assistant-failure-policy': { ASSISTANT_FAILURE_MESSAGE },
     '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
     '@/lib/services/robot-instance/assistant-image-content': { buildAssistantUserContent },
     './assistant-turn': { processAssistantTurn }, './steps': { prepareAssistantContext },
@@ -45,10 +49,66 @@ function setup() {
   );
   return { run, context, execution, transcript, processAssistantTurn, prepareRecoveryStep, guardRecoveryStep,
     checkpointRecoveryStep, spawnSilentContinueStep, completeUserMessageStep, pauseUserMessageStep,
-    markAssistantFailedStep, prepareAssistantContext, getActiveInstancePlan, executePlanStep, result };
+    markAssistantFailedStep, prepareAssistantContext, getActiveInstancePlan, executePlanStep, result, sleep };
 }
 
 describe('node execution continuation workflow', () => {
+  it('silently continues a safely released transient failure without marking or checkpointing it', async () => {
+    const h = setup();
+    h.processAssistantTurn.mockResolvedValue({ recoverableFailure: true });
+    expect(await h.run()).toMatchObject({ execution_status: 'continuing' });
+    expect(h.processAssistantTurn).toHaveBeenCalledTimes(1);
+    expect(h.spawnSilentContinueStep).toHaveBeenCalledWith(expect.objectContaining({ userMessageLogId: 'user-log' }));
+    expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
+    expect(h.checkpointRecoveryStep).not.toHaveBeenCalled();
+    expect(h.completeUserMessageStep).not.toHaveBeenCalled();
+  });
+
+  it('returns a safe terminal message when continuation is exhausted', async () => {
+    const h = setup();
+    h.processAssistantTurn.mockResolvedValue({ recoverableFailure: true });
+    h.spawnSilentContinueStep.mockResolvedValue(false);
+    expect(await h.run()).toMatchObject({ execution_status: 'failed', assistant_response: ASSISTANT_FAILURE_MESSAGE });
+    expect(h.markAssistantFailedStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mark an ambiguously admitted continuation failed', async () => {
+    const h = setup();
+    h.processAssistantTurn.mockResolvedValue({ recoverableFailure: true });
+    h.spawnSilentContinueStep.mockResolvedValue(false);
+    h.guardRecoveryStep.mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValue(false);
+    expect(await h.run()).toMatchObject({ execution_status: 'paused' });
+    expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
+  });
+
+  it('waits durably for Retry-After before requesting a continuation', async () => {
+    const h = setup();
+    const deadline = Date.now() + 3600000;
+    h.processAssistantTurn.mockResolvedValue({ recoverableFailure: true, retryNotBefore: deadline });
+    h.spawnSilentContinueStep.mockImplementation(async () => {
+      expect(h.sleep).toHaveBeenCalledTimes(1);
+      return true;
+    });
+    expect(await h.run()).toMatchObject({ execution_status: 'continuing' });
+    expect(h.sleep.mock.calls[0][0].getTime()).toBe(deadline);
+  });
+
+  it('does not continue after cancellation during the provider wait', async () => {
+    const h = setup();
+    h.processAssistantTurn.mockResolvedValue({ recoverableFailure: true, retryNotBefore: Date.now() + 1000 });
+    h.guardRecoveryStep.mockResolvedValueOnce(true).mockResolvedValue(false);
+    expect(await h.run()).toMatchObject({ execution_status: 'paused' });
+    expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
+  });
+
+  it('does not respawn arbitrary errors or expose their internal path', async () => {
+    const h = setup();
+    h.processAssistantTurn.mockRejectedValue(new Error('FatalError: step//internal/private/assistant-turn'));
+    const result = await h.run();
+    expect(result).toMatchObject({ execution_status: 'failed', assistant_response: ASSISTANT_FAILURE_MESSAGE });
+    expect(JSON.stringify(result)).not.toContain('step//internal');
+    expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
+  });
   it('continues after a publish receipt with the same transcript and response node, without replaying the send', async () => {
     const h = setup();
     let sends = 0;

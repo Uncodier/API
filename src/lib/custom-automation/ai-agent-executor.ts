@@ -27,6 +27,7 @@ import type OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
 import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { requestOpenRouterChat, resolveChatOutputTokens } from '@/lib/services/ai/openrouter-chat-request';
+import { markAcceptedInferenceFailure } from '@/lib/services/ai/provider-retry-policy';
 import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 import { fitInstanceRequest, resolveModelContextCapacity } from '@/lib/services/robot-instance/instance-context-budget';
 import { getVisionImageSourceUrl } from '@/lib/services/robot-instance/vision-message-images';
@@ -658,174 +659,181 @@ export class AIAgentExecutor {
       throw err;
     });
 
-    let content = '';
-    let generationId: string | undefined;
-    let responseModel: string | undefined;
-    let reasoningContent = '';
-    const reasoningDetails: any[] = [];
-    // `extra_content` carries Gemini 3's thought_signature
-    // (`extra_content.google.thought_signature`). We MUST persist it verbatim
-    // across the history or the next call 400s with "Function call is missing
-    // a thought_signature". See:
-    //   https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
-    //   https://github.com/openai/openai-openapi/issues/517
-    const toolCallsAccum: Record<string | number, { id?: string; type: 'function'; function: { name?: string; arguments?: string }; extra_content?: any; insertedAt: number }> = {};
-    let insertionCounter = 0;
-    let finishReason: string | undefined;
-    let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
-    let streamingLogId: string | undefined;
-    let thinkingLogId: string | undefined;
-    const STREAM_THROTTLE_MS = 80;
-    let lastEmitTime = 0;
-    let lastThinkingEmitTime = 0;
-
+    // Everything after stream admission may have consumed a paid generation,
+    // including transport errors and callbacks without identity/usage attached.
     try {
-      for await (const chunk of stream as unknown as AsyncIterable<any>) {
-        if (chunk.id) generationId = chunk.id;
-        if (chunk.model) responseModel = chunk.model;
-        if (chunk.usage) {
-          usage = chunk.usage;
-        }
-        if (chunk.error || chunk.choices?.[0]?.finish_reason === 'error') {
-          // An SSE error belongs to an accepted generation, not request admission.
-          throw new Error('OpenRouter stream failed after acceptance; reconcile before retrying.');
-        }
+      let content = '';
+      let generationId: string | undefined;
+      let responseModel: string | undefined;
+      let reasoningContent = '';
+      const reasoningDetails: any[] = [];
+      // `extra_content` carries Gemini 3's thought_signature
+      // (`extra_content.google.thought_signature`). We MUST persist it verbatim
+      // across the history or the next call 400s with "Function call is missing
+      // a thought_signature". See:
+      //   https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+      //   https://github.com/openai/openai-openapi/issues/517
+      const toolCallsAccum: Record<string | number, { id?: string; type: 'function'; function: { name?: string; arguments?: string }; extra_content?: any; insertedAt: number }> = {};
+      let insertionCounter = 0;
+      let finishReason: string | undefined;
+      let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
+      let streamingLogId: string | undefined;
+      let thinkingLogId: string | undefined;
+      const STREAM_THROTTLE_MS = 80;
+      let lastEmitTime = 0;
+      let lastThinkingEmitTime = 0;
 
-        const choice = chunk.choices?.[0];
-        if (!choice) continue;
-
-        if (choice.finish_reason) {
-          finishReason = choice.finish_reason;
-        }
-
-        const delta = choice.delta || {};
-
-        // OpenRouter reasoning blocks carry encrypted state required for tool replay.
-        // Merge streamed fragments by their index; never expose these as tool arguments.
-        for (const detail of delta.reasoning_details || []) {
-          const previous = detail.index !== undefined
-            ? reasoningDetails.find(value => value.index === detail.index && value.type === detail.type)
-            : undefined;
-          if (!previous) reasoningDetails.push({ ...detail });
-          else {
-            const fragments = Object.fromEntries(['text', 'data', 'summary', 'signature']
-              .filter(key => typeof detail[key] === 'string')
-              .map(key => [key, (previous[key] || '') + detail[key]]));
-            Object.assign(previous, detail, fragments);
+      try {
+        for await (const chunk of stream as unknown as AsyncIterable<any>) {
+          if (chunk.id) generationId = chunk.id;
+          if (chunk.model) responseModel = chunk.model;
+          if (chunk.usage) {
+            usage = chunk.usage;
           }
-        }
+          if (chunk.error || chunk.choices?.[0]?.finish_reason === 'error') {
+            // An SSE error belongs to an accepted generation, not request admission.
+            throw new Error('OpenRouter stream failed after acceptance; reconcile before retrying.');
+          }
 
-        const reasoningDelta = typeof delta.reasoning_content === 'string' ? delta.reasoning_content : (typeof delta.reasoning === 'string' ? delta.reasoning : '');
-        if (reasoningDelta && callbacks.onThinkingStreamStart && callbacks.onThinkingStreamChunk) {
-          reasoningContent += reasoningDelta;
-          if (!thinkingLogId) {
-            thinkingLogId = await callbacks.onThinkingStreamStart();
-          }
-          const now = Date.now();
-          if (now - lastThinkingEmitTime >= STREAM_THROTTLE_MS && thinkingLogId) {
-            lastThinkingEmitTime = now;
-            await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent);
-          }
-        }
+          const choice = chunk.choices?.[0];
+          if (!choice) continue;
 
-        if (typeof delta.content === 'string' && delta.content) {
-          content += delta.content;
-          if (!streamingLogId) {
-            streamingLogId = await callbacks.onStreamStart();
+          if (choice.finish_reason) {
+            finishReason = choice.finish_reason;
           }
-          const now = Date.now();
-          if (now - lastEmitTime >= STREAM_THROTTLE_MS && streamingLogId) {
-            lastEmitTime = now;
-            await callbacks.onStreamChunk(streamingLogId, content);
-          }
-        }
 
-        if (Array.isArray(delta.tool_calls)) {
-          for (const tc of delta.tool_calls) {
-            // Gemini's OpenAI-compat layer often omits `index` on tool_call deltas.
-            // Falling back to `?? 0` collapses unrelated tool calls into the same
-            // slot and concatenates their `arguments` strings (e.g. `{...}{...}`),
-            // which then explodes in JSON.parse downstream.
-            // Use `tc.id` to disambiguate when available; only fall back to 0
-            // when there is truly nothing else.
-            let idx: number | string;
-            if (typeof tc.index === 'number') {
-              idx = tc.index;
-            } else if (tc.id) {
-              idx = `id:${tc.id}`;
-            } else {
-              // Reuse last seen slot if we have one with a name but no closing
-              // (continuation chunk); otherwise start a new one.
-              const keys = Object.keys(toolCallsAccum);
-              idx = keys.length > 0 ? keys[keys.length - 1] : 0;
-            }
-            if (!toolCallsAccum[idx]) {
-              toolCallsAccum[idx] = { type: 'function', function: {}, insertedAt: insertionCounter++ };
-            }
-            if (tc.id) toolCallsAccum[idx].id = tc.id;
-            if (tc.function?.name) toolCallsAccum[idx].function!.name = tc.function.name;
-            if (tc.function?.arguments) {
-              toolCallsAccum[idx].function!.arguments = (toolCallsAccum[idx].function!.arguments || '') + (tc.function.arguments || '');
-            }
-            // Gemini 3: preserve vendor extras (thought_signature). Later
-            // deltas may replace/extend the object — keep the most recent
-            // complete value.
-            if (tc.extra_content && typeof tc.extra_content === 'object') {
-              toolCallsAccum[idx].extra_content = {
-                ...(toolCallsAccum[idx].extra_content || {}),
-                ...tc.extra_content,
-              };
+          const delta = choice.delta || {};
+
+          // OpenRouter reasoning blocks carry encrypted state required for tool replay.
+          // Merge streamed fragments by their index; never expose these as tool arguments.
+          for (const detail of delta.reasoning_details || []) {
+            const previous = detail.index !== undefined
+              ? reasoningDetails.find(value => value.index === detail.index && value.type === detail.type)
+              : undefined;
+            if (!previous) reasoningDetails.push({ ...detail });
+            else {
+              const fragments = Object.fromEntries(['text', 'data', 'summary', 'signature']
+                .filter(key => typeof detail[key] === 'string')
+                .map(key => [key, (previous[key] || '') + detail[key]]));
+              Object.assign(previous, detail, fragments);
             }
           }
+
+          const reasoningDelta = typeof delta.reasoning_content === 'string' ? delta.reasoning_content : (typeof delta.reasoning === 'string' ? delta.reasoning : '');
+          if (reasoningDelta && callbacks.onThinkingStreamStart && callbacks.onThinkingStreamChunk) {
+            reasoningContent += reasoningDelta;
+            if (!thinkingLogId) {
+              thinkingLogId = await callbacks.onThinkingStreamStart();
+            }
+            const now = Date.now();
+            if (now - lastThinkingEmitTime >= STREAM_THROTTLE_MS && thinkingLogId) {
+              lastThinkingEmitTime = now;
+              await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent);
+            }
+          }
+
+          if (typeof delta.content === 'string' && delta.content) {
+            content += delta.content;
+            if (!streamingLogId) {
+              streamingLogId = await callbacks.onStreamStart();
+            }
+            const now = Date.now();
+            if (now - lastEmitTime >= STREAM_THROTTLE_MS && streamingLogId) {
+              lastEmitTime = now;
+              await callbacks.onStreamChunk(streamingLogId, content);
+            }
+          }
+
+          if (Array.isArray(delta.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+              // Gemini's OpenAI-compat layer often omits `index` on tool_call deltas.
+              // Falling back to `?? 0` collapses unrelated tool calls into the same
+              // slot and concatenates their `arguments` strings (e.g. `{...}{...}`),
+              // which then explodes in JSON.parse downstream.
+              // Use `tc.id` to disambiguate when available; only fall back to 0
+              // when there is truly nothing else.
+              let idx: number | string;
+              if (typeof tc.index === 'number') {
+                idx = tc.index;
+              } else if (tc.id) {
+                idx = `id:${tc.id}`;
+              } else {
+                // Reuse last seen slot if we have one with a name but no closing
+                // (continuation chunk); otherwise start a new one.
+                const keys = Object.keys(toolCallsAccum);
+                idx = keys.length > 0 ? keys[keys.length - 1] : 0;
+              }
+              if (!toolCallsAccum[idx]) {
+                toolCallsAccum[idx] = { type: 'function', function: {}, insertedAt: insertionCounter++ };
+              }
+              if (tc.id) toolCallsAccum[idx].id = tc.id;
+              if (tc.function?.name) toolCallsAccum[idx].function!.name = tc.function.name;
+              if (tc.function?.arguments) {
+                toolCallsAccum[idx].function!.arguments = (toolCallsAccum[idx].function!.arguments || '') + (tc.function.arguments || '');
+              }
+              // Gemini 3: preserve vendor extras (thought_signature). Later
+              // deltas may replace/extend the object — keep the most recent
+              // complete value.
+              if (tc.extra_content && typeof tc.extra_content === 'object') {
+                toolCallsAccum[idx].extra_content = {
+                  ...(toolCallsAccum[idx].extra_content || {}),
+                  ...tc.extra_content,
+                };
+              }
+            }
+          }
+        }
+
+      } finally {
+        // Settle before parsing tool arguments or any final callback, even on stream/callback failure.
+        await settleCompletion(billing.siteId, billing.eventId, usage, generationId, responseModel || completionOptions.model);
+      }
+
+      if (streamingLogId && content) {
+        await callbacks.onStreamChunk(streamingLogId, content, true);
+      }
+      if (thinkingLogId && reasoningContent && callbacks.onThinkingStreamChunk) {
+        await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent, true);
+      }
+
+      if (!thinkingLogId && callbacks.onReasoningTokensUsed && usage) {
+        const u = usage as any;
+        const reasoningTokens =
+          u?.completion_tokens_details?.reasoning_tokens ??
+          u?.output_tokens_details?.reasoning_tokens ??
+          u?.reasoning_tokens ??
+          0;
+        if (reasoningTokens > 0) {
+          await callbacks.onReasoningTokensUsed(reasoningTokens);
         }
       }
 
-    } finally {
-      // Settle before parsing tool arguments or any final callback, even on stream/callback failure.
-      await settleCompletion(billing.siteId, billing.eventId, usage, generationId, responseModel || completionOptions.model);
-    }
+      const toolCallsArray = Object.values(toolCallsAccum)
+        .sort((a, b) => a.insertedAt - b.insertedAt)
+        .filter((tc) => tc.id && tc.function?.name);
 
-    if (streamingLogId && content) {
-      await callbacks.onStreamChunk(streamingLogId, content, true);
-    }
-    if (thinkingLogId && reasoningContent && callbacks.onThinkingStreamChunk) {
-      await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent, true);
-    }
-
-    if (!thinkingLogId && callbacks.onReasoningTokensUsed && usage) {
-      const u = usage as any;
-      const reasoningTokens =
-        u?.completion_tokens_details?.reasoning_tokens ??
-        u?.output_tokens_details?.reasoning_tokens ??
-        u?.reasoning_tokens ??
-        0;
-      if (reasoningTokens > 0) {
-        await callbacks.onReasoningTokensUsed(reasoningTokens);
+      const message: any = {
+        role: 'assistant',
+        content: content || null,
+        ...(reasoningDetails.length ? { reasoning_details: reasoningDetails } : {}),
+      };
+      if (toolCallsArray.length > 0) {
+        message.tool_calls = toolCallsArray.map((tc) => {
+          const out: any = {
+            id: tc.id,
+            type: 'function' as const,
+            function: { name: tc.function!.name!, arguments: tc.function!.arguments || '{}' },
+          };
+          if (tc.extra_content) out.extra_content = tc.extra_content;
+          return out;
+        });
       }
+
+      return { message, usage, generationId, model: responseModel, finish_reason: finishReason, streamingLogId };
+    } catch (error: any) {
+      if (error?.name === 'OpenRouterBillingError' || error?.name === 'RecoveryError') throw error;
+      throw Object.assign(new Error('Inference interrupted after acceptance; reconciliation required'), { inferenceAccepted: true });
     }
-
-    const toolCallsArray = Object.values(toolCallsAccum)
-      .sort((a, b) => a.insertedAt - b.insertedAt)
-      .filter((tc) => tc.id && tc.function?.name);
-
-    const message: any = {
-      role: 'assistant',
-      content: content || null,
-      ...(reasoningDetails.length ? { reasoning_details: reasoningDetails } : {}),
-    };
-    if (toolCallsArray.length > 0) {
-      message.tool_calls = toolCallsArray.map((tc) => {
-        const out: any = {
-          id: tc.id,
-          type: 'function' as const,
-          function: { name: tc.function!.name!, arguments: tc.function!.arguments || '{}' },
-        };
-        if (tc.extra_content) out.extra_content = tc.extra_content;
-        return out;
-      });
-    }
-
-    return { message, usage, generationId, model: responseModel, finish_reason: finishReason, streamingLogId };
   }
 
   /**
@@ -951,6 +959,7 @@ export class AIAgentExecutor {
       totalTokens: 0,
     };
     let allCompletionCostsKnown = true;
+    let inferenceAccepted = false;
     let iterations = 0;
     let finalText = '';
     let finalOutput: any = undefined;
@@ -1126,6 +1135,7 @@ export class AIAgentExecutor {
               executionBoundary,
               system || '',
             );
+            inferenceAccepted = true;
           } catch (streamError: any) {
             logChatCompletionFailure(streamError, {
               provider,
@@ -1192,6 +1202,7 @@ export class AIAgentExecutor {
               throw apiErr;
             }
           }
+          inferenceAccepted = true;
           const apiEndTime = Date.now();
           const apiDuration = apiEndTime - apiStartTime;
           console.log(`⏱️ [TIMING][${provider}] Response received in ${apiDuration}ms (${(apiDuration/1000).toFixed(1)}s)`);
@@ -1846,6 +1857,10 @@ export class AIAgentExecutor {
       } catch (error: any) {
         if (error?.name === 'OpenRouterBillingError') throw error;
         if (error?.name === 'RecoveryError') throw error;
+        if (inferenceAccepted) {
+          markAcceptedInferenceFailure(error);
+          throw error;
+        }
         console.error('[AI EXECUTOR] Execution stopped after an error');
 
         // Azure-specific content filter; other providers surface their own error shapes.

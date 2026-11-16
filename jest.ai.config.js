@@ -4,6 +4,8 @@ import base from './jest.config.js';
 export default {
   ...base,
   testMatch: [
+    '<rootDir>/src/lib/services/video-analysis/__tests__/**/*.test.ts',
+    '<rootDir>/src/app/api/agents/tools/analyzeVideo/__tests__/**/*.test.ts',
     '<rootDir>/src/lib/services/ai/__tests__/**/*.test.ts',
     '<rootDir>/src/lib/services/__tests__/embeddings-service.test.ts',
     '<rootDir>/src/lib/services/__tests__/transcribeAudio.test.ts',

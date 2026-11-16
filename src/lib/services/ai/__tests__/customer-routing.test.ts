@@ -8,6 +8,7 @@ import { createRequirementAssistantBilling } from '@/app/api/robots/instance/ass
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getCustomerSelection, resolveCustomerCredential } from '@/lib/integrations/openrouter/store';
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
+import { getProviderRetryDecision } from '../provider-retry-policy';
 
 jest.mock('openai', () => ({ __esModule: true, default: jest.fn() }));
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: jest.fn() } }));
@@ -220,5 +221,35 @@ it('reports customer funding rejection from the real executor without requesting
       .rejects.toMatchObject({ code: 'CUSTOMER_FUNDING_REQUIRED' });
     expect(create).toHaveBeenCalledTimes(1);
     expect(rpc.mock.calls.map(call => call[0])).toEqual(['openrouter_customer_dispatch', 'openrouter_customer_dispatch_reject']);
+  });
+});
+
+it.each([{ status: 429 }, { cause: { code: 'EAI_AGAIN' } }, { cause: { code: 'ECONNREFUSED' } }])('retains sanitized transient customer admission classification %j', async facts => {
+  const credential = randomBytes(24).toString('hex');
+  const now = Date.now();
+  create.mockRejectedValue({ ...facts, headers: { 'retry-after': '3600', authorization: credential }, error: { message: credential } });
+  await restore(async () => {
+    let caught: unknown;
+    try { await createOpenRouterClient().chat.completions.create({ model: 'ignored', messages: [] }); }
+    catch (error) { caught = error; }
+    expect(caught).toMatchObject({ code: 'CUSTOMER_PROVIDER_TRANSIENT_REJECTED', status: 422 });
+    expect(getProviderRetryDecision(caught)!.retryAt).toBeGreaterThanOrEqual(now + 3600000);
+    expect(JSON.stringify(caught)).not.toContain(credential);
+    expect(caught).not.toHaveProperty('cause');
+    expect(caught).not.toHaveProperty('headers');
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(rpc.mock.calls.map(call => call[0])).toEqual(['openrouter_customer_dispatch', 'openrouter_customer_dispatch_reject']);
+  });
+});
+
+it('never authorizes customer retry with accepted usage or permanent rejection', async () => {
+  await restore(async () => {
+    create.mockRejectedValue({ status: 429, generationId: 'synthetic-generation', usage: { cost: 0.01 } });
+    await expect(createOpenRouterClient().chat.completions.create({ model: 'ignored', messages: [] })).rejects.toThrow('do not replay');
+    create.mockRejectedValue({ status: 401 });
+    let caught: unknown;
+    try { await createOpenRouterClient().chat.completions.create({ model: 'ignored', messages: [] }); }
+    catch (error) { caught = error; }
+    expect(getProviderRetryDecision(caught)).toBeUndefined();
   });
 });

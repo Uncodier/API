@@ -3,6 +3,7 @@ import { CustomerRoutingError, getExecutionRouting, getCustomerCapability, resol
   type CustomerCapability, type ExecutionRoutingReference } from './customer-routing';
 import { beginCustomerInference, rejectCustomerInference, recordCustomerInference, CustomerReceiptError } from '../billing/customer-inference-receipts';
 import type { ChatCapability } from '@/lib/integrations/openrouter/chat-contract';
+import { getProviderRetryDecision } from './provider-retry-policy';
 
 function capabilityFor(request: any): CustomerCapability {
   if (getCustomerCapability() === 'summary') return 'summary';
@@ -61,9 +62,11 @@ export function customerChatClient(routing: ExecutionRoutingReference,
         ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'].includes(error?.cause?.code));
       if (!predispatch) await recordCustomerInference({ routing, capability, eventId,
         generationId, usage, requestedModel: selected.modelId, uncertain: true });
-      // Never retain provider headers/body/cause (may contain credentials) or authorize replay.
+      // Never retain provider headers/body/cause (may contain credentials).
       if (!predispatch) throw new CustomerReceiptError();
       await rejectCustomerInference(eventId, routing);
+      const retry = getProviderRetryDecision(error);
+      if (retry) throw new CustomerRoutingError('CUSTOMER_PROVIDER_TRANSIENT_REJECTED', retry.retryAt);
       throw new CustomerRoutingError(error?.status === 402 ? 'CUSTOMER_FUNDING_REQUIRED' : 'CUSTOMER_PROVIDER_REJECTED');
     }
     if (!request.stream) {
