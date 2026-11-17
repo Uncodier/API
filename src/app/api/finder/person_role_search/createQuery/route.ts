@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { logError, logInfo } from '@/lib/utils/api-response-utils';
-import crypto from 'crypto';
 import { isValidUUID } from '@/lib/agentbase/utils/UuidUtils';
+import { authorizeFinderCreate, requireFinderActor, finderFailure, FinderError } from '@/lib/services/finder/ownership';
 
 type AnyRecord = Record<string, unknown>;
 
@@ -16,54 +16,17 @@ function normalizePage(value: unknown): unknown {
   return value;
 }
 
-function computeSha256Hex(obj: unknown): string {
-  const json = JSON.stringify(obj);
-  return crypto.createHash('sha256').update(json).digest('hex');
-}
-
 export async function POST(req: NextRequest) {
   let requestBody: unknown;
   try {
-    requestBody = await req.json();
+    const { client, userId } = await requireFinderActor(req);
+    try { requestBody = await req.json(); } catch { throw new FinderError(400, 'Invalid JSON body.'); }
 
-    if (!requestBody || typeof requestBody !== 'object') {
+    if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) {
       return NextResponse.json(
         { error: 'Invalid body. Expected JSON object.' },
         { status: 400 }
       );
-    }
-
-    // Extract site_id from body or headers
-    const bodyObjRaw = requestBody as Record<string, unknown>;
-    const site_id = bodyObjRaw.site_id as string || req.headers.get('x-site-id');
-    
-    // Validate and deduct credits for Role Search Query
-    if (site_id) {
-      try {
-        const requiredCredits = CreditService.PRICING.PERSON_ROLE_SEARCH;
-        const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
-        if (!hasCredits) {
-          return NextResponse.json(
-            { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for role search' } },
-            { status: 402 }
-          );
-        }
-        
-        await CreditService.deductCredits(
-          site_id, 
-          requiredCredits, 
-          'person_role_search_query', 
-          'Person role search query',
-          { ...bodyObjRaw }
-        );
-      } catch (error: any) {
-        return NextResponse.json(
-          { success: false, error: { code: 'CREDIT_DEDUCTION_FAILED', message: error.message } },
-          { status: 402 }
-        );
-      }
-    } else {
-      console.warn('⚠️ WARNING: createQuery called without site_id. Skipping credit deduction.');
     }
 
     // Allow two shapes:
@@ -71,7 +34,7 @@ export async function POST(req: NextRequest) {
     // 2) { site_id: string, ...forager search params... }
     const bodyObj = requestBody as AnyRecord;
     const siteId = (bodyObj.site_id as string) || '';
-    if (!siteId || typeof siteId !== 'string') {
+    if (!siteId || typeof siteId !== 'string' || !isValidUUID(siteId)) {
       return NextResponse.json(
         { error: 'Missing or invalid site_id' },
         { status: 400 }
@@ -128,11 +91,12 @@ export async function POST(req: NextRequest) {
     }
 
     let rawQuery: unknown = 'query' in bodyObj ? bodyObj.query : { ...bodyObj };
-    if (rawQuery && typeof rawQuery === 'object') {
-      const obj = rawQuery as AnyRecord;
-      const { site_id: _omitSite, segment_id: _omitSegment, name: _omitName, total_targets: _omitTotalTargets, ...rest } = obj;
-      rawQuery = rest;
+    if (!rawQuery || typeof rawQuery !== 'object' || Array.isArray(rawQuery)) {
+      throw new FinderError(400, 'Missing or invalid query payload');
     }
+    const cleanQuery = { ...(rawQuery as AnyRecord) };
+    for (const key of ['site_id', 'segment_id', 'name', 'total_targets', 'user_id', 'created_by', 'owner_id', 'icp_criteria']) delete cleanQuery[key];
+    rawQuery = cleanQuery;
 
     // Normalize query minimally to mirror person_role_search route behavior (page can be 0-indexed)
     if (rawQuery && typeof rawQuery === 'object') {
@@ -148,6 +112,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    await authorizeFinderCreate(client, siteId, userId, segmentId);
+    try {
+      const credits = CreditService.PRICING.PERSON_ROLE_SEARCH;
+      if (!await CreditService.validateCredits(siteId, credits)) {
+        throw new FinderError(402, 'Insufficient credits for role search.');
+      }
+      await CreditService.deductCredits(siteId, credits, 'person_role_search_query',
+        'Person role search query', { query: rawQuery, user_id: userId });
+    } catch (error) {
+      if (error instanceof FinderError) throw error;
+      throw new FinderError(402, 'Credit deduction failed.');
+    }
+
     logInfo('finder.person_role_search.createQuery', 'Upserting role_query', { siteId });
 
     // Upsert role_query by query_hash (generated column in DB)
@@ -160,7 +137,7 @@ export async function POST(req: NextRequest) {
     if (roleQueryErr || !roleQuery) {
       logError('finder.person_role_search.createQuery', 'Failed to upsert role_queries', roleQueryErr || {});
       return NextResponse.json(
-        { error: 'Database error upserting role_query', details: roleQueryErr?.message || roleQueryErr },
+        { error: 'Database error upserting role_query' },
         { status: 500 }
       );
     }
@@ -176,7 +153,7 @@ export async function POST(req: NextRequest) {
       if (linkErr) {
         logError('finder.person_role_search.createQuery', 'Failed to upsert role_query_segments', linkErr);
         return NextResponse.json(
-          { error: 'Database error linking role_query to segment', details: linkErr.message },
+          { error: 'Database error linking role_query to segment' },
           { status: 500 }
         );
       }
@@ -185,26 +162,29 @@ export async function POST(req: NextRequest) {
     // Prepare icp_criteria embedding site context and the search snapshot
     const icpCriteria = {
       site_id: siteId,
+      user_id: userId,
       source: 'person_role_search',
       query_snapshot: roleQuery.query || rawQuery,
       ...(runName ? { name: runName } : {})
     } as AnyRecord;
 
-    const icpHash = computeSha256Hex(icpCriteria);
-
+    // Compare jsonb directly: JSON.stringify hashes differ from PostgreSQL jsonb::text.
+    // The generated DB hash (including user_id) still enforces active uniqueness.
     // Check for existing active icp_mining run for same role_query + criteria
     const { data: existingActiveList, error: existingActiveErr } = await supabaseAdmin
       .from('icp_mining')
       .select('id, status')
       .eq('role_query_id', roleQuery.id)
-      .eq('icp_hash', icpHash)
+      .eq('icp_criteria', JSON.stringify(icpCriteria))
+      .eq('site_id', siteId)
+      .eq('user_id', userId)
       .in('status', ['pending', 'running'])
       .limit(1);
 
     if (existingActiveErr) {
       logError('finder.person_role_search.createQuery', 'Failed to check existing icp_mining', existingActiveErr);
       return NextResponse.json(
-        { error: 'Database error checking icp_mining', details: existingActiveErr.message },
+        { error: 'Database error checking icp_mining' },
         { status: 500 }
       );
     }
@@ -232,6 +212,7 @@ export async function POST(req: NextRequest) {
         role_query_id: roleQuery.id, 
         icp_criteria: icpCriteria, 
         site_id: siteId, 
+        user_id: userId,
         name: runName ?? null,
         total_targets: totalTargets ?? 0
       }])
@@ -244,7 +225,9 @@ export async function POST(req: NextRequest) {
         .from('icp_mining')
         .select('id, status')
         .eq('role_query_id', roleQuery.id)
-        .eq('icp_hash', icpHash)
+        .eq('icp_criteria', JSON.stringify(icpCriteria))
+        .eq('site_id', siteId)
+        .eq('user_id', userId)
         .in('status', ['pending', 'running'])
         .limit(1);
       const raced = Array.isArray(racedList) && racedList.length > 0 ? racedList[0] : null;
@@ -264,7 +247,7 @@ export async function POST(req: NextRequest) {
     if (miningErr || !miningRow) {
       logError('finder.person_role_search.createQuery', 'Failed to insert icp_mining', miningErr || {});
       return NextResponse.json(
-        { error: 'Database error creating icp_mining', details: miningErr?.message || miningErr },
+        { error: 'Database error creating icp_mining' },
         { status: 500 }
       );
     }
@@ -279,9 +262,7 @@ export async function POST(req: NextRequest) {
       }
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    logError('finder.person_role_search.createQuery', 'Handler exception', error instanceof Error ? { message: error.message, stack: error.stack, body: requestBody } : { error, body: requestBody });
-    return NextResponse.json({ error: 'Internal error', message }, { status: 500 });
+    return finderFailure(error);
   }
 }
 

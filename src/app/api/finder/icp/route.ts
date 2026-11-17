@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { logError, logInfo } from '@/lib/utils/api-response-utils';
 import { isValidUUID } from '@/lib/agentbase/utils/UuidUtils';
+import { requireFinderActor, requireFinderPermission, finderFailure, FinderError } from '@/lib/services/finder/ownership';
 
 type AnyRecord = Record<string, unknown>;
 
 export async function GET(req: NextRequest) {
   try {
+    const { client } = await requireFinderActor(req);
     const url = new URL(req.url);
     const icpId = url.searchParams.get('icp_id') || '';
     const siteId = url.searchParams.get('site_id') || '';
@@ -27,7 +29,7 @@ export async function GET(req: NextRequest) {
     logInfo('finder.icp.load', 'Fetching icp_mining and role_query', { icpId, siteId: siteId || undefined });
 
     // Fetch icp_mining row
-    let miningQuery = supabaseAdmin
+    let miningQuery = client
       .from('icp_mining')
       .select('id, role_query_id, site_id, name, status, created_at, updated_at')
       .eq('id', icpId)
@@ -41,7 +43,7 @@ export async function GET(req: NextRequest) {
     if (miningErr) {
       logError('finder.icp.load', 'Failed to fetch icp_mining', miningErr);
       return NextResponse.json(
-        { error: 'Database error fetching icp_mining', details: miningErr.message },
+        { error: 'Finder data is unavailable.' },
         { status: 500 }
       );
     }
@@ -72,7 +74,7 @@ export async function GET(req: NextRequest) {
     if (rqErr || !roleQuery) {
       logError('finder.icp.load', 'Failed to fetch role_query', rqErr || {});
       return NextResponse.json(
-        { error: 'Database error fetching role_query', details: rqErr?.message || rqErr },
+        { error: 'Finder data is unavailable.' },
         { status: 500 }
       );
     }
@@ -96,9 +98,34 @@ export async function GET(req: NextRequest) {
       }
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    logError('finder.icp.load', 'Handler exception', error instanceof Error ? { message: error.message, stack: error.stack } : { error });
-    return NextResponse.json({ error: 'Internal error', message }, { status: 500 });
+    return finderFailure(error);
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const { client } = await requireFinderActor(req);
+    const url = new URL(req.url);
+    const icpId = url.searchParams.get('icp_id') || '';
+    const siteId = url.searchParams.get('site_id') || '';
+    if (!isValidUUID(icpId) || (siteId && !isValidUUID(siteId))) {
+      throw new FinderError(400, 'Provide valid icp_id and optional site_id UUIDs.');
+    }
+    let query = client.from('icp_mining').select('id, site_id').eq('id', icpId);
+    if (siteId) query = query.eq('site_id', siteId);
+    const { data: mining, error } = await query.maybeSingle();
+    if (error) throw new FinderError(503, 'Finder authorization is unavailable.');
+    if (!mining?.site_id) throw new FinderError(404, 'icp_mining not found');
+    await requireFinderPermission(client, mining.site_id, 'delete');
+    // Execute through RLS too: preserves operation-specific/location guards and
+    // rechecks visibility at mutation time instead of a service-role TOCTOU bypass.
+    const { data: deleted, error: deleteError } = await client.from('icp_mining')
+      .delete().eq('id', icpId).eq('site_id', mining.site_id).select('id');
+    if (deleteError) throw new FinderError(500, 'Finder list could not be deleted.');
+    if (!deleted?.length) throw new FinderError(403, 'Finder deletion is not permitted.');
+    return NextResponse.json({ success: true, icp_id: icpId });
+  } catch (error) {
+    return finderFailure(error);
   }
 }
 
