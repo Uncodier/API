@@ -28,7 +28,7 @@ export async function requireFinderActor(request: Request) {
   return { client, userId: data.user.id };
 }
 
-export async function requireFinderPermission(client: SupabaseClient, siteId: string, operation: 'insert' | 'delete') {
+export async function requireFinderPermission(client: SupabaseClient, siteId: string, operation: 'insert' | 'update' | 'delete') {
   const { data, error } = await client.rpc('user_can', { p_site_id: siteId, p_command: operation });
   if (error) throw new FinderError(503, 'Finder authorization is unavailable.');
   if (data !== true) throw new FinderError(403, 'Finder operation is not permitted.');

@@ -122,6 +122,15 @@ test('GET loads shared query only after scoped visibility, honors optional site'
   expect(userClient.from.mock.invocationCallOrder[0]).toBeLessThan((supabaseAdmin.from as jest.Mock).mock.invocationCallOrder[0]);
 });
 
+test('selected-only GET returns marker and no searchable query or admin lookup', async () => {
+  userClient.from.mockReturnValue(builder({ data: [{ id: icp, site_id: site,
+    icp_criteria: { source: 'selected_people' }, total_targets: 2 }] }));
+  const response = await GET(loadRequest());
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ icp_mining: { source: 'selected_people', total_targets: 2 }, role_query: null });
+  expect(supabaseAdmin.from).not.toHaveBeenCalled();
+});
+
 test('DELETE checks permission and mutates through RLS, not admin', async () => {
   const deletion = builder({ data: [{ id: icp }] });
   userClient.from.mockReturnValueOnce(builder({ data: { id: icp, site_id: site } })).mockReturnValueOnce(deletion);

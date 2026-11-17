@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
     // Fetch icp_mining row
     let miningQuery = client
       .from('icp_mining')
-      .select('id, role_query_id, site_id, name, status, created_at, updated_at')
+      .select('id, role_query_id, site_id, name, status, created_at, updated_at, total_targets, icp_criteria')
       .eq('id', icpId)
       .limit(1);
 
@@ -56,6 +56,17 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const source = (mining.icp_criteria as AnyRecord | null)?.source;
+    if (source === 'selected_people') {
+      // A selected-only list has no searchable provider query. Returning null
+      // prevents callers from interpreting its placeholder as an unfiltered run.
+      return NextResponse.json({
+        icp_mining: { id: mining.id, site_id: mining.site_id, name: mining.name,
+          status: mining.status, source, total_targets: mining.total_targets,
+          created_at: mining.created_at, updated_at: mining.updated_at },
+        role_query: null,
+      }, { headers: { 'Cache-Control': 'private, no-store' } });
+    }
     const roleQueryId = mining.role_query_id as string | undefined;
     if (!roleQueryId || !isValidUUID(roleQueryId)) {
       return NextResponse.json(
@@ -85,6 +96,7 @@ export async function GET(req: NextRequest) {
         site_id: mining.site_id,
         name: mining.name,
         status: mining.status,
+        source: typeof source === 'string' ? source : 'person_role_search',
         created_at: mining.created_at,
         updated_at: mining.updated_at
       },

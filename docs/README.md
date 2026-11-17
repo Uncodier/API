@@ -14,6 +14,8 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 ## Current architecture
 
+- [Finder selected-list persistence](FINDER_SELECTED_LISTS.md) — authenticated selected-only creation, atomic append, durable request receipts and worker rollout boundaries.
+
 - [Assistant video analysis](VIDEO_ANALYSIS_TOOL.md) — configurable frame/audio intervals, transcription, resolution, iterative crop/temporal zoom, safe local extraction and runtime prerequisites.
 
 - [Customer OpenRouter connections](OPENROUTER_CUSTOMER_CONNECTIONS.md) — private encrypted key connection, free catalog discovery, manual policies and forward migration; customer execution activation remains blocked pending full runtime coverage.
