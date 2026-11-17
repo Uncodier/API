@@ -92,6 +92,27 @@ afterEach(() => {
 });
 
 describe('actual Outstand preflight and publishing persistence', () => {
+  test.each(['initial discovery', 'final authorization'])('billing failure during %s never sends a post', async phase => {
+    const failure = () => Response.json({ success: false, code: 'subscription_inactive', error: key,
+      billingUrl: `https://billing.example.test/${key}` }, { status: 402 });
+    if (phase === 'initial discovery') {
+      jest.mocked(globalThis.fetch).mockResolvedValue(failure());
+    } else {
+      guardReadFailure = failure;
+    }
+    const result = await publishSocialContent(site, undefined, input, {});
+    expect(result).toMatchObject({ success: false, social: { status: 'failed', retry_safe: true,
+      error_code: 'ACCOUNT_BILLING_REQUIRED', upstream_status: 402, retryable: false,
+      billing_url: 'https://www.outstand.so/app/settings/billing' } });
+    expect(result.social.error).toContain('Do not retry until billing is resolved');
+    expect(JSON.stringify(result)).not.toContain(key);
+    expect(posts).toHaveLength(0);
+    if (phase === 'initial discovery') expect(createContentCore).not.toHaveBeenCalled();
+    else expect(row).toMatchObject({ status: 'draft', metadata: { social_publication: {
+      error_code: 'ACCOUNT_BILLING_REQUIRED', retryable: false,
+    } } });
+  });
+
   test('second account GET 503 saves a safely retryable draft, then the same content_id can send once', async () => {
     guardReadFailure = () => Response.json({ error: key }, { status: 503 });
     const first = await publishSocialContent(site, undefined, input, { retained: true });

@@ -62,8 +62,10 @@ export class OutstandClient {
       const details = typeof errorBody === 'string' ? errorBody : JSON.stringify(errorBody);
       const error = new Error(
         `Outstand API Error: ${response.status} ${response.statusText} - ${details}`
-      ) as Error & { status?: number; upstreamStatus?: number };
+      ) as Error & { status?: number; upstreamStatus?: number; upstreamCode?: string };
       error.upstreamStatus = response.status;
+      // Preserve only a known diagnostic code; never propagate arbitrary provider fields.
+      if (errorBody?.code === 'subscription_inactive') error.upstreamCode = 'subscription_inactive';
       error.status = response.status >= 500 ? 502 : response.status;
       throw error;
     }

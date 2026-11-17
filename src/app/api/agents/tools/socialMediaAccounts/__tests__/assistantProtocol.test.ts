@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { OutstandClient } from '@/lib/integrations/outstand/client';
+import { randomBytes } from 'node:crypto';
 
 const listAccounts = jest.fn<OutstandClient['listAccounts']>();
 const getOutstandClient = jest.fn(() => ({ listAccounts }));
@@ -61,5 +62,37 @@ describe('socialMediaAccountsTool', () => {
       success: false, error_code: 'INVALID_SITE_ID',
     });
     expect(listAccounts).not.toHaveBeenCalled();
+  });
+
+  it.each(['http', 'envelope'])('reports billing without leaking provider details or retrying: %s', async (mode) => {
+    const secret = randomBytes(32).toString('hex');
+    if (mode === 'http') {
+      listAccounts.mockRejectedValue(Object.assign(new Error(secret), {
+        upstreamStatus: 402, upstreamCode: 'subscription_inactive',
+      }));
+    } else {
+      listAccounts.mockResolvedValue({ success: false, code: 'subscription_inactive', error: secret,
+        billingUrl: `https://billing.example.test/${secret}` });
+    }
+    const result = await socialMediaAccountsTool(siteId).execute({});
+    expect(result).toMatchObject({ success: false, error_code: 'ACCOUNT_BILLING_REQUIRED', retryable: false,
+      billing_url: 'https://www.outstand.so/app/settings/billing' });
+    if (mode === 'http') expect(result).toHaveProperty('upstream_status', 402);
+    expect('error' in result && result.error).toContain('Do not retry until billing is resolved');
+    expect(result).not.toHaveProperty('data');
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(JSON.stringify((console.error as jest.Mock).mock.calls)).not.toContain(secret);
+    expect(console.error).toHaveBeenCalledWith('[socialMediaAccountsTool Error]', 'ACCOUNT_BILLING_REQUIRED',
+      expect.objectContaining({ retryable: false }));
+    expect(listAccounts).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([[401, false], [403, false], [429, true], [503, true]])('retains safe HTTP diagnostics for %i', async (status, retryable) => {
+    const secret = randomBytes(32).toString('hex');
+    listAccounts.mockRejectedValue(Object.assign(new Error(secret), { upstreamStatus: status }));
+    const result = await socialMediaAccountsTool(siteId).execute({});
+    expect(result).toMatchObject({ error_code: 'ACCOUNT_PROVIDER_ERROR', upstream_status: status, retryable });
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(JSON.stringify((console.error as jest.Mock).mock.calls)).not.toContain(secret);
   });
 });

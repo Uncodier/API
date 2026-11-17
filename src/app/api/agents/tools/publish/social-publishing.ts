@@ -1,7 +1,7 @@
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
 import { OutstandPreDispatchError } from '@/lib/integrations/outstand/pre-dispatch-error';
 import { requireLicensedSocialAccounts } from '@/lib/billing/licensed-resources';
-import { resolveSocialAccounts, SocialAccountResolutionError } from '@/lib/integrations/outstand/accounts';
+import { accountErrorDiagnostics, resolveSocialAccounts, SocialAccountResolutionError } from '@/lib/integrations/outstand/accounts';
 import { randomUUID } from 'node:crypto';
 import { getContentById } from '@/lib/database/content-db';
 import { createContentCore } from '../content/create/core';
@@ -23,6 +23,10 @@ type Delivery = {
   retry_safe: boolean;
   tiktok_post_mode?: 'DIRECT_POST' | 'MEDIA_UPLOAD';
   requires_creator_action?: boolean;
+  error_code?: string;
+  upstream_status?: number;
+  retryable?: boolean;
+  billing_url?: string;
 };
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -165,9 +169,11 @@ export async function publishSocialContent(
     } catch (error) {
       const status = (error as { upstreamStatus?: number })?.upstreamStatus;
       const preDispatch = error instanceof OutstandPreDispatchError;
+      const accountError = preDispatch && error.cause instanceof SocialAccountResolutionError ? error.cause : undefined;
       const rejected = typeof status === 'number' && [400, 401, 403, 404, 422, 429].includes(status);
       delivery = { success: false, status: !postAttempted || preDispatch || rejected ? 'failed' : 'unknown',
         account_ids: accountIds, retry_safe: !postAttempted || preDispatch || rejected,
+        ...(accountError ? { error_code: accountError.code, ...accountErrorDiagnostics(accountError) } : {}),
         ...(tiktok ? { tiktok_post_mode: tiktok.postMode } : {}),
         error: !postAttempted ? 'Media upload to Outstand did not complete. Check media readiness, MIME type, and the 64 MiB limit. No post was sent; reuse this content_id when retrying.'
           : preDispatch ? error.message
@@ -197,6 +203,8 @@ export async function publishSocialContent(
       ...(savedContent ? { content: savedContent } : {}),
       social: { success: false, status: actions.includes('content') ? 'unknown' : 'failed',
         retry_safe: !actions.includes('content'),
+        ...(error instanceof SocialAccountResolutionError
+          ? { error_code: error.code, ...accountErrorDiagnostics(error) } : {}),
         error: error instanceof Error && (safeValidationError || error instanceof SocialAccountResolutionError)
           ? error.message : 'Social publishing could not be prepared safely. Check the content and site configuration before retrying.' } };
   }

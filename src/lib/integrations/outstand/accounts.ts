@@ -12,6 +12,7 @@ export type SocialAccountResolutionErrorCode =
   | 'INVALID_SITE_ID'
   | 'INVALID_ACCOUNT_SELECTORS'
   | 'ACCOUNT_PROVIDER_ERROR'
+  | 'ACCOUNT_BILLING_REQUIRED'
   | 'INVALID_ACCOUNT_RESPONSE'
   | 'ACCOUNT_SCOPE_MISMATCH'
   | 'ACCOUNT_PAGINATION_LIMIT'
@@ -20,11 +21,48 @@ export type SocialAccountResolutionErrorCode =
   | 'ACCOUNT_AMBIGUOUS';
 
 export class SocialAccountResolutionError extends Error {
-  constructor(public readonly code: SocialAccountResolutionErrorCode, message: string) {
+  constructor(
+    public readonly code: SocialAccountResolutionErrorCode,
+    message: string,
+    public readonly upstreamStatus?: number,
+  ) {
     super(message);
     this.name = 'SocialAccountResolutionError';
     Object.setPrototypeOf(this, new.target.prototype);
   }
+}
+
+const BILLING_URL = 'https://www.outstand.so/app/settings/billing';
+export const ACCOUNT_BILLING_MESSAGE = 'Outstand requires an active organization subscription to load social accounts. No post was sent. '
+  + `Ask the integration administrator to check billing at ${BILLING_URL}. `
+  + 'Do not retry until billing is resolved; reconnecting social accounts will not fix this billing error.';
+
+/** Safe structured fields for tools and logs; never include provider bodies or URLs. */
+export function accountErrorDiagnostics(error: SocialAccountResolutionError) {
+  const status = error.upstreamStatus;
+  const upstream_status = typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599
+    ? status : undefined;
+  const billing = error.code === 'ACCOUNT_BILLING_REQUIRED';
+  return {
+    ...(upstream_status !== undefined ? { upstream_status } : {}),
+    ...(billing || error.code === 'ACCOUNT_PROVIDER_ERROR' ? {
+      retryable: !billing && (upstream_status === undefined || upstream_status === 429 || upstream_status >= 500),
+    } : {}),
+    ...(billing ? { billing_url: BILLING_URL } : {}),
+  };
+}
+
+function accountProviderError(status?: unknown, code?: unknown): SocialAccountResolutionError {
+  const upstreamStatus = typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599
+    ? status : undefined;
+  if (upstreamStatus === 402 || code === 'subscription_inactive') {
+    return new SocialAccountResolutionError('ACCOUNT_BILLING_REQUIRED',
+      ACCOUNT_BILLING_MESSAGE, upstreamStatus);
+  }
+  return new SocialAccountResolutionError('ACCOUNT_PROVIDER_ERROR',
+    upstreamStatus !== undefined && upstreamStatus < 500 && upstreamStatus !== 429
+      ? 'Outstand rejected account discovery. Ask the integration administrator to check credentials and permissions before retrying.'
+      : 'Unable to load social accounts from Outstand. Retry account discovery before publishing.', upstreamStatus);
 }
 
 type AccountClient = Pick<OutstandClient, 'listAccounts'>;
@@ -92,13 +130,13 @@ export async function listConnectedAccounts(client: AccountClient, siteId: strin
     let result: unknown;
     try {
       result = await client.listAccounts(siteId, { tenantId: siteId, limit: PAGE_SIZE, offset });
-    } catch {
-      throw new SocialAccountResolutionError(
-        'ACCOUNT_PROVIDER_ERROR', 'Unable to load social accounts from Outstand. Retry account discovery before publishing.',
-      );
+    } catch (error) {
+      const diagnostic = error as { upstreamStatus?: unknown; upstreamCode?: unknown } | null;
+      throw accountProviderError(diagnostic?.upstreamStatus, diagnostic?.upstreamCode);
     }
     if (!isRecord(result)) invalidResponse();
     if (result.success === false || result.degraded === true || result.error) {
+      if (result.code === 'subscription_inactive') throw accountProviderError(undefined, result.code);
       throw new SocialAccountResolutionError(
         'ACCOUNT_PROVIDER_ERROR', 'Outstand could not load all social accounts. Retry account discovery before publishing.',
       );

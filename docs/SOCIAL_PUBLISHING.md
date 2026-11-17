@@ -9,6 +9,14 @@ supply the authenticated execution site; model arguments never select the tenant
 - Call `social_media_accounts` and use the exact returned account IDs.
 - Discovery returns a flat, sanitized `data` array with `id`, `network`,
   `username`, and boolean `isActive` fields. Lookup errors are not empty inventory.
+- HTTP 402 or the provider's `subscription_inactive` code returns
+  `ACCOUNT_BILLING_REQUIRED`, `retryable: false`, and a fixed Outstand billing URL.
+  The integration administrator must resolve the organization subscription before
+  retrying. Reconnecting social accounts does not fix this billing blocker.
+  Safe HTTP status diagnostics are retained in discovery results/logs and publish
+  preflight failures; raw provider bodies and arbitrary billing URLs are not exposed.
+  `retry_safe` means a duplicate-free retry is possible, not that the blocker is
+  resolved. Agents must honor `retryable: false` even when `retry_safe` is true.
 - Legacy network selectors are resolved only when one active account matches.
   Exact IDs and usernames take precedence. Missing, inactive, cross-tenant, or
   ambiguous targets reject the whole operation before a content write/send.
