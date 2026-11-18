@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { notificationMessage } from '../_utils/details';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
@@ -544,7 +545,14 @@ export async function POST(request: NextRequest) {
       const teamNotificationResult = await TeamNotificationService.notifyTeam({
         siteId: site_id,
         title: `🚀 ${newCampaigns.length} New Campaign${newCampaigns.length !== 1 ? 's' : ''} Ready for Review`,
-        message: `You have ${newCampaigns.length} new campaign${newCampaigns.length !== 1 ? 's' : ''} in ${campaign_status} status ready for review and approval.`,
+        message: notificationMessage(`You have ${newCampaigns.length} new campaign${newCampaigns.length !== 1 ? 's' : ''} in ${campaign_status} status ready for review and approval.`, [
+          ['Site', siteInfo.name], ['Created within days', days_since_created],
+          ...(include_campaign_details ? newCampaigns.map((campaign, index): [string, unknown] => [`Campaign ${index + 1}`, notificationMessage(campaign.title, [
+            ['Description', campaign.description], ['Type', campaign.type], ['Status', campaign.status], ['Priority', campaign.priority],
+            ['Due date', campaign.due_date], ['Budget', campaign.budget], ['Revenue', campaign.revenue], ['Created', campaign.created_at],
+            ['Assignees', campaign.assignees], ['Issues', campaign.issues]
+          ])]) : [])
+        ]),
         buildEmail: (locale) => ({
           subject: platformT(locale, 'new_campaigns_alert.subject', { count: newCampaigns.length }),
           html: generateNewCampaignsAlertHtml({
@@ -571,6 +579,7 @@ export async function POST(request: NextRequest) {
           alertType: 'new_campaigns_review_required'
         },
         relatedEntityType: 'site',
+        actionUrl: '/campaigns',
         relatedEntityId: site_id
       });
       

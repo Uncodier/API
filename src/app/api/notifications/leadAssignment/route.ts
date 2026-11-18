@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { notificationMessage } from '../_utils/details';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
@@ -428,7 +429,12 @@ export async function POST(request: NextRequest) {
         const teamNotificationResult = await TeamNotificationService.notifyTeam({
           siteId: leadInfo.site_id,
           title: `Lead Assignment: ${leadInfo.name} assigned to ${assigneeInfo.name}`,
-          message: `New lead assignment: ${leadInfo.name} has been assigned to ${assigneeInfo.name || assigneeInfo.email}`,
+          message: notificationMessage(`New lead assignment: ${leadInfo.name} has been assigned to ${assigneeInfo.name || assigneeInfo.email}`, [
+            ['Brief', brief], ['Next steps', next_steps], ['Priority', priority], ['Due date', due_date],
+            ['Lead email', leadInfo.email], ['Lead phone', leadInfo.phone], ['Company', leadCompanyName],
+            ['Position', leadInfo.position], ['Status', leadInfo.status], ['Origin', formatLeadOrigin(leadInfo.origin)],
+            ['Assignee email', assigneeInfo.email], ['Additional context', additional_context]
+          ]),
           buildEmail: (locale) => ({
             subject: platformT(locale, 'lead_assign.team_title') + `: ${leadInfo.name}`,
             html: generateTeamNotificationHtml({

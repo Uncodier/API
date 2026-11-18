@@ -105,8 +105,8 @@ export async function notifySystemNotificationCore(params: {
   const validInstanceId = isUuid(instance_id) ? instance_id : undefined;
 
   const instanceUrl = validInstanceId 
-    ? `${baseUrl}/sites/${site_id}/instances/${validInstanceId}`
-    : `${baseUrl}/sites/${site_id}`;
+    ? `${baseUrl}/robots?instance=${encodeURIComponent(validInstanceId)}`
+    : `${baseUrl}/projects`;
 
   // Send WhatsApp if phone exists and channel is requested or default
   if (tryWhatsapp && phone) {
@@ -132,8 +132,8 @@ export async function notifySystemNotificationCore(params: {
       message: message,
       type: NotificationType.INFO,
       priority: NotificationPriority.NORMAL,
-      related_entity_type: validInstanceId ? 'instance' : undefined,
-      related_entity_id: validInstanceId
+      related_entity_type: validInstanceId ? 'instance' : 'site',
+      related_entity_id: validInstanceId || site_id
     });
     
     if (notificationResult) {
@@ -168,7 +168,7 @@ export async function notifySystemNotificationCore(params: {
             <div class="email-text" style="font-size:16px;line-height:1.6;margin:0 0 8px;color:${EMAIL_BRAND.text};">
               ${EmailSendService.renderMessageWithLists(message)}
             </div>
-            ${emailCtaButton(instanceUrl, 'Ver Instancia')}
+            ${emailCtaButton(instanceUrl, validInstanceId ? 'Ver Instancia' : 'Ver Proyectos')}
           </div>
         </div>
       </body>

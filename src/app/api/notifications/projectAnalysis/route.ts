@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { notificationMessage } from '../_utils/details';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
@@ -507,7 +508,12 @@ export async function POST(request: NextRequest) {
       const teamNotificationResult = await TeamNotificationService.notifyTeam({
         siteId: site_id,
         title: `Site Analysis Complete: ${siteInfo.name}`,
-        message: `AI agents have analyzed your site and updated key profile information that may affect prospecting.`,
+        message: notificationMessage(analysisData.analysisSummary, [
+          ['Site', analysisData.siteName], ['Analysis type', analysisData.analysisType], ['Impact', analysisData.impactLevel],
+          ...insights.map((insight, index): [string, unknown] => [`Insight ${index + 1}`, notificationMessage(insight.title, [
+            ['Description', insight.description], ['Type', insight.type], ['Impact', insight.impact], ['Affected area', insight.affected_area]
+          ])])
+        ]),
         buildEmail: (locale) => ({
           subject: platformT(locale, 'project_analysis.subject', { title: siteInfo.name || 'Site' }),
           html: generateTeamAnalysisNotificationHtml({ ...analysisData, locale })
@@ -521,6 +527,7 @@ export async function POST(request: NextRequest) {
           generatedAt: new Date().toISOString()
         },
         relatedEntityType: 'site',
+        actionUrl: '/dashboard',
         relatedEntityId: site_id
       });
       

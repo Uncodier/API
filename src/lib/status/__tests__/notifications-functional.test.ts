@@ -18,7 +18,11 @@ jest.mock('uuid', () => ({ v4: () => require('node:crypto').randomUUID() }));
 jest.mock('@/lib/services/sendgrid-service', () => ({ sendGridService: {
   sendEmail: jest.fn(), getConfig: jest.fn(), healthCheck: jest.fn(),
 } }));
-jest.mock('@/lib/services/email/EmailSendService', () => ({ EmailSendService: {} }));
+jest.mock('@/lib/services/email/EmailSendService', () => ({ EmailSendService: {
+  escapeHtml: (value: string) => value,
+  escapeAttr: (value: string) => value,
+  renderMessageWithLists: (value: string) => value,
+} }));
 jest.mock('@/lib/i18n/email-locale', () => ({
   DEFAULT_EMAIL_LOCALE: 'en', resolveEmailLocale: async () => 'en',
   tryNormalizeEmailLocale: (language: string) => language || null,
@@ -122,13 +126,14 @@ afterEach(() => {
 
 describe('actual in-app insert evidence', () => {
   it('records only persistence after the real insert result; preserves returned object', async () => {
-    const params = inAppParams();
+    const params = { ...inAppParams(), action_url: '/billing' };
     const saved = { ...params, id: randomUUID() };
     const db = insertResult(saved);
     expect(await NotificationService.createNotification(params)).toBe(saved);
     expect(from).toHaveBeenCalledWith('notifications');
     expect(db.insert).toHaveBeenCalledWith([expect.objectContaining({ user_id: params.user_id,
-      site_id: params.site_id, title: params.title, message: params.message, type: params.type })]);
+      site_id: params.site_id, title: params.title, message: params.message, type: params.type,
+      action_url: '/billing' })]);
     expect(record).toHaveBeenCalledWith('notifications_in_app', 'up', 'In-app notification persisted', 0);
     expect(send).not.toHaveBeenCalled();
     expect(record.mock.calls.map(([key]) => key)).toEqual(['notifications_in_app']);
@@ -266,6 +271,29 @@ describe('BaseNotification provider acceptance', () => {
 });
 
 describe('central team notification receipts preserve preferences and returns', () => {
+  it('passes explicit CTA and full intervention details to the frontend contract', async () => {
+    jest.spyOn(TeamNotificationService, 'getEligibleTeamMembers').mockResolvedValue([teamMember()]);
+    const create = jest.spyOn(NotificationService, 'createNotification').mockResolvedValue({ id: randomUUID() });
+    await TeamNotificationService.notifyTeam({ ...teamParams(), actionUrl: '/campaigns' });
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ action_url: '/campaigns' }));
+    const conversationId = randomUUID();
+    await TeamNotificationService.notifyHumanIntervention({
+      siteId: randomUUID(), conversationId, message: 'Please review the refund',
+      priority: 'urgent', summary: 'Customer needs approval',
+      contactName: 'Test customer', contactEmail: 'customer@example.invalid', agentName: 'Support agent',
+    });
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({
+      related_entity_type: 'conversation', related_entity_id: conversationId,
+      message: expect.stringContaining('Summary: Customer needs approval'),
+    }));
+    const message = create.mock.calls.at(-1)![0].message;
+    expect(message).toContain('Contact: Test customer');
+    expect(message).toContain('Contact email: customer@example.invalid');
+    expect(message).toContain('Priority: urgent');
+    expect(send.mock.calls.at(-1)![0].html).toContain(`/chat?conversationId=${conversationId}`);
+    expect(send.mock.calls.at(-1)![0].html).not.toContain('/sites/');
+  });
+
   it('keeps channel preferences and observes separate persistence/acceptance', async () => {
     const emailOnly = teamMember('en', true, false);
     const pushOnly = teamMember('en', false, true);

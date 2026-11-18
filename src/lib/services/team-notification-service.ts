@@ -13,6 +13,7 @@ import { platformT } from '@/lib/i18n/email-messages/platform';
 import { EMAIL_BRAND, emailBrandHeadTags, emailCtaButton } from '@/lib/emails/brand';
 import { recordTelemetry } from '@/lib/status/telemetry';
 import type { SystemHealthStatus } from '@/lib/status/types';
+import { buildNotificationMessage } from './notification-details';
 
 /**
  * Interfaz para los datos del miembro del equipo
@@ -52,6 +53,7 @@ export interface NotifyTeamParams {
   customArgs?: Record<string, string>;
   relatedEntityType?: string;
   relatedEntityId?: string;
+  actionUrl?: string;
 }
 
 /**
@@ -270,6 +272,7 @@ export class TeamNotificationService {
       customArgs = {},
       relatedEntityType,
       relatedEntityId,
+      actionUrl,
     } = params;
     
     const result: NotifyTeamResult = {
@@ -323,6 +326,7 @@ export class TeamNotificationService {
           type,
           priority: notificationPriority,
           related_entity_type: relatedEntityType,
+          action_url: actionUrl,
           related_entity_id: relatedEntityId
         })
       );
@@ -445,16 +449,17 @@ export class TeamNotificationService {
     title: string,
     message: string,
     siteId: string,
-    locale: EmailLocale = DEFAULT_EMAIL_LOCALE
+    locale: EmailLocale = DEFAULT_EMAIL_LOCALE,
+    destinationUrl?: string,
   ): string {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const siteUrl = `${baseUrl}/sites/${siteId}`;
+    const siteUrl = destinationUrl || `${baseUrl}/projects`;
     const goToSite =
-      locale === 'es' ? 'Ir al sitio' :
-      locale === 'fr' ? 'Aller au site' :
-      locale === 'de' ? 'Zur Website' :
-      locale === 'ja' ? 'サイトを開く' :
-      'Go to site';
+      locale === 'es' ? 'Ver detalles' :
+      locale === 'fr' ? 'Voir les détails' :
+      locale === 'de' ? 'Details ansehen' :
+      locale === 'ja' ? '詳細を表示' :
+      'View details';
     const autoGen =
       locale === 'es' ? 'Este correo fue generado automáticamente por el sistema de notificaciones.' :
       locale === 'fr' ? 'Cet e-mail a été généré automatiquement par le système de notifications.' :
@@ -507,7 +512,16 @@ export class TeamNotificationService {
     const conversationUrl = `${baseUrl}/chat?conversationId=${params.conversationId}`;
     
     const title = `Human intervention requested${params.agentName ? ` by ${params.agentName}` : ''}`;
-    const notificationMessage = `Human intervention is required in a conversation. Message: "${params.message}"`;
+    const notificationMessage = buildNotificationMessage(
+      `Human intervention is required in a conversation. Message: "${params.message}"`,
+      [
+        ['Summary', params.summary],
+        ['Contact', params.contactName],
+        ['Contact email', params.contactEmail],
+        ['Requested by', params.agentName],
+        ['Priority', params.priority],
+      ],
+    );
     
     return this.notifyTeam({
       siteId: params.siteId,
@@ -518,8 +532,7 @@ export class TeamNotificationService {
         const subject = platformT(locale, 'human_intervention.subject', { byAgent });
         return {
           subject,
-          html: this.generateDefaultHtmlContent(subject, notificationMessage, params.siteId, locale)
-            .replace(EmailSendService.escapeAttr(`${baseUrl}/sites/${params.siteId}`), EmailSendService.escapeAttr(conversationUrl)),
+          html: this.generateDefaultHtmlContent(subject, notificationMessage, params.siteId, locale, conversationUrl),
         };
       },
       priority: params.priority as any,

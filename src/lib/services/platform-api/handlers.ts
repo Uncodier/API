@@ -101,22 +101,55 @@ const createLead: PlatformHandler = async (req, ctx): Promise<PlatformHandlerRes
   return { status: 201, body: { id: data?.id, email } };
 };
 
-/** POST /notifications — creates an in-app notification entry for the site. */
+/**
+ * POST /notifications — in-app only, addressed to the site's canonical owner.
+ * A singular owner preserves the SDK's { id } contract without unexpectedly
+ * broadcasting to members or sending email. Recipients and CTA scope are never
+ * caller-controlled; the frontend resolves the trusted requirement/site entity.
+ */
 const createNotification: PlatformHandler = async (req, ctx): Promise<PlatformHandlerResult> => {
   const body = await jsonBody(req);
-  const title = typeof body.title === 'string' ? body.title.slice(0, 200) : null;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { status: 400, body: { error: 'Expected a notification object.' } };
+  }
+  const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : null;
   if (!title) return { status: 400, body: { error: 'Missing "title".' } };
+  const details = body.message !== undefined ? body.message : body.body;
+  const message = typeof details === 'string' ? details.trim().slice(0, 4000) : null;
+  if (!message) return { status: 400, body: { error: 'Required: non-empty "message" (or legacy "body") with notification details.' } };
+  const requestedType = body.type !== undefined ? body.type : (body.level ?? 'info');
+  const type = requestedType === 'warn' ? 'warning' : requestedType;
+  if (!['info', 'success', 'warning', 'error'].includes(type)) {
+    return { status: 400, body: { error: 'Invalid notification type.' } };
+  }
+  // There is no public recipient/entity/URL override: an internal-looking URL
+  // alone cannot establish tenant authorization. Legacy metadata is ignored.
+  if (['site_id', 'user_id', 'related_entity_type', 'related_entity_id', 'action_url']
+    .some(field => body[field] !== undefined)) {
+    return { status: 400, body: { error: 'Recipient, site, entity and action_url are determined by the API key context.' } };
+  }
+  const { data: site, error: siteError } = await supabaseAdmin
+    .from('sites').select('user_id').eq('id', ctx.site_id).maybeSingle();
+  if (siteError) return { status: 502, body: { error: 'Failed to resolve notification recipient.' } };
+  if (!site?.user_id) return { status: 403, body: { error: 'No authorized site owner for notification.' } };
+  if (ctx.requirement_id) {
+    const { data: requirement, error: requirementError } = await supabaseAdmin
+      .from('requirements').select('id').eq('id', ctx.requirement_id).eq('site_id', ctx.site_id).maybeSingle();
+    if (requirementError) return { status: 502, body: { error: 'Failed to resolve notification requirement.' } };
+    if (!requirement) return { status: 403, body: { error: 'Notification requirement does not belong to the API key site.' } };
+  }
   const payload = {
     site_id: ctx.site_id,
+    user_id: site.user_id,
     title,
-    body: typeof body.body === 'string' ? body.body.slice(0, 4000) : '',
-    level: typeof body.level === 'string' ? body.level.slice(0, 20) : 'info',
-    metadata: { source: 'platform-api', requirement_id: ctx.requirement_id, ...(body.metadata ?? {}) },
-    created_at: new Date().toISOString(),
+    message,
+    type,
+    related_entity_type: ctx.requirement_id ? 'requirement' : 'site',
+    related_entity_id: ctx.requirement_id ?? ctx.site_id,
   };
   const { data, error } = await supabaseAdmin.from('notifications').insert(payload).select('id').maybeSingle();
-  if (error) {
-    return { status: 502, body: { error: `Failed to create notification: ${error.message}` } };
+  if (error || !data?.id) {
+    return { status: 502, body: { error: 'Failed to create notification.' } };
   }
   return { status: 201, body: { id: data?.id } };
 };

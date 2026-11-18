@@ -2,6 +2,7 @@ import { NotificationType, NotificationCategory } from '@/lib/services/notificat
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { generateTaskTeamEmailHtml } from '@/lib/services/templates/task-email-templates';
+import { buildNotificationMessage } from './notification-details';
 
 export class TaskNotifier {
   static async notifyTaskCreated(params: {
@@ -79,7 +80,17 @@ export class TaskNotifier {
     return TeamNotificationService.notifyTeam({
       siteId: task.site_id,
       title: `New task created: ${task.title}`,
-      message: `A new ${task.type} task has been created${leadInfo?.name ? ` for lead ${leadInfo.name}` : ''}.`,
+      message: buildNotificationMessage(
+        `A new ${task.type} task has been created${leadInfo?.name ? ` for lead ${leadInfo.name}` : ''}.`,
+        [
+          ['Task', task.title],
+          ['Description', task.description],
+          ['Priority', task.priority],
+          ['Lead email', leadInfo?.email],
+          ['Assigned to', assigneeInfo?.name],
+          ['Scheduled for', task.scheduled_date],
+        ],
+      ),
       htmlContent: html,
       type: NotificationType.INFO,
       categories: [NotificationCategory.TASKS_REMINDERS],

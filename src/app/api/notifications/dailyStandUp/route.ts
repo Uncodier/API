@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { notificationMessage } from '../_utils/details';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
@@ -532,7 +533,9 @@ export async function POST(request: NextRequest) {
       const teamNotificationResult = await TeamNotificationService.notifyTeam({
         siteId: site_id,
         title: subject,
-        message: `Daily summary for ${siteInfo.name}: ${message}`,
+        message: notificationMessage(`Daily summary for ${siteInfo.name}: ${message}`, [
+          ['Business assessment', businessAssessment]
+        ]),
         buildEmail: (locale) => ({
           subject,
           html: generateDailyStandUpHtml({
@@ -554,6 +557,7 @@ export async function POST(request: NextRequest) {
           generatedAt: new Date().toISOString()
         },
         relatedEntityType: 'site',
+        actionUrl: '/dashboard',
         relatedEntityId: site_id
       });
       

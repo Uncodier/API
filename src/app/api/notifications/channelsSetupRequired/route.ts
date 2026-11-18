@@ -476,7 +476,7 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const settingsUrl = `${baseUrl}/settings`;
+    const settingsUrl = `${baseUrl}/settings?tab=channels`;
     
     let emailsSent = 0;
     let emailsErrors = 0;

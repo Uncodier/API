@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { emailMarkdownLinks } from '../_utils/details';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { NotificationCategory } from '@/lib/services/notification-service';
@@ -40,7 +41,7 @@ function generateReservationHtml(data: { siteName: string; subject: string; mess
   formattedMessage = formattedMessage.replace(/<\/ul>\n<ul>/gim, '');
 
   // Convertir enlaces a estilo CTA centrados
-  formattedMessage = formattedMessage.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<div style="text-align: center; margin: 32px 0 16px 0;"><a href="$2" target="_blank" class="email-cta" style="background: #000000; background-color: #000000; background-image: linear-gradient(#000000, #000000); box-shadow: inset 0 0 0 999px #000000; color: #ffffff; border: 0; display: inline-block; font-weight: 600; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-size: 16px; text-align: center;"><span class="email-cta-label">$1</span></a></div>');
+  formattedMessage = emailMarkdownLinks(formattedMessage);
   
   // Convertir saltos de linea restantes en <br/>
   formattedMessage = formattedMessage.replace(/\n/g, '<br/>');

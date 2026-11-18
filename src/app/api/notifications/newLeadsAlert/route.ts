@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { notificationMessage } from '../_utils/details';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
@@ -544,7 +545,13 @@ export async function POST(request: NextRequest) {
       const teamNotificationResult = await TeamNotificationService.notifyTeam({
         siteId: site_id,
         title: `🎯 ${unassignedLeads.length} New Lead${unassignedLeads.length !== 1 ? 's' : ''} from Last 24h Awaiting Assignment`,
-        message: `You have ${unassignedLeads.length} unassigned lead${unassignedLeads.length !== 1 ? 's' : ''} from the last 24 hours that will automatically begin receiving personalized outreach in ${hours_until_auto_prospect} hours if not assigned to team members.`,
+        message: notificationMessage(`You have ${unassignedLeads.length} unassigned lead${unassignedLeads.length !== 1 ? 's' : ''} from the last 24 hours that will automatically begin receiving personalized outreach in ${hours_until_auto_prospect} hours if not assigned to team members.`, [
+          ['Site', siteInfo.name],
+          ...(include_lead_details ? unassignedLeads.map((lead, index): [string, unknown] => [`Lead ${index + 1}`, notificationMessage(lead.name || 'Unknown Lead', [
+            ['Email', lead.email], ['Phone', lead.phone], ['Company', lead.company], ['Status', lead.status],
+            ['Origin', lead.origin], ['Created', lead.created_at], ['Segments', lead.segments]
+          ])]) : [])
+        ]),
         buildEmail: (locale) => ({
           subject: platformT(locale, 'new_leads_alert.subject', { count: unassignedLeads.length }),
           html: generateNewLeadsAlertHtml({
@@ -569,6 +576,7 @@ export async function POST(request: NextRequest) {
           alertType: 'new_leads_assignment_required'
         },
         relatedEntityType: 'site',
+        actionUrl: '/leads',
         relatedEntityId: site_id
       });
       

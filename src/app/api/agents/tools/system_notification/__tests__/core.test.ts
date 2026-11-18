@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService';
@@ -58,6 +58,26 @@ it('does not send email when explicit channels omit it', async () => {
   await notifySystemNotificationCore({ ...params, channels: ['in_app'] });
   expect(sendGridService.sendEmail).not.toHaveBeenCalled();
   expect(AgentMailSendService.sendViaAgentMail).not.toHaveBeenCalled();
+});
+
+it.each([true, false])('links in-app and external channels to real routes (instance: %s)', async hasInstance => {
+  const siteId = randomUUID();
+  const instanceId = hasInstance ? randomUUID() : undefined;
+  const userId = randomUUID();
+  const query: any = { select: jest.fn(), eq: jest.fn(), single: jest.fn().mockResolvedValue({ data: { id: userId } }) };
+  query.select.mockReturnValue(query); query.eq.mockReturnValue(query);
+  (supabaseAdmin.from as jest.Mock).mockReturnValue(query);
+  (NotificationService.createNotification as jest.Mock).mockResolvedValue({ id: randomUUID() });
+  const result = await notifySystemNotificationCore({ ...params, site_id: siteId, instance_id: instanceId,
+    channels: ['in_app', 'email'], phone_number: '+15555550100' });
+  expect(NotificationService.createNotification).toHaveBeenCalledWith(expect.objectContaining({
+    user_id: userId, message: params.message,
+    related_entity_type: hasInstance ? 'instance' : 'site',
+    related_entity_id: instanceId || siteId,
+  }));
+  expect(result.instance_url).toBe(hasInstance
+    ? `https://app.uncodie.com/robots?instance=${instanceId}` : 'https://app.uncodie.com/projects');
+  expect(result.notification_sent).toBe(true);
 });
 
 it('preserves WhatsApp channel handling and its success response', async () => {

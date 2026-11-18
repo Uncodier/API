@@ -421,8 +421,8 @@ export async function POST(request: NextRequest) {
     
     // URLs for the email
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const settingsUrl = `${baseUrl}/settings/channels`;
-    const supportUrl = `${baseUrl}/support`;
+    const settingsUrl = `${baseUrl}/settings?tab=channels`;
+    const supportUrl = `mailto:${process.env.UNCODIE_SUPPORT_EMAIL || 'support@makinari.com'}`;
     const logoUrl = process.env.UNCODIE_LOGO_URL;
     
     const locale = await resolveEmailLocale({ siteId: site_id });

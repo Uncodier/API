@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { notificationMessage, emailAction } from '../_utils/details';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
@@ -778,10 +779,7 @@ export async function POST(request: NextRequest) {
       
       try {
         // Preparar datos del CTA primario si existe
-        const primaryCta = lastComment?.cta?.primary_action ? {
-          title: lastComment.cta.primary_action.title || lastComment.cta.primary_action.text || 'Ver más',
-          url: lastComment.cta.primary_action.url || lastComment.cta.primary_action.link
-        } : undefined;
+        const primaryCta = emailAction(lastComment?.cta?.primary_action, taskUrl || `${baseUrl}/leads/${lead_id}`);
         
         if (primaryCta) {
           console.log(`🎯 [TaskStatus] Usando CTA primario para notificación del equipo`);
@@ -792,7 +790,10 @@ export async function POST(request: NextRequest) {
           title: taskInfo?.title 
             ? `Task Update: ${taskInfo.title}`
             : `Task Status Update for ${leadInfo.name || 'Lead'}`,
-          message: `Task status update for lead ${leadInfo.name}: ${message}`,
+          message: notificationMessage(`Task status update for lead ${leadInfo.name}: ${message}`, [
+            ['Task', taskInfo?.title], ['Description', taskInfo?.description], ['Status', status], ['Priority', priority],
+            ['Lead email', leadInfo.email], ['Additional details', additional_data], ['Action', primaryCta.title], ['Action URL', primaryCta.url]
+          ]),
           buildEmail: (locale) => ({
             subject: platformT(locale, 'task_status.subject', { taskTitle: taskInfo?.title || 'Task Update', siteName: siteInfo.name || 'Unknown Site' }),
             html: generateTeamNotificationHtml({
@@ -820,7 +821,7 @@ export async function POST(request: NextRequest) {
             leadId: lead_id,
             notificationType: notification_type
           },
-          relatedEntityType: 'task',
+          relatedEntityType: task_id ? 'task' : 'lead',
           relatedEntityId: task_id || lead_id
         });
         
@@ -846,10 +847,7 @@ export async function POST(request: NextRequest) {
       
       try {
         // Reutilizar la misma lógica de CTA para notificación del lead
-        const primaryCtaForLead = lastComment?.cta?.primary_action ? {
-          title: lastComment.cta.primary_action.title || lastComment.cta.primary_action.text || 'Ver más',
-          url: lastComment.cta.primary_action.url || lastComment.cta.primary_action.link
-        } : undefined;
+        const primaryCtaForLead = emailAction(lastComment?.cta?.primary_action, taskUrl || `${baseUrl}/leads/${lead_id}`);
         
         if (primaryCtaForLead) {
           console.log(`🎯 [TaskStatus] Usando CTA primario para notificación del lead`);

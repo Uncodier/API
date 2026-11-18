@@ -19,6 +19,7 @@
     "test:dependencies": "node --test __tests__/dependencies/security-upgrade.test.mjs",
     "test:search-index": "node --test __tests__/build/search-index.test.mjs",
     "test:tasks": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.tasks.config.js --runInBand",
+    "test:notifications": "node ./node_modules/jest/bin/jest.js --config jest.notifications.config.js --runInBand && node --test src/app/api/notifications/__tests__/*.test.mjs",
     "test:deals": "node ./node_modules/jest/bin/jest.js --config jest.deals.config.js --runInBand",
     "test:upgrade-regressions": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.upgrade-regressions.config.js --runInBand",
     "test:harness": "node ./node_modules/jest/bin/jest.js --config jest.harness.config.js --runInBand",

@@ -56,6 +56,7 @@ export interface CreateNotificationParams {
   priority: NotificationPriority;
   related_entity_type?: string;
   related_entity_id?: string;
+  action_url?: string;
 }
 
 /**
@@ -139,6 +140,7 @@ export class NotificationService {
         site_id: params.site_id,
         related_entity_type: params.related_entity_type,
         related_entity_id: params.related_entity_id,
+        action_url: params.action_url,
         is_read: false,
         created_at: new Date().toISOString(),
       };

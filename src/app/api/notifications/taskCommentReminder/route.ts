@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { notificationMessage, emailAction } from '../_utils/details';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
@@ -793,10 +794,7 @@ export async function POST(request: NextRequest) {
     const siteUrl = siteInfo.url || `${baseUrl}/dashboard`;
     
     // Preparar datos del CTA primario
-    const primaryCta = {
-      title: lastCommentWithCTA.cta.primary_action.title || lastCommentWithCTA.cta.primary_action.text || 'Take Action',
-      url: lastCommentWithCTA.cta.primary_action.url || lastCommentWithCTA.cta.primary_action.link
-    };
+    const primaryCta = emailAction(lastCommentWithCTA.cta.primary_action, taskUrl, 'View task');
     
     console.log(`🎯 [TaskReminder] CTA encontrado: ${primaryCta.title} → ${primaryCta.url}`);
     
@@ -821,7 +819,10 @@ export async function POST(request: NextRequest) {
         const teamNotificationResult = await TeamNotificationService.notifyTeam({
           siteId: site_id,
           title: `Task Reminder: ${taskInfo?.title || 'Pending Action'}`,
-          message: `Reminder: Lead ${leadInfo.name} has a pending action for task "${taskInfo?.title}". ${message}`,
+          message: notificationMessage(`Reminder: Lead ${leadInfo.name} has a pending action for task "${taskInfo?.title || 'Pending Action'}". ${message}`, [
+            ['Description', taskInfo?.description], ['Status', status], ['Priority', priority], ['Lead email', leadInfo.email],
+            ['Reminder context', reminderContext], ['Additional details', additional_data], ['Action', primaryCta.title], ['Action URL', primaryCta.url]
+          ]),
           buildEmail: (locale) => ({
             subject: platformT(locale, 'task_reminder.subject', { taskTitle: taskInfo?.title || 'Pending Action', siteName: siteInfo.name || 'Unknown Site' }),
             html: generateTeamReminderHtml({

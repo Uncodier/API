@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { notificationMessage } from '../_utils/details';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
@@ -433,7 +434,7 @@ export async function POST(request: NextRequest) {
     
     // Build conversation URL
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const conversationUrl = `${baseUrl}/chat?conversation_id=${conversation_id}`;
+    const conversationUrl = `${baseUrl}/chat?conversationId=${conversation_id}`;
     
     console.log(`📢 [NewInboundMessage] Notifying team...`);
     
@@ -453,7 +454,9 @@ export async function POST(request: NextRequest) {
       const teamNotificationResult = await TeamNotificationService.notifyTeam({
         siteId: siteId,
         title: `New Inbound Message from ${leadName}`,
-        message: `You have received a new message from ${leadName}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`,
+        message: notificationMessage(`You have received a new message from ${leadName}.`, [
+          ['Message', message], ['Contact', leadContact], ['Priority', priority], ['Site', siteInfo.name]
+        ]),
         buildEmail: (locale) => ({
           subject: platformT(locale, 'new_inbound_message.subject', { leadName }),
           html: generateNewInboundMessageHtml({

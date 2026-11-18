@@ -6,6 +6,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationService, NotificationType, NotificationPriority, NotificationCategory } from '@/lib/services/notification-service';
 import { sendGridService } from '@/lib/services/sendgrid-service';
+import { buildNotificationMessage } from '@/lib/services/notification-details';
 import { generateTaskTeamEmailHtml as sharedTeamTemplate, generateTaskUserNotificationHtml as sharedUserTemplate } from '@/lib/services/templates/task-email-templates';
 
 /**
@@ -854,10 +855,18 @@ export async function POST(request: NextRequest) {
 
       // 1. Notificar al team
       console.log('[CreateTask] 📢 Notificando al team...');
+      const taskDetails: Array<[string, unknown]> = [
+        ['Task', newTask.title],
+        ['Description', newTask.description],
+        ['Priority', newTask.priority],
+        ['Lead email', leadNotificationInfo?.email],
+        ['Assigned to', assigneeInfo?.name],
+        ['Scheduled for', newTask.scheduled_date],
+      ];
       const teamNotificationResult = await TeamNotificationService.notifyTeam({
         siteId: siteId,
         title: `New task created: ${newTask.title}`,
-        message: `A new ${newTask.type} task has been created${leadNotificationInfo?.name ? ` for lead ${leadNotificationInfo.name}` : ''}.`,
+        message: buildNotificationMessage(`A new ${newTask.type} task has been created${leadNotificationInfo?.name ? ` for lead ${leadNotificationInfo.name}` : ''}.`, taskDetails),
         htmlContent: generateTaskTeamEmailHtml({
           recipientName: 'Team',
           taskTitle: newTask.title,
@@ -892,7 +901,7 @@ export async function POST(request: NextRequest) {
           user_id: newTask.assignee,
           site_id: siteId,
           title: `New task assigned: ${newTask.title}`,
-          message: `You have been assigned a new ${newTask.type} task${leadNotificationInfo?.name ? ` for lead ${leadNotificationInfo.name}` : ''}.`,
+          message: buildNotificationMessage(`You have been assigned a new ${newTask.type} task${leadNotificationInfo?.name ? ` for lead ${leadNotificationInfo.name}` : ''}.`, taskDetails),
           type: NotificationType.INFO,
           priority: newTask.priority >= 10 ? NotificationPriority.HIGH : 
                    newTask.priority >= 5 ? NotificationPriority.NORMAL : NotificationPriority.LOW,
