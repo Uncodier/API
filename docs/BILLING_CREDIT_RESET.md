@@ -48,8 +48,12 @@ renewal backfill. No production build or deployment is included in this change.
   when both begin at the same calendar-month boundary.
 
 Ordinary consumption spends included plan credits first, protected legacy second,
-then bought credits. The commerce numeric deduction overload retains its existing
-ability to use `account_balance` only after regular credits are exhausted.
+then bought credits (the later Startup trial migration adds trial credits first).
+The original commerce numeric deduction overload could use `account_balance`
+after regular credits, but the classified tool debit and reservations could not.
+The forward [withdrawable consumption repair](./WITHDRAWABLE_CREDIT_CONSUMPTION.md)
+aligns those paths and application checks, preserving separate balances and
+original-source refunds. It requires the documented coordinated rollout.
 
 ## Allowances and periods
 

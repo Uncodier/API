@@ -7,6 +7,7 @@ import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { formatCreditExhaustionNotice, InsufficientCreditsError } from './credit-exhaustion-message';
 import type { CreditExhaustionNotice } from './credit-exhaustion-message';
 import { requirementChargeMetadata } from './requirement-charge-context';
+import { spendableCreditBalance } from './spendable-credit-balance';
 
 // Preserve the existing import path and error identity without coupling pure helpers to I/O.
 export { InsufficientCreditsError } from './credit-exhaustion-message';
@@ -285,7 +286,7 @@ export class CreditService {
       throw new Error('Invalid siteId or required credits');
     }
 
-    let available: unknown;
+    let available: number | null;
     try {
       // An RPC failure must not fall back to spending stale, expired credits.
       const { data: renewal, error: renewalError } = await supabaseAdmin.rpc(
@@ -295,17 +296,17 @@ export class CreditService {
 
       const { data: billing, error } = await supabaseAdmin
         .from('billing')
-        .select('credits_available')
+        .select('credits_available,account_balance')
         .eq('site_id', siteId)
         .single();
       if (error || !billing) throw new Error('Billing record unavailable');
-      available = billing.credits_available;
+      available = spendableCreditBalance(billing);
     } catch {
       // Do not expose provider errors or misclassify an I/O exception as a shortage.
       throw new Error('Unable to verify billing credits');
     }
 
-    if (typeof available !== 'number' || !Number.isFinite(available) || available < 0) {
+    if (available === null) {
       throw new Error('Invalid billing credit balance');
     }
     if (available < required) {
@@ -330,7 +331,7 @@ export class CreditService {
     try {
       const { data: billing, error } = await supabaseAdmin
         .from('billing')
-        .select('credits_available,status,plan_credit_period_end,plan_credit_allowance,stripe_subscription_id,subscription_status,billing_interval,paid_subscription_period_end')
+        .select('credits_available,account_balance,status,plan_credit_period_end,plan_credit_allowance,stripe_subscription_id,subscription_status,billing_interval,paid_subscription_period_end')
         .eq('site_id', siteId)
         .single();
       return formatCreditExhaustionNotice(error ? null : billing);

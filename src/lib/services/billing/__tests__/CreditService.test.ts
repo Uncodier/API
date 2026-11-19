@@ -40,7 +40,7 @@ describe('CreditService classified balance checks', () => {
     const query = { select: mockSelect.mockReturnThis(), eq: mockEq.mockReturnThis(), single: mockSingle };
     mockFrom.mockReturnValue(query);
     mockRpc.mockResolvedValue({ data: { success: true, outcome: 'not_due' }, error: null });
-    mockSingle.mockResolvedValue({ data: { credits_available: 10 }, error: null });
+    mockSingle.mockResolvedValue({ data: { credits_available: 10, account_balance: 0 }, error: null });
   });
   afterEach(() => jest.restoreAllMocks());
 
@@ -77,12 +77,12 @@ describe('CreditService classified balance checks', () => {
     expect(mockRpc).not.toHaveBeenCalled();
   });
 
-  it('requireCredits resolves void after renewing and reading only the aggregate balance', async () => {
+  it('requireCredits resolves void after renewing and reading regular and withdrawable balances', async () => {
     await expect(CreditService.requireCredits('synthetic-site', 3)).resolves.toBeUndefined();
     expect(mockRpc).toHaveBeenCalledWith('renew_site_plan_credits', { p_site_id: 'synthetic-site' });
     expect(mockRpc.mock.invocationCallOrder[0]).toBeLessThan(mockFrom.mock.invocationCallOrder[0]);
     expect(mockFrom).toHaveBeenCalledWith('billing');
-    expect(mockSelect).toHaveBeenCalledWith('credits_available');
+    expect(mockSelect).toHaveBeenCalledWith('credits_available,account_balance');
     expect(mockEq).toHaveBeenCalledWith('site_id', 'synthetic-site');
     expect(notification).not.toHaveBeenCalled();
   });
@@ -154,7 +154,7 @@ describe('CreditService classified balance checks', () => {
 
   it.each([NaN, Infinity, -Infinity, -1, null, undefined, '0', '10', {}, [], false])(
     'rejects invalid runtime balance %s, including when required is zero', async balance => {
-      mockSingle.mockResolvedValue({ data: { credits_available: balance }, error: null });
+      mockSingle.mockResolvedValue({ data: { credits_available: balance, account_balance: 0 }, error: null });
       const error = await CreditService.requireCredits('synthetic-site', 0).catch(e => e);
       expect(error.constructor).toBe(Error);
       expect(isInsufficientCreditsError(error)).toBe(false);
@@ -164,7 +164,7 @@ describe('CreditService classified balance checks', () => {
   );
 
   it.each([0, 0.25])('only confirmed shortage %s uses the typed error and notification path', async balance => {
-    mockSingle.mockResolvedValue({ data: { credits_available: balance }, error: null });
+    mockSingle.mockResolvedValue({ data: { credits_available: balance, account_balance: 0 }, error: null });
     const error = await CreditService.requireCredits('synthetic-site', 1).catch(e => e);
     expect(error).toBeInstanceOf(InsufficientCreditsError);
     expect(error.message).toBe(`Not enough credits. Available: ${balance}, Required: 1`);
@@ -180,6 +180,44 @@ describe('CreditService classified balance checks', () => {
     const require = jest.spyOn(CreditService, 'requireCredits').mockRejectedValue('Synthetic thrown value');
     expect(await CreditService.validateCredits('synthetic-site', 3)).toBe(false);
     expect(require).toHaveBeenCalledWith('synthetic-site', 3);
+  });
+
+  it.each([
+    { credits_available: 0, account_balance: 39.22 },
+    { credits_available: 0.04, account_balance: 0.06 },
+    { credits_available: 1, account_balance: null },
+  ])('admits available wallet or mixed funds without moving money: %j', async billing => {
+    mockSingle.mockResolvedValue({ data: billing, error: null });
+    await expect(CreditService.requireCredits('synthetic-site', 0.1)).resolves.toBeUndefined();
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith('renew_site_plan_credits', { p_site_id: 'synthetic-site' });
+    expect(notification).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, '39.22', NaN, Infinity, -Infinity, false, {}, []])(
+    'treats invalid or missing wallet %s as unavailable, never a confirmed shortage', async account_balance => {
+      mockSingle.mockResolvedValue({ data: { credits_available: 100, account_balance }, error: null });
+      const error = await CreditService.requireCredits('synthetic-site', 0.1).catch(e => e);
+      expect(error.constructor).toBe(Error);
+      expect(isInsufficientCreditsError(error)).toBe(false);
+      expect(notification).not.toHaveBeenCalled();
+    },
+  );
+
+  it('admits an exact decimal mixed balance without binary sum drift', async () => {
+    mockSingle.mockResolvedValue({ data: { credits_available: 0.7, account_balance: 0.1 }, error: null });
+    await expect(CreditService.requireCredits('synthetic-site', 0.8)).resolves.toBeUndefined();
+    await expect(CreditService.requireCredits('synthetic-site', 0.80000001)).rejects.toBeInstanceOf(InsufficientCreditsError);
+  });
+
+  it.each([
+    { credits_available: 0, account_balance: 0.05, available: 0.05 },
+    { credits_available: 10, account_balance: -10, available: 0 },
+    { credits_available: 0, account_balance: -1, available: -1 },
+  ])('reports only combined confirmed insufficiency: %j', async ({ available, ...billing }) => {
+    mockSingle.mockResolvedValue({ data: billing, error: null });
+    await expect(CreditService.requireCredits('synthetic-site', 0.1)).rejects.toBeInstanceOf(InsufficientCreditsError);
+    expect(notification).toHaveBeenCalledWith('synthetic-site', 0.1, available);
   });
 
   it.each([NaN, Infinity, -1, 0])('rejects invalid deductions %s before database calls', async amount => {
@@ -208,7 +246,7 @@ describe('CreditService classified balance checks', () => {
 describe('CreditService read-only exhaustion notices', () => {
   const now = new Date('2030-10-15T12:00:00Z');
   const billing = {
-    credits_available: 0.25, status: 'active', plan_credit_period_end: '2030-11-01T00:00:00Z',
+    credits_available: 0.25, account_balance: 0, status: 'active', plan_credit_period_end: '2030-11-01T00:00:00Z',
     plan_credit_allowance: 20, stripe_subscription_id: null, subscription_status: null,
   };
   beforeEach(() => {
@@ -225,7 +263,7 @@ describe('CreditService read-only exhaustion notices', () => {
     expect(notice.available).toBe(0.25);
     expect(notice.nextResetAt).toBe('2030-11-01T00:00:00.000Z');
     expect(mockFrom.mock.calls).toEqual([['billing']]);
-    expect(mockSelect).toHaveBeenCalledWith('credits_available,status,plan_credit_period_end,plan_credit_allowance,stripe_subscription_id,subscription_status,billing_interval,paid_subscription_period_end');
+    expect(mockSelect).toHaveBeenCalledWith('credits_available,account_balance,status,plan_credit_period_end,plan_credit_allowance,stripe_subscription_id,subscription_status,billing_interval,paid_subscription_period_end');
     expect(mockEq).toHaveBeenCalledWith('site_id', 'synthetic-site');
     expect(mockRpc).not.toHaveBeenCalled();
     expect(mockSendEmail).not.toHaveBeenCalled();
@@ -286,7 +324,7 @@ describe('CreditService shortage notification debounce (offline)', () => {
     };
     const balanceQuery = {
       select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(),
-      single: jest.fn().mockResolvedValue({ data: { credits_available: 0 }, error: null }),
+      single: jest.fn().mockResolvedValue({ data: { credits_available: 0, account_balance: 0 }, error: null }),
     };
     mockFrom.mockImplementation(table => {
       if (table === 'billing') return balanceQuery;

@@ -1,4 +1,6 @@
 /** Pure billing notice helpers: no database, credentials or notification dependencies. */
+import { spendableCreditBalance } from './spendable-credit-balance';
+
 export class InsufficientCreditsError extends Error {
   constructor(message: string) {
     super(message);
@@ -15,6 +17,7 @@ export interface CreditExhaustionNotice {
 /** Billing responses are untrusted at runtime, even when the database has numeric columns. */
 export interface CreditExhaustionBilling {
   credits_available?: unknown;
+  account_balance?: unknown;
   status?: unknown;
   plan_credit_period_end?: unknown;
   plan_credit_allowance?: unknown;
@@ -69,7 +72,7 @@ export function formatCreditExhaustionNotice(
   billing: CreditExhaustionBilling | null = null,
   now: Date = new Date(),
 ): CreditExhaustionNotice {
-  const available = creditAmount(billing?.credits_available);
+  const available = spendableCreditBalance(billing);
   const allowance = creditAmount(billing?.plan_credit_allowance);
   const nonStripe = billing?.stripe_subscription_id === null;
   const activeStripe = typeof billing?.stripe_subscription_id === 'string' &&

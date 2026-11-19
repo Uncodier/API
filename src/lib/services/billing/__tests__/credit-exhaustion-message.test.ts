@@ -66,6 +66,7 @@ describe('formatCreditExhaustionNotice (pure Spanish billing notice)', () => {
   const now = new Date('2030-10-15T12:00:00Z');
   const billing: CreditExhaustionBilling = {
     credits_available: 0.25,
+    account_balance: 0,
     status: 'active',
     plan_credit_period_end: '2030-11-01T00:00:00Z',
     plan_credit_allowance: 20,
@@ -158,6 +159,19 @@ describe('formatCreditExhaustionNotice (pure Spanish billing notice)', () => {
       nextResetAt: null, available: null,
     });
     expect(formatCreditExhaustionNotice({}, now)).toEqual(fallback);
+  });
+
+  it('reports combined funds without converting or rounding the wallet', () => {
+    const result = formatCreditExhaustionNotice({ ...billing, credits_available: 0, account_balance: 39.22 }, now);
+    expect(result.available).toBe(39.22);
+    expect(result.message).toContain('Créditos disponibles: 39.22.');
+    expect(formatCreditExhaustionNotice({ ...billing, account_balance: -0.25 }, now).available).toBe(0);
+  });
+
+  it.each([undefined, NaN, Infinity, '39.22', false])('does not invent funds with an unknown wallet %s', wallet => {
+    const result = formatCreditExhaustionNotice({ ...billing, account_balance: wallet }, now);
+    expect(result.available).toBeNull();
+    expect(result.message).not.toContain('Créditos disponibles:');
   });
 
   it('makes Stripe renewal explicitly conditional on confirmed renewal payment', () => {
