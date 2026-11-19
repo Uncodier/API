@@ -9,6 +9,7 @@ export default {
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/bound-node-recovery-integration.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/conversation-recovery-integration.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/recovery-turn-guard.test.ts',
+    '<rootDir>/src/app/api/robots/instance/assistant/__tests__/recovery-failure-boundary.test.ts',
     '<rootDir>/src/lib/services/robot-instance/__tests__/assistant-recovery.test.ts',
     '<rootDir>/src/lib/services/robot-instance/__tests__/assistant-stale-recovery.test.ts',
     '<rootDir>/src/lib/services/workflow-robot/__tests__/run-plan-relations.test.ts',

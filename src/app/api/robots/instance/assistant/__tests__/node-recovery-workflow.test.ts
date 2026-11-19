@@ -53,6 +53,21 @@ function setup() {
 }
 
 describe('node execution continuation workflow', () => {
+  it('retains an interrupted recovery checkpoint without failing the action or replaying its tools', async () => {
+    const h = setup();
+    h.processAssistantTurn.mockResolvedValue({
+      recoveryUnavailable: true, recoveryCode: 'conflict', isDone: false, text: '',
+    });
+    expect(await h.run()).toMatchObject({ success: false, execution_status: 'paused' });
+    expect(h.processAssistantTurn).toHaveBeenCalledTimes(1);
+    expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
+    expect(h.checkpointRecoveryStep).not.toHaveBeenCalled();
+    expect(h.completeUserMessageStep).not.toHaveBeenCalled();
+    expect(h.pauseUserMessageStep).not.toHaveBeenCalled();
+    expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
+    expect(h.executePlanStep).not.toHaveBeenCalled();
+  });
+
   it('silently continues a safely released transient failure without marking or checkpointing it', async () => {
     const h = setup();
     h.processAssistantTurn.mockResolvedValue({ recoverableFailure: true });

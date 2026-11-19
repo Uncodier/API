@@ -22,6 +22,7 @@ export default {
     '/bound-node-recovery-integration.test.ts$',
     '/conversation-recovery-integration.test.ts$',
     '/recovery-turn-guard.test.ts$',
+    '/recovery-failure-boundary.test.ts$',
     '/ui-media-contract.test.ts$',
     '/conversation-recovery-tools.test.ts$',
     '/publish-node-binding.test.ts$',

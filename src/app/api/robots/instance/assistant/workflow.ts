@@ -149,6 +149,14 @@ export async function runAssistantWorkflow(
     if (!await guardRecoveryStep(recoveryScope, true, messages)) return blockedResult;
     turns++;
     const stepResult = await processAssistantTurn(context, messages);
+    if (stepResult.recoveryUnavailable) {
+      // Do not terminalize an interrupted action or save a fabricated completed
+      // turn. Eligible conversations remain available to the fenced stale cron;
+      // node/plan recovery, cancellation and ownership restrictions still apply.
+      return { instance_id: instanceId, success: false, execution_status: 'paused',
+        code: 'ASSISTANT_RECOVERY_UNAVAILABLE', instance_node_id: instanceNodeId,
+        message: 'Assistant execution was interrupted; its recovery checkpoint was retained without replaying tools' };
+    }
     if (stepResult.recoverableFailure) {
       if (typeof stepResult.retryNotBefore === 'number') await sleep(new Date(stepResult.retryNotBefore));
       if (!await guardRecoveryStep(recoveryScope)) return blockedResult;

@@ -1,5 +1,6 @@
 import { processAssistantTurn as processTurn } from './assistant-turn-core';
 import { releaseFailedAssistantTurn } from '@/lib/services/robot-instance/assistant-recovery';
+import { RecoveryError } from '@/lib/services/robot-instance/assistant-recovery-schema';
 import { getProviderRetryDecision } from '@/lib/services/robot-instance/assistant-failure-policy';
 import { readRequirementAssistantHost } from './requirement-host';
 
@@ -10,8 +11,14 @@ export async function processAssistantTurn(...args: Parameters<typeof processTur
     return await processTurn(...args);
   } catch (error) {
     const scope = args[0].recoveryScope;
+    const requirementHost = readRequirementAssistantHost(args[0]);
+    if (scope && !requirementHost && error instanceof RecoveryError) {
+      // Workflow reconstructs thrown step failures as FatalError. Preserve this
+      // control decision as data without releasing the turn or losing evidence.
+      return { recoveryUnavailable: true, recoveryCode: error.code, isDone: false, text: '' };
+    }
     const retry = getProviderRetryDecision(error);
-    if (scope && !readRequirementAssistantHost(args[0]) && retry) {
+    if (scope && !requirementHost && retry) {
       try {
         await releaseFailedAssistantTurn(scope, retry.retryAt);
         // Carry the decision as data: Workflow's FatalError can hide the cause.

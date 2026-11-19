@@ -313,6 +313,21 @@ describe('interactive plan exhaustion and safe resumption', () => {
     expect(h.updateInstancePlanCore.mock.calls.some(([request]) => request.steps.some((step: any) => step.status === 'completed'))).toBe(false);
   });
 
+  it('does not consume a recovery interruption envelope as a completed or resumable plan turn', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockImplementationOnce(h.doTurn).mockResolvedValueOnce({
+      recoveryUnavailable: true, recoveryCode: 'conflict', isDone: false, text: '',
+    });
+    await expect(h.planSteps.executePlanStep(h.context, clone(h.persisted), clone(h.persisted.steps[0])))
+      .rejects.toThrow('interrupted effects require reconciliation');
+    expect(h.effects()).toBe(1);
+    expect(h.processAssistantTurn).toHaveBeenCalledTimes(2);
+    expect(h.planSteps.executePlanStep.maxRetries).toBe(0);
+    expect(h.persisted.steps[0].status).toBe('failed');
+    expect(h.persisted.steps[0].result.assistant_execution.state).toBe('running');
+    expect(h.updateInstancePlanCore.mock.calls.some(([request]) => request.steps.some((step: any) => step.status === 'completed'))).toBe(false);
+  });
+
   it('refuses stale checkpoint replay if exhaustion persistence fails after effects', async () => {
     const h = harness();
     h.processAssistantTurn.mockImplementation(h.doTurn);

@@ -1,5 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { AssistantContext } from '../types';
+import { RecoveryError } from '@/lib/services/robot-instance/assistant-recovery-schema';
+import { attachRequirementAssistantHost } from '../requirement-host';
 
 type AsyncMock = (...args: any[]) => Promise<any>;
 const assertActive = jest.fn<AsyncMock>();
@@ -48,6 +50,31 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); });
 
 describe('per-turn and per-tool recovery guards', () => {
+  it.each(['inactive', 'missing', 'context_changed', 'in_flight', 'limit', 'conflict', 'invalid_state'] as const)(
+    'carries recovery interruption %s as sanitized data rather than a durable exception', async code => {
+      execute.mockRejectedValue(new RecoveryError(code));
+      const result = await processAssistantTurn(context, [{ role: 'user', content: 'Publish' }]);
+      expect(JSON.parse(JSON.stringify(result))).toEqual({
+        recoveryUnavailable: true, recoveryCode: code, isDone: false, text: '',
+      });
+      expect(releaseFailedTurn).not.toHaveBeenCalled();
+      expect(execute).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('preserves recovery exceptions without a trusted scope or inside a requirement host', async () => {
+    const error = new RecoveryError('conflict');
+    execute.mockRejectedValue(error);
+    await expect(processAssistantTurn({ ...context, recoveryScope: undefined }, [])).rejects.toBe(error);
+    const hostedContext = { ...context };
+    attachRequirementAssistantHost(hostedContext, {
+      assertActive: async () => { throw error; }, tools: [], boundary: {} as any, refreshContext: async () => '',
+    });
+    await expect(processAssistantTurn(hostedContext, [])).rejects.toBe(error);
+    expect(releaseFailedTurn).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it('carries a settled transient error as recoverable data only after a safe release', async () => {
     execute.mockRejectedValue(Object.assign(new Error('Provider unavailable'), { statusCode: 503 }));
     expect(await processAssistantTurn(context, [{ role: 'user', content: 'Publish' }])).toMatchObject({ recoverableFailure: true });

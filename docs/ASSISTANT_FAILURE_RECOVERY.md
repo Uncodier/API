@@ -42,6 +42,30 @@ timeouts/process termination, unknown application errors, or any turn with tool
 effects. Existing stale-turn recovery remains separate. Changing retry counts
 alone is not a substitute for effect reconciliation.
 
+## Recovery-control interruptions
+
+The settled turn wrapper also carries trusted `RecoveryError` decisions as
+sanitized data. Workflow reconstructs thrown step failures as `FatalError`, so
+checking the original error name only in the workflow catch is not sufficient.
+Without this envelope, a temporary checkpoint outage after a tool effect could
+incorrectly mark the user action `failed` and exclude it from stale recovery.
+
+These interruptions return a paused workflow outcome without inserting a public
+failure log, completing/pausing/failing the trusted action, releasing the in-flight
+turn, overwriting its transcript, or replaying tools. Eligible running conversations
+remain discoverable by the existing 15-minute stale-turn recovery and retain their
+uncertain tool observations. This is not an immediate retry or a guarantee of
+continuation: cancellation, superseding input, node/plan exclusions, ownership,
+admission ambiguity and recovery limits still apply. In-process requirement hosts
+and plan-step reconciliation keep their existing error semantics.
+
+The offline `recovery-failure-boundary` regression models the SDK's JSON-result /
+`FatalError` boundary with real recovery storage logic. It covers an accepted
+effect followed by a persistence outage, recovery before the ownership check,
+refusal before the inactivity deadline, and eventual agent continuation with
+unknown-outcome evidence rather than an invented receipt. The existing build
+suite separately compiles the workflow with the real SDK plugins.
+
 Offline validation:
 
 ```sh

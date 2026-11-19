@@ -316,6 +316,11 @@ async function executeRoutedPlanStep(context: AssistantContext, plan: any, step:
       console.log(`[PlanSteps] Executing turn ${turns} for step ${step.order}`);
       
       stepResult = await processAssistantTurn(modifiedContext, currentMessages);
+      if (stepResult.recoveryUnavailable) {
+        // Plan effects retain their existing terminal/reconciliation boundary;
+        // the conversation-only interruption envelope is not a completed turn.
+        throw new Error('Assistant plan recovery unavailable; interrupted effects require reconciliation');
+      }
       if (stepResult.creditExhausted) {
         return { ...stepResult, output: null, usage: {}, steps: [], turns,
           executionStatus: 'exhausted', isDone: false, resumeFromStepId: step.id };
