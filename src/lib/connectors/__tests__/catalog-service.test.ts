@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { getConnectorCatalog, getConnectorDetail } from '../catalog-service';
+import { getConnectorCatalog, getConnectorDetail, getConnectorDomainCounts } from '../catalog-service';
 import { ConnectorError } from '../types';
 
 const access = jest.fn();
@@ -109,6 +109,32 @@ it('filters the connected catalogue before paginating without consulting other t
   expect(result).toMatchObject({ total: 1, current_page: 1, total_pages: 1, next_cursor: null });
   expect(result.items).toMatchObject([{ slug: 'zendesk', connection_count: 1 }]);
   expect(toolkit.mock.calls.map(([, slug]) => slug).sort()).toEqual(slugs.sort());
+  expect(toolkits).not.toHaveBeenCalled();
+});
+
+it('counts the full search inventory before category selection or pagination', async () => {
+  const outlook = { ...gmail, slug: 'outlook' };
+  const unmapped = { ...gmail, slug: 'unmapped', categories: [] };
+  toolkits.mockResolvedValueOnce({ items: [gmail], next_cursor: 'more', total_items: 3 })
+    .mockResolvedValueOnce({ items: [outlook, unmapped], next_cursor: null, total_items: 3 });
+  const result = await getConnectorDomainCounts(user, { ...input, q: 'mail' });
+  expect(result).toMatchObject({ total: 3, counts: { communication: 2, calendar: 1, support: 0 } });
+  expect(toolkits.mock.calls.map(([, options]) => options.query)).toEqual(['mail', 'mail']);
+});
+
+it('counts matching visible connected toolkits once, not their individual accounts', async () => {
+  visible.mockResolvedValue([{ toolkit_slug: 'gmail' }, { toolkit_slug: 'gmail' }, { toolkit_slug: 'zendesk' }]);
+  toolkit.mockImplementation((_client, slug) => Promise.resolve({ ...gmail, slug, name: slug, description: '' }));
+  const result = await getConnectorDomainCounts(user, { ...input, tab: 'connected', q: 'GMAIL' });
+  expect(result).toMatchObject({ total: 1, counts: { communication: 1, support: 0 } });
+  expect(toolkit).toHaveBeenCalledTimes(2);
+  expect(toolkits).not.toHaveBeenCalled();
+});
+
+it('does not scan domain counts without workspace access', async () => {
+  access.mockRejectedValue(new ConnectorError('ACCESS_DENIED', 'Denied.', 403));
+  await expect(getConnectorDomainCounts(user, input)).rejects.toMatchObject({ status: 403 });
+  expect(credential).not.toHaveBeenCalled();
   expect(toolkits).not.toHaveBeenCalled();
 });
 

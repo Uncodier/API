@@ -10,7 +10,7 @@ The existing OpenAI SDK is reused for compatible OpenRouter endpoints. Gateway, 
 
 | Capability | Default / required selection |
 | --- | --- |
-| Chat and agent tools | `OPENROUTER_CHAT_MODEL`, default `openai/gpt-6.1-sol` |
+| Chat and agent tools | `OPENROUTER_CHAT_MODEL`, default `openai/gpt-6.2-sol` |
 | Embeddings | `openai/text-embedding-3-small`, 1536 dimensions by default |
 | Image generation | Azure direct: `AZURE_OPENAI_IMAGE_DEPLOYMENT`, default `gpt-image-2.5-sunburst` |
 | Video generation | Platform Gemini: `GEMINI_VIDEO_MODEL`, default `gemini-omni-1.2-flash`; selected customer BYOK uses OpenRouter |
@@ -19,8 +19,8 @@ The existing OpenAI SDK is reused for compatible OpenRouter endpoints. Gateway, 
 | Speech voice | `AZURE_TTS_VOICE`, default `alloy` (multilingual Azure OpenAI voice) |
 | Transcription | Azure direct: required `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT` (existing deployment: `gpt-transcribe`) |
 
-The shared model resolver migrates `gpt-5.6` and `gpt-5.6-sol` (including
-`openai/`-qualified IDs) to `openai/gpt-6.1-sol` before inference. This applies
+The shared model resolver migrates `gpt-5.6`, `gpt-5.6-sol` and `gpt-6.1-sol`
+(including `openai/`-qualified IDs) to `openai/gpt-6.2-sol` before inference. This applies
 to explicit chat requests, persisted agent/workflow model selections and stale
 `OPENROUTER_CHAT_MODEL` values. OpenRouter `:variant` suffixes are preserved;
 other model IDs and vendors are unchanged. No database records are rewritten.
@@ -70,7 +70,7 @@ different embedding model as an automatic fallback.
    agent executor deliberately ignores legacy provider/model environment defaults.
    Use `OPENROUTER_CHAT_MODEL` for chat and `AZURE_OPENAI_IMAGE_DEPLOYMENT` for
    images. Existing persisted model choices remain explicit choices, except for
-   the GPT-5.6 chat IDs migrated above; review other selections before rollout.
+   the legacy chat IDs migrated above; review other selections before rollout.
    Private Azure deployment aliases need mapping to real OpenRouter model IDs,
    not just a vendor prefix; the agent
    executor rejects explicit Azure endpoint/deployment configuration.

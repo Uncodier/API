@@ -426,7 +426,7 @@ describe('visual probe script', () => {
 describe('visual critic model selection', () => {
   it('uses the OpenRouter vision-capable chat default unless explicitly overridden', () => {
     expect(resolveVisualCriticModel(undefined, { AI_PROVIDER: 'gemini' })).toBe(
-      'openai/gpt-6.1-sol',
+      'openai/gpt-6.2-sol',
     );
     expect(
       resolveVisualCriticModel('custom-vision-model', { AI_PROVIDER: 'gemini' }),

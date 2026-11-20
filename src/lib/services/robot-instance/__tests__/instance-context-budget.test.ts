@@ -101,6 +101,8 @@ describe('instance context budget', () => {
     expect(modelContextLimit('xai', 'xai/grok-4.6')).toBeNull();
     expect(modelContextLimit('openrouter', 'openai/gpt-6.1-sol')).toBe(1_050_000);
     expect(outputReserveForModel('openrouter', 'openai/gpt-6.1-sol')).toBe(128_000);
+    expect(modelContextLimit('openrouter', 'openai/gpt-6.2-sol')).toBe(1_050_000);
+    expect(outputReserveForModel('openrouter', 'openai/gpt-6.2-sol')).toBe(128_000);
     expect(modelContextLimit('openrouter', 'openai/gpt-6.1-sol-private')).toBeNull();
   });
 

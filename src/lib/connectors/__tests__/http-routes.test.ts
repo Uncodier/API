@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { GET as catalog } from '@/app/api/connectors/catalog/route';
+import { GET as domainCounts } from '@/app/api/connectors/domain-counts/route';
 import { GET as detail } from '@/app/api/connectors/catalog/[slug]/route';
 import { GET as connectionSummary } from '@/app/api/connectors/connections/[id]/route';
 import { GET as connections } from '@/app/api/connectors/connections/route';
@@ -15,6 +16,7 @@ import { ConnectorError } from '../types';
 const getUser = jest.fn();
 const siteAccess = jest.fn();
 const catalogService = jest.fn();
+const countsService = jest.fn();
 const detailService = jest.fn();
 const updateAccess = jest.fn();
 const updatePolicy = jest.fn();
@@ -22,7 +24,7 @@ const syncService = jest.fn();
 const disconnectService = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { auth: { getUser: (...args: unknown[]) => getUser(...args) } } }));
 jest.mock('../access', () => ({ requireConnectorSiteAccess: (...args: unknown[]) => siteAccess(...args) }));
-jest.mock('../catalog-service', () => ({ ...jest.requireActual('../catalog-service'), getConnectorCatalog: (...args: unknown[]) => catalogService(...args), getConnectorDetail: (...args: unknown[]) => detailService(...args) }));
+jest.mock('../catalog-service', () => ({ ...jest.requireActual('../catalog-service'), getConnectorCatalog: (...args: unknown[]) => catalogService(...args), getConnectorDetail: (...args: unknown[]) => detailService(...args), getConnectorDomainCounts: (...args: unknown[]) => countsService(...args) }));
 jest.mock('../management', () => ({ ...jest.requireActual('../management'), updateConnectorAccess: (...args: unknown[]) => updateAccess(...args), updateConnectorPolicy: (...args: unknown[]) => updatePolicy(...args) }));
 jest.mock('../connection-service', () => ({ ...jest.requireActual('../connection-service'), syncConnector: (...args: unknown[]) => syncService(...args), disconnectConnector: (...args: unknown[]) => disconnectService(...args) }));
 
@@ -49,7 +51,7 @@ beforeEach(() => {
 });
 
 const routes: Array<[string, (request: Request) => Promise<Response>]> = [
-  ['catalog', catalog], ['detail', req => detail(req, { params: Promise.resolve({ slug: 'gmail' }) })],
+  ['catalog', catalog], ['domain counts', domainCounts], ['detail', req => detail(req, { params: Promise.resolve({ slug: 'gmail' }) })],
   ['connection summary', req => connectionSummary(req, context)], ['connections', connections], ['access', req => access(req, context)], ['patch access', req => patchAccess(req, context)],
   ['policy', req => policy(req, context)], ['sync', req => sync(req, context)], ['disconnect', req => disconnect(req, context)],
   ['legacy apps', oldApps], ['legacy integrations', oldIntegrations], ['legacy detail', req => oldDetail(req, { params: Promise.resolve({ id: 'gmail' }) })],
@@ -63,6 +65,7 @@ it.each(routes)('%s independently rejects unverified service/header identity', a
   expect(getUser).not.toHaveBeenCalled();
   expect(siteAccess).not.toHaveBeenCalled();
   expect(catalogService).not.toHaveBeenCalled();
+  expect(countsService).not.toHaveBeenCalled();
 });
 
 it('only uses the verified bearer subject, authorizes before catalogue service, and disables caching', async () => {
@@ -73,6 +76,20 @@ it('only uses the verified bearer subject, authorizes before catalogue service, 
   expect(getUser).toHaveBeenCalledWith(token);
   expect(siteAccess).toHaveBeenCalledWith(site, user);
   expect(catalogService).toHaveBeenCalledWith(user, { site_id: site, tab: 'all' });
+});
+
+it('scopes domain counts by bearer actor, search and tab only', async () => {
+  const path = `domain-counts?site_id=${site}&tab=connected&q=mail`;
+  expect((await domainCounts(request(`${path}&page=2`))).status).toBe(400);
+  expect(countsService).not.toHaveBeenCalled();
+  const counts = { total: 1, counts: { communication: 1 } };
+  countsService.mockResolvedValueOnce(counts);
+  const req = request(path);
+  req.headers.set('x-user-id', id);
+  const response = await domainCounts(req);
+  expect(response.headers.get('cache-control')).toBe('private, no-store');
+  expect(await response.json()).toEqual(counts);
+  expect(countsService).toHaveBeenCalledWith(user, { site_id: site, tab: 'connected', q: 'mail' });
 });
 
 it.each([`catalog?site_id=${site}&site_id=${site}`, `catalog?site_id=${site}&user_id=${user}`, `catalog?site_id=${site}&tab=shared`, 'catalog?site_id=bad'])('rejects strict query input: %s', async path => {

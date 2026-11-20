@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Supervisor] Command found: ${command.id}, Status: ${command.status}`);
 
-    // Analyze command with GPT-6.1 Sol
+    // Analyze command with the configured chat model
     const supervisorService = new SupervisorService();
     const analysisResult: SupervisorResult = await supervisorService.analyzeCommand(command, conversation_id);
 

@@ -14,14 +14,14 @@ const openRouterFetch: typeof fetch = (input, init) => globalThis.fetch(input, {
 });
 
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
-export const DEFAULT_OPENROUTER_CHAT_MODEL = 'openai/gpt-6.1-sol';
-/** Keep gateway and vendor separate; only legacy GPT-5.6 chat IDs are migrated. */
+export const DEFAULT_OPENROUTER_CHAT_MODEL = 'openai/gpt-6.2-sol';
+/** Keep gateway and vendor separate; only the previous default chat IDs are migrated. */
 export function resolveOpenRouterModel(model?: string, family = 'openai'): string {
   const value = model?.trim();
   if (!value) return getOpenRouterChatModel();
   // Covers explicit requests, persisted command selections and stale environment defaults.
   // Preserve OpenRouter routing variants without changing unrelated vendors/models.
-  const legacyChatModel = /^(?:openai\/)?gpt-5\.6(?:-sol)?(:.+)?$/.exec(value);
+  const legacyChatModel = /^(?:openai\/)?gpt-(?:5\.6(?:-sol)?|6\.1-sol)(:.+)?$/.exec(value);
   if (legacyChatModel) return `${DEFAULT_OPENROUTER_CHAT_MODEL}${legacyChatModel[1] ?? ''}`;
   if (value.includes('/')) return value;
   const vendor = value.startsWith('gemini') ? 'google'

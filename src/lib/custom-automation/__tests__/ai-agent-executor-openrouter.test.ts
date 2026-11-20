@@ -23,7 +23,7 @@ it('uses the fixed OpenRouter transport and ignores old environment routing/defa
   process.env.GEMINI_API_KEY = randomBytes(24).toString('hex');
   const executor = new AIAgentExecutor({ provider: 'azure', baseURL: 'https://example.invalid' });
   expect(executor.getProvider()).toBe('openrouter');
-  expect(executor.getModel()).toBe('openai/gpt-6.1-sol');
+  expect(executor.getModel()).toBe('openai/gpt-6.2-sol');
   expect((executor as any).client.baseURL).toBe('https://openrouter.ai/api/v1');
   expect((executor as any).client.apiKey).toBe(process.env.OPENROUTER_API_KEY);
   expect((executor as any).client.maxRetries).toBe(0);
@@ -47,28 +47,28 @@ it('rejects provider-specific credentials and private Azure deployments before n
 
 it('normalizes model overrides, omits unsupported sampling and retains cost metadata', async () => {
   const executor = new AIAgentExecutor({ siteId: 'site-test' });
-  const create = jest.fn().mockResolvedValue({ id: 'generation-test', model: 'openai/gpt-6.1-sol', choices: [{ message: { role: 'assistant', content: 'Done' }, finish_reason: 'stop' }],
+  const create = jest.fn().mockResolvedValue({ id: 'generation-test', model: 'openai/gpt-6.2-sol', choices: [{ message: { role: 'assistant', content: 'Done' }, finish_reason: 'stop' }],
     usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30, cost: 0.005, cost_details: { upstream_inference_cost: 0.004 }, is_byok: false } });
   (executor as any).client.chat.completions.create = create;
   const result = await executor.act({ model: 'gpt-6.1-sol', prompt: 'Run', tools: [], temperature: 0.3, maxIterations: 1 });
-  expect(create.mock.calls[0][0]).toMatchObject({ model: 'openai/gpt-6.1-sol', user: 'site-test', reasoning: { effort: 'low' } });
+  expect(create.mock.calls[0][0]).toMatchObject({ model: 'openai/gpt-6.2-sol', user: 'site-test', reasoning: { effort: 'low' } });
   expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
   expect(create.mock.calls[0][0]).not.toHaveProperty('parallel_tool_calls');
   expect(result.usage.cost).toBe(0.005);
-  expect(result.steps[0]).toMatchObject({ provider: 'openrouter', model: 'openai/gpt-6.1-sol', generationId: 'generation-test' });
+  expect(result.steps[0]).toMatchObject({ provider: 'openrouter', model: 'openai/gpt-6.2-sol', generationId: 'generation-test' });
   expect(result.steps[0].usage).toMatchObject({ cost: 0.005, cost_details: { upstream_inference_cost: 0.004 }, is_byok: false });
 });
 
 it.each(['gpt-5.6', 'openai/gpt-5.6-sol'])('migrates executor configuration and turn override %s', async model => {
   const executor = new AIAgentExecutor({ model });
-  expect(executor.getModel()).toBe('openai/gpt-6.1-sol');
+  expect(executor.getModel()).toBe('openai/gpt-6.2-sol');
   const create = jest.fn().mockResolvedValue({ choices: [{ message: { role: 'assistant', content: 'Done' }, finish_reason: 'stop' }] });
   (executor as any).client.chat.completions.create = create;
   const result = await executor.act({ model, prompt: 'Run', tools: [], temperature: 0.3, maxIterations: 1 });
   expect(create).toHaveBeenCalledTimes(1);
-  expect(create.mock.calls[0][0].model).toBe('openai/gpt-6.1-sol');
+  expect(create.mock.calls[0][0].model).toBe('openai/gpt-6.2-sol');
   expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
-  expect(result.steps[0].model).toBe('openai/gpt-6.1-sol');
+  expect(result.steps[0].model).toBe('openai/gpt-6.2-sol');
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 
@@ -78,14 +78,14 @@ it('replays streamed reasoning and tool results on the same model/account and co
   const reasoning = { type: 'reasoning.encrypted', id: 'reasoning-a', index: 0, format: 'openai-responses-v1', data: 'opaque-state' };
   const usage = { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30, cost: 0.01 };
   const first = (async function* () {
-    yield { id: 'gen-stream-first', model: 'openai/gpt-6.1-sol', choices: [{ delta: { reasoning_details: [{ ...reasoning, data: 'opaque-' }] } }] };
+    yield { id: 'gen-stream-first', model: 'openai/gpt-6.2-sol', choices: [{ delta: { reasoning_details: [{ ...reasoning, data: 'opaque-' }] } }] };
     yield { choices: [{ delta: { reasoning_details: [{ ...reasoning, data: 'state' }], tool_calls: [
       { index: 0, id: 'call-a', type: 'function', function: { name: 'lookup', arguments: '{}' } },
     ] }, finish_reason: 'tool_calls' }], usage };
     yield { choices: [], usage };
   })();
   const second = (async function* () {
-    yield { id: 'gen-stream-second', model: 'openai/gpt-6.1-sol', choices: [{ delta: { content: 'Done' }, finish_reason: 'stop' }] };
+    yield { id: 'gen-stream-second', model: 'openai/gpt-6.2-sol', choices: [{ delta: { content: 'Done' }, finish_reason: 'stop' }] };
     yield { choices: [], usage: { ...usage, cost: 0.02 } };
   })();
   const create = jest.fn().mockImplementation(async request => {
@@ -98,7 +98,7 @@ it('replays streamed reasoning and tool results on the same model/account and co
     onStreamStart: async () => 'log', onStreamChunk: async () => {}, maxIterations: 2 });
   expect(execute).toHaveBeenCalledTimes(1);
   expect(requests).toHaveLength(2);
-  for (const request of requests) expect(request).toMatchObject({ model: 'openai/gpt-6.1-sol', user: 'site-test', stream_options: { include_usage: true } });
+  for (const request of requests) expect(request).toMatchObject({ model: 'openai/gpt-6.2-sol', user: 'site-test', stream_options: { include_usage: true } });
   expect(requests[1].messages.find((message: any) => message.tool_calls)).toMatchObject({ reasoning_details: [reasoning] });
   expect(requests[1].messages.find((message: any) => message.role === 'tool')).toMatchObject({ tool_call_id: 'call-a' });
   expect(result.usage).toMatchObject({ totalTokens: 60, cost: 0.03 });
@@ -193,7 +193,7 @@ it.each([false, true])('retries affordability with less output without changing 
   await executor.act({ prompt: 'Run', tools: [], enforceSingleTurn: true,
     stream: streaming, onStreamStart: async () => 'log', onStreamChunk: async () => {} });
   expect(create.mock.calls.map(([payload]) => payload.max_tokens)).toEqual([4096, 3542]);
-  expect(create.mock.calls[1][0].model).toBe('openai/gpt-6.1-sol');
+  expect(create.mock.calls[1][0].model).toBe('openai/gpt-6.2-sol');
 });
 
 it.each([false, true])('never executes truncated tool arguments after hitting the output cap (stream=%s)', async streaming => {

@@ -47,7 +47,9 @@ export function outputReserveForModel(provider: string, model: string): number {
 // Documented model IDs only. Azure deployment aliases and Vertex endpoints may
 // differ from their displayed model IDs and must be configured explicitly.
 const KNOWN_MODEL_CAPACITIES: Readonly<Record<string, ModelCapacity>> = {
-  // OpenRouter public catalog: verified 2026-10-03. Keep exact qualified IDs.
+  // GPT-6.2 Sol limits verified in the OpenRouter public catalog on 2026-11-20.
+  'openrouter:openai/gpt-6.2-sol': { availableTokens: 1_050_000, reservedOutputTokens: 128_000 },
+  // Keep exact qualified IDs, including models reported by earlier runs.
   'openrouter:openai/gpt-6.1-sol': { availableTokens: 1_050_000, reservedOutputTokens: 128_000 },
   'openrouter:openai/gpt-4o': { availableTokens: 128_000, reservedOutputTokens: 16_384 },
   'openrouter:openai/gpt-5.2': { availableTokens: 400_000, reservedOutputTokens: 128_000 },

@@ -43,7 +43,7 @@ constructor() {
       modelType: 'openrouter',
       modelId: getOpenRouterChatModel(),
       maxTokens: 32768,
-      temperature: 1, // GPT-6.1 Sol uses default temperature
+      temperature: 1,
       reasoningEffort: 'high',
       verbosity: 'medium'
     });

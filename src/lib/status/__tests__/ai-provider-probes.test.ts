@@ -113,10 +113,10 @@ describe('capability-specific status probes (offline)', () => {
   it('uses the shared OpenRouter client and default qualified chat model only when opted in', async () => {
     process.env.OPENROUTER_API_KEY = randomBytes(32).toString('hex');
     process.env.STATUS_AI_PROBE_ENABLED = 'true';
-    expect(await probeOpenRouterText()).toMatchObject({ model: 'openai/gpt-6.1-sol', liveProbe: true });
+    expect(await probeOpenRouterText()).toMatchObject({ model: 'openai/gpt-6.2-sol', liveProbe: true });
     expect(createOpenRouterClient).toHaveBeenCalledWith({ timeout: 15_000, maxRetries: 0 });
     expect(mockCompletion).toHaveBeenCalledWith({
-      model: 'openai/gpt-6.1-sol', messages: [{ role: 'user', content: 'ping' }], stream: false, max_completion_tokens: 100,
+      model: 'openai/gpt-6.2-sol', messages: [{ role: 'user', content: 'ping' }], stream: false, max_completion_tokens: 100,
     });
     expect(global.fetch).not.toHaveBeenCalled();
   });

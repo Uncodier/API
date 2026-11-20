@@ -67,7 +67,7 @@ describe('workflow OpenRouter streaming accounting', () => {
       text: 'answer', status: 'done', gateway: 'openrouter', model: 'openai/gpt-6.1-sol',
       id, generation_id: id, provider: 'upstream', usage,
     });
-    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ stream_options: { include_usage: true } }));
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai/gpt-6.2-sol', stream_options: { include_usage: true } }));
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('temperature');
   });
 

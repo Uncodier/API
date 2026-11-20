@@ -42,7 +42,7 @@ it.each([0, 0.023])('uses OpenRouter and settles reported cost=%s without token 
   expect(mockClientOptions).toHaveBeenCalledWith(expect.objectContaining({
     baseURL: 'https://openrouter.ai/api/v1', apiKey: process.env.OPENROUTER_API_KEY, maxRetries: 0, timeout: 90_000,
   }));
-  expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai/gpt-6.1-sol', user: billing.siteId, stream: false }),
+  expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai/gpt-6.2-sol', user: billing.siteId, stream: false }),
     expect.objectContaining({ signal: expect.any(AbortSignal), timeout: 90_000, maxRetries: 0 }));
   expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ siteId: billing.siteId, usage,
     generationId: 'generation-offline', eventId: expect.stringMatching(/^[a-f0-9-]{36}$/),

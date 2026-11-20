@@ -65,7 +65,7 @@ describe('legacy AI OpenRouter contracts', () => {
     const data = await response.json();
     expect(data.choices[0].message.content).toBe('{"ok":true}');
     expect(data).toMatchObject({ id: result.id, provider: result.provider, usage: result.usage });
-    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai/gpt-6.1-sol' }));
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai/gpt-6.2-sol' }));
     expect(OpenAI).toHaveBeenCalledWith(expect.objectContaining({
       apiKey: process.env.OPENROUTER_API_KEY, baseURL: 'https://openrouter.ai/api/v1', maxRetries: 0,
     }));

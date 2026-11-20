@@ -163,7 +163,7 @@ protected async filterSuggestionsWithGPT52(
         return analysis;
       }
 
-      // Call GPT-6.1 Sol for similarity analysis
+      // Call the configured chat model for similarity analysis
       const userPrompt = formatSimilarityAnalysisPrompt(
         existingToolSuggestions,
         existingPromptSuggestions,
@@ -209,7 +209,7 @@ protected async filterSuggestionsWithGPT52(
         similarityResult = response.content;
       }
 
-      // Use filtered suggestions from GPT-6.1 Sol
+      // Use the model's filtered suggestions
       const filteredAnalysis = {
         ...analysis,
         system_suggested_tools_for_development: similarityResult.new_suggestions?.system_suggested_tools_for_development || [],

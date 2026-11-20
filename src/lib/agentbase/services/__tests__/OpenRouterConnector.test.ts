@@ -29,14 +29,14 @@ it('keeps the compatibility export but routes the default only through OpenRoute
   expect(PortkeyConnector).toBe(OpenRouterConnector);
   const result = await new PortkeyConnector().callAgent(messages, { siteId: 'site-a', temperature: 0.2, topP: 0.5, reasoningEffort: 'high' });
   expect(OpenAI).toHaveBeenCalledWith(expect.objectContaining({ apiKey: process.env.OPENROUTER_API_KEY, baseURL: 'https://openrouter.ai/api/v1', maxRetries: 0 }));
-  expect(create.mock.calls[0][0]).toMatchObject({ model: 'openai/gpt-6.1-sol', user: 'site-a', reasoning: { effort: 'high' }, stream: false });
+  expect(create.mock.calls[0][0]).toMatchObject({ model: 'openai/gpt-6.2-sol', user: 'site-a', reasoning: { effort: 'high' }, stream: false });
   expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
   expect(create.mock.calls[0][0]).not.toHaveProperty('top_p');
   expect(result.usage).toEqual(completion.usage);
-  expect(result.modelInfo).toEqual({ model: 'openai/gpt-6.1-sol', provider: 'openrouter' });
+  expect(result.modelInfo).toEqual({ model: 'openai/gpt-6.2-sol', provider: 'openrouter' });
 });
 
-it.each([['anthropic', 'claude-sonnet-4', 'anthropic/claude-sonnet-4'], ['gemini', 'gemini-2.5-flash', 'google/gemini-2.5-flash'], ['openrouter', 'openai/gpt-6.1-sol:extended', 'openai/gpt-6.1-sol:extended']] as const)(
+it.each([['anthropic', 'claude-sonnet-4', 'anthropic/claude-sonnet-4'], ['gemini', 'gemini-2.5-flash', 'google/gemini-2.5-flash'], ['openrouter', 'openai/gpt-6.1-sol:extended', 'openai/gpt-6.2-sol:extended']] as const)(
   'normalizes vendor %s but never changes transport', async (modelType, modelId, expected) => {
     await new OpenRouterConnector().callAgent(messages, { modelType, modelId, responseFormat: 'json', maxTokens: 100 });
     expect(create.mock.calls[0][0]).toMatchObject({ model: expected, max_tokens: 100, response_format: { type: 'json_object' } });
@@ -138,10 +138,10 @@ it.each(['openai:gpt-5.6', 'openrouter:openai/gpt-5.6-sol'])(
       ...options, temperature: 0.2, topP: 0.5, reasoningEffort: 'minimal',
     });
     expect(create).toHaveBeenCalledTimes(1);
-    expect(create.mock.calls[0][0]).toMatchObject({ model: 'openai/gpt-6.1-sol', reasoning: { effort: 'low' } });
+    expect(create.mock.calls[0][0]).toMatchObject({ model: 'openai/gpt-6.2-sol', reasoning: { effort: 'low' } });
     expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
     expect(create.mock.calls[0][0]).not.toHaveProperty('top_p');
-    expect(result.modelInfo).toEqual({ model: 'openai/gpt-6.1-sol', provider: 'openrouter' });
+    expect(result.modelInfo).toEqual({ model: 'openai/gpt-6.2-sol', provider: 'openrouter' });
   },
 );
 

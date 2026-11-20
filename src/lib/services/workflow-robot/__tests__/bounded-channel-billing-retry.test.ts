@@ -134,7 +134,7 @@ it.each(['missing tool', 'malformed JSON', 'rejected capture'])(
     expect(eventId).toMatch(/^[a-f0-9-]{36}$/);
     expect(metadata).toMatchObject({ site_id: input.siteId, instance_id: instanceId, plan_id: input.runPlanId,
       run_plan_id: input.runPlanId, step_id: 'step-1', message_id: input.messageId,
-      attempt: 1, retry_count: 0, model: 'openai/gpt-6.1-sol' });
+      attempt: 1, retry_count: 0, model: 'openai/gpt-6.2-sol' });
     expect(validateCredits.mock.invocationCallOrder[0]).toBeLessThan(chatCreate.mock.invocationCallOrder[0]);
     expect(chatCreate).toHaveBeenCalledTimes(1);
   },

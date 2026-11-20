@@ -11,10 +11,12 @@ import { filteredCatalogPage, paginateFilteredCatalog, scanConnectedCatalog, sca
 
 export const siteQuerySchema = z.object({ site_id: z.string().uuid() }).strict();
 export const toolkitSlugSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,99}$/);
-export const catalogQuerySchema = siteQuerySchema.extend({
+export const domainCountsQuerySchema = siteQuerySchema.extend({
   q: z.string().trim().max(200).regex(/^[^\u0000-\u001f\u007f]*$/).optional(),
-  category: z.string().max(80).refine(value => CONNECTOR_DOMAINS.some(domain => domain.id === value)).optional(),
   tab: z.enum(['all', 'connected']).default('all'),
+});
+export const catalogQuerySchema = domainCountsQuerySchema.extend({
+  category: z.string().max(80).refine(value => CONNECTOR_DOMAINS.some(domain => domain.id === value)).optional(),
   cursor: z.string().min(1).max(2048).regex(/^[^\u0000-\u0020\u007f]+$/).optional(),
   page: catalogPageNumber.optional(),
 }).strict().refine(query => !(query.cursor && query.page), 'Choose a page or cursor, not both');
@@ -24,14 +26,43 @@ const domains = () => CONNECTOR_DOMAINS.map(domain => ({
   id: domain.id, label: domain.label, skill_slugs: [...domain.skillSlugs],
 }));
 
+function toolkitDomains(toolkit: ComposioToolkit) {
+  return getToolkitDomains(toolkit.slug, toolkit.categories.flatMap(category => [category.slug, category.name]));
+}
+
 export function projectToolkit(toolkit: ComposioToolkit, visible: Pick<Connector, 'toolkit_slug'>[]) {
-  const mapped = getToolkitDomains(toolkit.slug, toolkit.categories.flatMap(category => [category.slug, category.name]));
+  const mapped = toolkitDomains(toolkit);
   return {
     slug: toolkit.slug, name: toolkit.name, description: toolkit.description, logo: toolkit.logo_url,
     domains: mapped, skills: getDomainSkills(mapped), tools_count: toolkit.tools_count,
     auth_schemes: toolkit.auth_schemes,
     connection_count: visible.filter(connection => connection.toolkit_slug === toolkit.slug).length,
   };
+}
+
+function connectedToolkitSlugs(visible: Pick<Connector, 'toolkit_slug'>[]) {
+  return [...new Set(visible.map(connection => connection.toolkit_slug))].sort();
+}
+
+async function matchingConnectedToolkits(client: ReturnType<typeof createComposioClient>, slugs: string[], query?: string) {
+  const toolkits = await scanConnectedCatalog(client, slugs);
+  const search = query?.toLowerCase();
+  return search ? toolkits.filter(toolkit => `${toolkit.name} ${toolkit.slug} ${toolkit.description}`.toLowerCase().includes(search)) : toolkits;
+}
+
+export async function getConnectorDomainCounts(userId: string, query: z.input<typeof domainCountsQuerySchema>) {
+  const input = domainCountsQuerySchema.parse(query);
+  await requireConnectorSiteAccess(input.site_id, userId);
+  const credential = await loadConnectorCredential(input.site_id);
+  const client = createComposioClient(credential.apiKey);
+  const toolkits = input.tab === 'connected'
+    ? await matchingConnectedToolkits(client, connectedToolkitSlugs(await listVisibleConnectors(input.site_id, userId)), input.q)
+    : await scanProviderCatalog(client, input.q || undefined);
+  const counts = Object.fromEntries(CONNECTOR_DOMAINS.map(({ id }) => [id, 0]));
+  for (const toolkit of toolkits) {
+    for (const id of toolkitDomains(toolkit)) counts[id] += 1;
+  }
+  return { total: toolkits.length, counts };
 }
 
 /** Browsing metadata never creates a provider binding, auth attempt or tool session. */
@@ -47,17 +78,15 @@ export async function getConnectorCatalog(userId: string, query: CatalogQuery) {
   const visible = await listVisibleConnectors(input.site_id, userId);
   const client = createComposioClient(credential.apiKey);
   const connected = input.tab === 'connected';
-  const slugs = connected ? [...new Set(visible.map(connection => connection.toolkit_slug))].sort() : [];
+  const slugs = connected ? connectedToolkitSlugs(visible) : [];
   const limit = connected ? 20 : 50;
   const metadata = { domains: domains(), can_manage: access.can_manage, configured: true, credential_source: credential.source };
 
   if (input.category || (connected && input.q)) {
     const page = filteredCatalogPage(input.cursor, input.page);
-    const candidates = connected ? await scanConnectedCatalog(client, slugs) : await scanProviderCatalog(client, input.q || undefined);
-    const search = connected ? input.q?.toLowerCase() : undefined;
+    const candidates = connected ? await matchingConnectedToolkits(client, slugs, input.q) : await scanProviderCatalog(client, input.q || undefined);
     const matches = candidates.map(toolkit => projectToolkit(toolkit, visible)).filter(toolkit =>
-      (!input.category || toolkit.domains.includes(input.category))
-      && (!search || `${toolkit.name} ${toolkit.slug} ${toolkit.description}`.toLowerCase().includes(search)));
+      !input.category || toolkit.domains.includes(input.category));
     return { ...metadata, ...paginateFilteredCatalog(matches, page, limit) };
   }
 

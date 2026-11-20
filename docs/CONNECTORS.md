@@ -23,6 +23,9 @@ and [access model](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/C
   Unfiltered browsing still jumps directly to a provider page. Filtered queries
   read bounded metadata pages using the selected credential; Connected queries
   inspect only authorized, visible toolkits. Incomplete scans fail explicitly.
+  `GET /api/connectors/domain-counts` applies search and tab without category or
+  pagination. It counts distinct toolkits overall and once in each matching
+  domain. The web loads this summary separately from the catalogue page.
 - The direct REST v3.1 backend is chosen to pin execution versions. See
   [provider endpoint evidence](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/lib/connectors/COMPOSIO_REST_CONTRACT.md).
   No SDK ambient credentials, proxy/file loaders or automatic execution fallback.

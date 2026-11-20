@@ -51,7 +51,9 @@ describe('OpenRouter configuration', () => {
   });
 
   it.each([
-    ['gpt-6.1-sol', 'openai/gpt-6.1-sol'],
+    ['gpt-6.2-sol', 'openai/gpt-6.2-sol'],
+    ['openai/gpt-6.1-terra', 'openai/gpt-6.1-terra'],
+    ['vendor/gpt-6.1-sol', 'vendor/gpt-6.1-sol'],
     ['gemini-3.1-pro-preview', 'google/gemini-3.1-pro-preview'],
     ['claude-sonnet-4', 'anthropic/claude-sonnet-4'],
     ['text-embedding-3-small', 'openai/text-embedding-3-small'],
@@ -65,13 +67,16 @@ describe('OpenRouter configuration', () => {
   });
 
   it.each([
-    ['gpt-5.6', 'openai/gpt-6.1-sol'],
-    ['gpt-5.6-sol', 'openai/gpt-6.1-sol'],
-    ['openai/gpt-5.6', 'openai/gpt-6.1-sol'],
-    ['openai/gpt-5.6-sol', 'openai/gpt-6.1-sol'],
-    ['  openai/gpt-5.6-sol  ', 'openai/gpt-6.1-sol'],
-    ['openai/gpt-5.6-sol:extended', 'openai/gpt-6.1-sol:extended'],
-    ['gpt-5.6:free', 'openai/gpt-6.1-sol:free'],
+    ['gpt-5.6', 'openai/gpt-6.2-sol'],
+    ['gpt-5.6-sol', 'openai/gpt-6.2-sol'],
+    ['openai/gpt-5.6', 'openai/gpt-6.2-sol'],
+    ['openai/gpt-5.6-sol', 'openai/gpt-6.2-sol'],
+    ['  openai/gpt-5.6-sol  ', 'openai/gpt-6.2-sol'],
+    ['openai/gpt-5.6-sol:extended', 'openai/gpt-6.2-sol:extended'],
+    ['gpt-5.6:free', 'openai/gpt-6.2-sol:free'],
+    ['gpt-6.1-sol', 'openai/gpt-6.2-sol'],
+    ['  openai/gpt-6.1-sol  ', 'openai/gpt-6.2-sol'],
+    ['openai/gpt-6.1-sol:batch', 'openai/gpt-6.2-sol:batch'],
   ])('migrates legacy chat model %s in explicit requests and environment defaults', (input, expected) => {
     expect(resolveOpenRouterModel(input)).toBe(expected);
     expect(resolveOpenRouterModel(input, 'azure')).toBe(expected);
@@ -79,10 +84,10 @@ describe('OpenRouter configuration', () => {
   });
 
   it('defaults to Sol and handles namespaced reasoning models', () => {
-    expect(getOpenRouterChatModel({})).toBe('openai/gpt-6.1-sol');
+    expect(getOpenRouterChatModel({})).toBe('openai/gpt-6.2-sol');
     expect(getOpenRouterChatModel({ OPENROUTER_CHAT_MODEL: 'openai/gpt-6.1-sol-pro' }))
       .toBe('openai/gpt-6.1-sol-pro');
-    expect(isOpenRouterReasoningModel('openai/gpt-6.1-sol')).toBe(true);
+    expect(isOpenRouterReasoningModel('openai/gpt-6.2-sol')).toBe(true);
     expect(isOpenRouterReasoningModel('openai/gpt-4o')).toBe(false);
   });
 });

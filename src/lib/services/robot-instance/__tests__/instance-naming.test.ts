@@ -17,14 +17,14 @@ describe('instance naming through OpenRouter', () => {
   it('uses Sol without unsupported temperature and generates a name', async () => {
     create.mockResolvedValue({ choices: [{ message: { content: 'Marketing Research Hub' } }] });
     expect(await generateInstanceName('Marketing research')).toBe('Marketing Research Hub');
-    expect(create.mock.calls[0][0]).toEqual(expect.objectContaining({ model: 'openai/gpt-6.1-sol' }));
+    expect(create.mock.calls[0][0]).toEqual(expect.objectContaining({ model: 'openai/gpt-6.2-sol' }));
     expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
   });
   it('uses the same gateway for structured objective comparison', async () => {
     create.mockResolvedValue({ choices: [{ message: { content: '{"similar":true,"similarity":0.9}' } }] });
     expect(await compareObjectives('Marketing', 'Marketing research')).toEqual({ similar: true, similarity: 0.9 });
     expect(create.mock.calls[0][0]).toEqual(expect.objectContaining({
-      model: 'openai/gpt-6.1-sol', response_format: { type: 'json_object' },
+      model: 'openai/gpt-6.2-sol', response_format: { type: 'json_object' },
     }));
   });
   it('uses local naming fallback, not another paid account, when unconfigured', async () => {

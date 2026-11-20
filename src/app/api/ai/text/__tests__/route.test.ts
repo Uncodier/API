@@ -42,7 +42,7 @@ describe('OpenRouter text route', () => {
     mockCreate.mockResolvedValueOnce(data);
     const response = await POST(request({ maxTokens: 100_000 }));
     expect(await response.json()).toEqual({ ...data, gateway: 'openrouter', content: 'answer', raw: data });
-    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai/gpt-6.1-sol', max_tokens: 8192 }));
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai/gpt-6.2-sol', max_tokens: 8192 }));
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('temperature');
     expect(enforceRequestRateLimit).toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
@@ -60,7 +60,7 @@ describe('OpenRouter text route', () => {
     const response = await POST(request({ model, temperature: 0.2, topP: 0.5 }));
     expect(response.status).toBe(200);
     expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(mockCreate.mock.calls[0][0].model).toBe('openai/gpt-6.1-sol');
+    expect(mockCreate.mock.calls[0][0].model).toBe('openai/gpt-6.2-sol');
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('temperature');
     expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('top_p');
     expect(fetch).not.toHaveBeenCalled();

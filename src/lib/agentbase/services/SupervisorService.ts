@@ -203,7 +203,7 @@ private async analyzeRoutedCommand(command: DbCommand, conversationId?: string):
         prompt_suggestions: analysis.prompt_suggestions.length
       });
 
-      // Filter suggestions using GPT-6.1 Sol inference with memory context
+      // Filter suggestions using the configured chat model with memory context
       const filteredAnalysis = await this.filterSuggestionsWithGPT52(command, analysis);
 
       console.log(`[SupervisorService] After filtering:`, {

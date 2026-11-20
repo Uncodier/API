@@ -184,7 +184,7 @@ Key environment variables (see `src/config/env.example` for complete list):
 
 ### AI Providers
 - `OPENROUTER_API_KEY` - Gateway key for chat, model tools and embeddings (not platform video, web search, images, TTS or transcription)
-- `OPENROUTER_CHAT_MODEL` - Defaults to `openai/gpt-6.1-sol`
+- `OPENROUTER_CHAT_MODEL` - Defaults to `openai/gpt-6.2-sol`
 - `AZURE_OPENAI_IMAGE_DEPLOYMENT` - Direct Azure image deployment, default `gpt-image-2.5-sunburst`
 - `MICROSOFT_AZURE_OPENAI_ENDPOINT` / `MICROSOFT_AZURE_OPENAI_API_KEY` - Existing Azure resource credentials for images; optional dedicated `AZURE_OPENAI_IMAGE_ENDPOINT` / `AZURE_OPENAI_IMAGE_API_KEY`
 - `AZURE_OPENAI_IMAGE_API_VERSION` - Default `preview` on `/openai/v1/images`; separate from the chat API version
