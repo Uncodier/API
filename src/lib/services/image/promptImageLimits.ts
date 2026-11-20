@@ -1,0 +1,1 @@
+export const IMAGE_PROMPT_MAX_LENGTH = 3_000;

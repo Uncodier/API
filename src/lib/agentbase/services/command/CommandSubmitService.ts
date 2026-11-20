@@ -6,6 +6,7 @@ import { CommandFactory } from './CommandFactory';
 import { DatabaseAdapter } from '../../adapters/DatabaseAdapter';
 import { CommandStore } from './CommandStore';
 import { EventEmitter } from 'events';
+import { emitBoundCommand } from '@/lib/connectors/channel-command';
 import { admitCommandRouting, pinCommandRouting } from './command-routing';
 
 export class CommandSubmitService {
@@ -132,7 +133,7 @@ export class CommandSubmitService {
       console.log(`📦 [CommandSubmitService] Comando almacenado en memoria con ID: ${commandId}`);
       
       // Emit the persisted identity used by the command processor.
-      this.eventEmitter.emit('commandCreated', memoryCommand);
+      emitBoundCommand(command, memoryCommand, () => this.eventEmitter.emit('commandCreated', memoryCommand));
       console.log(`📣 [CommandSubmitService] Evento 'commandCreated' emitido para ID: ${commandId}`);
       
       console.log(`✅ [CommandSubmitService] FIN submitCommand, devolviendo ID: ${commandId}`);
@@ -167,7 +168,7 @@ export class CommandSubmitService {
       CommandStore.setCommand(commandId, createdCommand);
       
       // Emit event for command creation
-      this.eventEmitter.emit('commandCreated', createdCommand);
+      emitBoundCommand(command, createdCommand, () => this.eventEmitter.emit('commandCreated', createdCommand));
       
       return commandId;
     }

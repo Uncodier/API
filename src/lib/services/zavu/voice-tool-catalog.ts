@@ -1,3 +1,4 @@
+import { channelRequestTool } from '@/lib/connectors/channel-request';
 import {
   getCustomerSupportToolDefinitions,
   type CustomerSupportToolDefinition,
@@ -12,7 +13,7 @@ export function getCustomerSupportVoiceToolDefinitions(
     description: 'Live server clock (current_time_utc, local_date, tomorrow, site timezone), purpose and private context of THIS call. Call first; refresh for relative dates, never use historical dates as today. No IDs needed; server binds the caller.',
     parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
   };
-  return [contextTool, ...getCustomerSupportToolDefinitions(siteId).map((tool) => {
+  return [contextTool, channelRequestTool, ...getCustomerSupportToolDefinitions(siteId).map((tool) => {
     if (tool.name === "CONTACT_HUMAN") {
       const { conversation_id, lead_id, ...properties } = tool.parameters.properties as Record<string, unknown>;
       return {

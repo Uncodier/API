@@ -63,9 +63,9 @@ export async function authorizeIntervention(request: Request, body: unknown) {
     }
   }
   const { data: conversation, error } = await supabaseAdmin.from('conversations')
-    .select('id, site_id, agent_id, lead_id, visitor_id, title, custom_data').eq('id', conversationId).maybeSingle();
+    .select('id, site_id, agent_id, lead_id, visitor_id, channel, title, custom_data').eq('id', conversationId).maybeSingle();
   if (error) throw new InterventionRequestError('Conversation access is unavailable', 503);
-  if (!conversation?.site_id || (input.site_id && input.site_id !== conversation.site_id)
+  if (!conversation?.site_id || conversation.channel === 'internal_review' || (input.site_id && input.site_id !== conversation.site_id)
     || !await canAccessSite(request, conversation.site_id)) {
     throw new InterventionRequestError('Conversation access denied', 403);
   }

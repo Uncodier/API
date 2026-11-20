@@ -94,6 +94,8 @@ async function processRoutedAssistantTurn(context: AssistantContext, messages: a
   const deploymentTools = standaloneFiles && !fileContext.environment
     ? (await import('./deployment-tools')).createAssistantDeploymentTools({ siteId: fileScope.siteId,
       userId: fileScope.userId }, fileScope.instanceId, assertFileContext) : [];
+  const interactive = context.callerSource === 'interactive' && !context.instanceNodeId && !requirementHost
+    && !context.executionOptions.plan_id && !context.executionOptions.step_id;
   const availableTools = context.conversationRecoveryOnly
     ? getConversationRecoveryTools(context.recoveryScope!)
     : context.preResponseOnly
@@ -124,6 +126,11 @@ async function processRoutedAssistantTurn(context: AssistantContext, messages: a
         } : undefined,
         requirementHost ? tools => guardRequirementAssistantTools(requirementHost, tools) : fileContext.environment
           ? tools => filterRequirementEnvironmentTools(fileContext.environment, tools) : undefined,
+        interactive ? 'assistant' : 'workflow',
+        context.connectorAgentId,
+        context.connectorIdHint,
+        interactive && context.recoveryScope && typeof context.initialMessage === 'string'
+          ? createHash('sha256').update(context.initialMessage).digest('hex') : undefined,
       );
   const trackedTools = context.toolExecutionTracker && !context.conversationRecoveryOnly
     ? instrumentWorkflowTools(availableTools, context.toolExecutionTracker)

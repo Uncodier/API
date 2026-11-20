@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
 import { generatePromptImageWorkflow, GeneratePromptImageInput } from '../workflow';
 import { getPromptHash, downloadFromCache } from '@/lib/services/image/promptImageCache';
+import { IMAGE_PROMPT_MAX_LENGTH } from '@/lib/services/image/promptImageLimits';
 import { resolveSiteFromRequirementUrl } from '@/lib/services/image/resolveSiteFromRequirementUrl';
 import {
   enforceRequestRateLimit,
@@ -129,8 +130,8 @@ export async function GET(
     if (!promptStr || promptStr.trim() === '') {
       return jsonError('Prompt is required', 400);
     }
-    if (promptStr.length > 2_000) {
-      return jsonError('Prompt must be 2000 characters or fewer', 400);
+    if (promptStr.length > IMAGE_PROMPT_MAX_LENGTH) {
+      return jsonError(`Prompt must be ${IMAGE_PROMPT_MAX_LENGTH} characters or fewer`, 400);
     }
 
     const searchParams = request.nextUrl.searchParams;

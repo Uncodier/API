@@ -20,9 +20,9 @@ async function authorizeConnection(supabase, params) {
     // Fetch the resource before the live identity/grant checks. A slow
     // conversation read must not outlive the authorization used for a send.
     const { data: conversation, error: conversationError } = await supabase.from('conversations')
-      .select('id, site_id, visitor_id, lead_id')
+      .select('id, site_id, visitor_id, lead_id, channel')
       .eq('id', conversation_id).eq('site_id', site_id).maybeSingle();
-    if (conversationError || !conversation) {
+    if (conversationError || !conversation || conversation.channel === 'internal_review') {
       return denied('CONVERSATION_FORBIDDEN', 'Conversation does not belong to this session');
     }
     const { data: session, error: sessionError } = await supabase.from('visitor_sessions')

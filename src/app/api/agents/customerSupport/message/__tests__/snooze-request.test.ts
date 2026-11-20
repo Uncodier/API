@@ -28,3 +28,14 @@ it('preserves the legacy duplicate check for other integrations', async () => {
   expect(result).toBeInstanceOf(Response);
   expect(checkDuplicateOriginMessage).toHaveBeenCalledTimes(1);
 });
+
+it('removes the private workflow assertion before any model or message handling', async () => {
+  const ticket = 'synthetic.assertion';
+  const result = await readSupportRequest(new Request('https://example.test/support', {
+    method: 'POST', body: JSON.stringify({ site_id: 'site', message: 'Hello', custom_data: { connector_visitor_turn: ticket } }),
+  }));
+  expect(result).not.toBeInstanceOf(Response);
+  if (result instanceof Response) throw new Error('Expected a parsed support turn');
+  expect(result.visitorTurn).toBe(ticket);
+  expect(result.body).not.toHaveProperty('custom_data');
+});

@@ -7,6 +7,7 @@ import ts from 'typescript';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import * as contextModule from '@/lib/services/tool-execution-context';
 import { SILENT_CONTINUE_PROMPT } from '@/lib/services/robot-instance/assistant-respawn-policy';
+import { RecoveryError } from '@/lib/services/robot-instance/assistant-recovery-schema';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 import { attachAssistantStepResult, readAssistantStepResult } from '../requirement-host';
@@ -58,6 +59,8 @@ function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true,
   };
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
+      './search-context': jest.requireActual('@/app/api/agents/tools/router/search-context'),
+      '@/lib/connectors/tool-resolver': jest.requireActual('@/lib/connectors/tool-resolver'),
       './tool-categories': loadRuntimeModule('src/app/api/agents/tools/router/tool-categories.ts', {}),
       './tool-routing-policy': loadRuntimeModule('src/app/api/agents/tools/router/tool-routing-policy.ts', {}),
       '@/lib/services/embeddings-service': {},
@@ -247,6 +250,7 @@ describe('assistant private execution context wiring', () => {
       'src/app/api/robots/instance/assistant/assistant-turn.ts', {
         './assistant-turn-core': { processAssistantTurn: processTurn },
         '@/lib/services/robot-instance/assistant-recovery': { releaseFailedAssistantTurn: jest.fn() },
+        '@/lib/services/robot-instance/assistant-recovery-schema': { RecoveryError },
         '@/lib/services/robot-instance/assistant-failure-policy': { getProviderRetryDecision: () => undefined },
         './requirement-host': { readRequirementAssistantHost: () => undefined },
       });
@@ -310,9 +314,11 @@ describe('assistant private execution context wiring', () => {
     const actionId = randomUUID(), userId = randomUUID();
     context.instanceNodeId = undefined;
     context.executionOptions.user_id = userId;
+    context.callerSource = 'interactive';
     context.recoveryScope = { siteId, instanceId, userId, userMessageLogId: actionId };
     await run(context, []);
     expect(getTools.mock.calls[0][10]).toEqual({ siteId, instanceId, userId, actionId });
+    expect(getTools.mock.calls[0][15]).toBe(createHash('sha256').update(context.initialMessage).digest('hex'));
     expect(getTools.mock.calls[0][3].map((tool: any) => tool.name)).toEqual(expect.arrayContaining([
       'list_files', 'read_files', 'search', 'apply_patch', 'exec',
     ]));

@@ -72,6 +72,15 @@ describe('POST /api/agents/chat/intervention', () => {
     });
   });
 
+  it('refuses an external intervention on an internal review conversation', async () => {
+    fromMock.mockReturnValue(createChain({ data: {id:CONV_ID, site_id:SITE_ID, channel:'internal_review'}, error:null }));
+    const response = await POST(new Request('http://localhost/api/agents/chat/intervention', {
+      method:'POST', headers:{Authorization:'Bearer test-session'}, body:JSON.stringify({conversationId:CONV_ID,message:'Hello'}),
+    }));
+    expect(response.status).toBe(403);
+    expect(sendMessageByChannel).not.toHaveBeenCalled();
+  });
+
   it.each(['whatsapp', 'telegram', 'messenger'])('persists and forwards explicit audio on %s', async (channel) => {
     (getConversationChannel as jest.Mock).mockResolvedValue({ channel, leadPhone: '+15551234567' });
     const response = await POST(new Request('http://localhost/api/agents/chat/intervention', {
@@ -85,7 +94,7 @@ describe('POST /api/agents/chat/intervention', () => {
       custom_data: { command_status: 'pending', status: 'pending', response_format: 'audio', connection_id: 'selected-second' },
     })]);
     expect(sendMessageByChannel).toHaveBeenCalledWith(channel, 'Hello', expect.any(Object), SITE_ID,
-      undefined, CONV_ID, undefined, MSG_ID, 'audio');
+      undefined, CONV_ID, undefined, MSG_ID, 'audio', {message_type:undefined, media_url:undefined, mime_type:undefined});
     expect(getConversationChannel).toHaveBeenCalledTimes(1);
     expect(resolveAudioRouting).toHaveBeenCalledWith({ siteId: SITE_ID, conversationId: CONV_ID, channel, allowLegacyWhatsApp: true });
     expect((sendMessageByChannel as jest.Mock).mock.calls[0][2].channelDelivery).toBe(true);

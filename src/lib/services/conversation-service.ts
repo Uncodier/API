@@ -1,3 +1,4 @@
+import { CUSTOMER_CONVERSATION_FILTER } from '@/lib/services/support-conversation-visibility';
 import { normalizeSupportAttachments, supportAttachmentContext, type SupportAttachment } from './customer-support-attachments';
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -52,6 +53,7 @@ export class ConversationService {
       let query = supabaseAdmin
         .from('conversations')
         .select('id, title, created_at, updated_at, status, channel')
+        .or(CUSTOMER_CONVERSATION_FILTER)
         .or('custom_data->>source.is.null,custom_data->>source.neq.comment')
         .eq('status', 'active')
         .gte('updated_at', cutoffDate)
@@ -116,7 +118,8 @@ export class ConversationService {
       // Consultar todos los mensajes de la conversación ordenados por fecha de creación
       const { data, error } = await supabaseAdmin
         .from('messages')
-        .select('*')
+        .select('*, conversations!inner(id)')
+        .or(CUSTOMER_CONVERSATION_FILTER, { referencedTable: 'conversations' })
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true });
       

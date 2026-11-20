@@ -1,3 +1,4 @@
+import { CUSTOMER_CONVERSATION_FILTER } from '@/lib/services/support-conversation-visibility';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
   CanonicalVisitorIdentity, VisitorAuthorizationError, visitorSessionAuthorizationService,
@@ -55,7 +56,7 @@ export async function createRevalidation(
     // but every conversation must still belong to the freshly authorized site.
     if (!current && conversationId) {
       const { data, error } = await supabaseAdmin.from('conversations').select('id')
-        .eq('id', conversationId).eq('site_id', siteId).maybeSingle();
+        .eq('id', conversationId).eq('site_id', siteId).or(CUSTOMER_CONVERSATION_FILTER).maybeSingle();
       if (error || !data) {
         throw new VisitorAuthorizationError('CONVERSATION_FORBIDDEN', 'Conversation is unavailable', 403);
       }

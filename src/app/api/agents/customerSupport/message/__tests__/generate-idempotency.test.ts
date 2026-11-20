@@ -1,3 +1,7 @@
+import { attachSupportConnectorHost } from '@/lib/connectors/channel-command';
+import { isAssignedChannelCommand } from '@/lib/connectors/channel-command-row';
+jest.mock('@/lib/connectors/channel-command', () => ({ attachSupportConnectorHost: jest.fn() }));
+jest.mock('@/lib/connectors/channel-command-row', () => ({ isAssignedChannelCommand: jest.fn(async () => true) }));
 const claimInboundCommand = jest.fn();
 const bindInboundCommand = jest.fn();
 const submitCommand = jest.fn();
@@ -29,7 +33,9 @@ it('persists command identity before waiting for execution', async () => {
 });
 it('retries poll recorded UUID without creating or binding a new command', async () => {
   claimInboundCommand.mockResolvedValue({ state: 'reuse', commandId: id });
-  await generateSupportReply(input);
+  expect(await generateSupportReply({ ...input, connectorHost: {} })).toMatchObject({ effectiveDbUuid: id });
+  expect(attachSupportConnectorHost).not.toHaveBeenCalled();
+  expect(isAssignedChannelCommand).toHaveBeenCalledWith(id, id, id, id);
   expect(submitCommand).not.toHaveBeenCalled();
   expect(bindInboundCommand).not.toHaveBeenCalled();
   expect(waitForCommandCompletion).toHaveBeenCalledWith(id);
@@ -52,4 +58,28 @@ it('does not reuse a command from a different account or agent', async () => {
   waitForCommandCompletion.mockResolvedValue({ command: { id, status: 'completed', site_id: 'other' }, dbUuid: id, completed: true });
   expect((await generateSupportReply(input) as Response).status).toBe(503);
   expect(submitCommand).not.toHaveBeenCalled();
+});
+
+it('only a fresh submission with a resolved host receives gateway + private review', async () => {
+  await generateSupportReply(input);
+  expect(submitCommand.mock.calls[0][0].tools).toEqual([]);
+  const connectorHost = { siteId: id, agentId: id, resolve: jest.fn() };
+  await generateSupportReply({ ...input, connectorHost });
+  const command = submitCommand.mock.calls[1][0];
+  expect(command.tools.map((t: any) => t.function.name)).toEqual(['support_connectors', 'request_connector_review']);
+  expect(attachSupportConnectorHost).toHaveBeenCalledWith(command, connectorHost);
+  expect(command).not.toHaveProperty('connectorHost');
+});
+
+it('rejects a recovered command with forged metadata or an agent restored only from prompt text', async () => {
+  claimInboundCommand.mockResolvedValue({ state: 'reuse', commandId: id });
+  const converted = { id, site_id: id, agent_id: id, user_id: id, metadata: { dbUuid: id } };
+  waitForCommandCompletion.mockResolvedValueOnce({ command: { ...converted, id: 'other' }, dbUuid: id, completed: true });
+  expect((await generateSupportReply(input) as Response).status).toBe(503);
+  expect(isAssignedChannelCommand).not.toHaveBeenCalled();
+  waitForCommandCompletion.mockResolvedValueOnce({ command: converted, dbUuid: id, completed: true });
+  jest.mocked(isAssignedChannelCommand).mockResolvedValueOnce(false);
+  expect((await generateSupportReply(input) as Response).status).toBe(503);
+  expect(isAssignedChannelCommand).toHaveBeenCalledWith(id, id, id, id);
+  expect(attachSupportConnectorHost).not.toHaveBeenCalled();
 });

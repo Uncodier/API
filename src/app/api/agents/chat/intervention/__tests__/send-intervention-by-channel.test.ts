@@ -14,9 +14,45 @@ jest.mock("@/lib/services/zavu/voice-call-service", () => ({
   placeTrackedVoiceCall: mockPlaceTrackedVoiceCall,
 }));
 
-import { sendMessageByChannel } from "../send-intervention-by-channel";
+jest.mock('@/lib/security/site-access', () => ({ canAccessSite: jest.fn(async () => true) }));
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { POST as sendByChannel } from '../../send-by-channel/route';
+import { getConversationChannel, sendMessageByChannel } from "../send-intervention-by-channel";
 import { VoicePlacementError } from '@/lib/services/zavu/voice-call-message-state';
 import { WorkflowService } from '@/lib/services/workflow-service';
+
+const id = '00000000-0000-4000-8000-000000000123';
+let storedChannel: string | null;
+const eq = jest.fn().mockReturnThis();
+beforeEach(() => {
+  storedChannel = null;
+  const result = async () => ({ data: { channel: storedChannel, custom_data: { channel: 'email' } } });
+  (supabaseAdmin.from as jest.Mock).mockImplementation(() => ({ select: jest.fn().mockReturnThis(), eq,
+    single: result, maybeSingle: result }));
+});
+
+it('rejects review threads before resolving contacts, even when an HTTP caller overrides the channel', async () => {
+  storedChannel = 'internal_review';
+  expect(await getConversationChannel(id)).toBeNull();
+  const response = await sendByChannel(new Request('https://api.example.test/send', { method: 'POST',
+    body: JSON.stringify({ site_id: 'site', conversation_id: id, message: 'hello', channel: 'instagram' }) }) as any);
+  expect(response.status).toBe(403);
+  expect(eq).toHaveBeenCalledWith('site_id', 'site');
+  expect(WorkflowService.getInstance).not.toHaveBeenCalled();
+});
+
+it('retains legacy NULL-channel metadata resolution', async () => {
+  expect(await getConversationChannel(id)).toMatchObject({ channel: 'email' });
+});
+
+it.each(['instagram','voice','whatsapp'])('cannot route a review ID via explicit %s contacts', async channel => {
+  storedChannel = 'internal_review';
+  const result = await sendMessageByChannel(channel, 'hello', { leadPhone: '+15555550100', channelDelivery: true },
+    'site', null, id, 'lead', 'message');
+  expect(result).toMatchObject({ success: false, workflowStarted: false });
+  expect(WorkflowService.getInstance).not.toHaveBeenCalled();
+  expect(mockPlaceTrackedVoiceCall).not.toHaveBeenCalled();
+});
 
 describe('Intervention response format dispatch', () => {
   const sendWhatsapp = jest.fn();

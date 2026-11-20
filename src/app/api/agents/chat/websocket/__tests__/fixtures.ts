@@ -58,6 +58,7 @@ export function database() {
       let single = false;
       let limit = 100;
       let expiry = false;
+      let customerOnly = false;
       const execute = async () => {
         state.queries.push({ table, filters: [...filters] });
         if (state.failedTable === table) return { data: null, error: new Error('Database unavailable') };
@@ -82,6 +83,7 @@ export function database() {
           await state.historyHook?.();
         } else rows = [];
         rows = rows.filter(row => filters.every(([key, value]) => row[key] === value));
+        if (customerOnly) rows = rows.filter(row => row.channel !== 'internal_review');
         if (expiry) rows = rows.filter(row => !row.expires_at || Date.parse(row.expires_at) > Date.now());
         // Real database results are snapshots, not references to mutable state.
         rows = JSON.parse(JSON.stringify(rows.slice(0, limit)));
@@ -92,7 +94,12 @@ export function database() {
         select: () => query,
         eq: (key: string, value: unknown) => { filters.push([key, value]); return query; },
         is: (key: string, value: unknown) => { filters.push([key, value]); return query; },
-        or: () => { expiry = true; return query; },
+        or: (filter: string) => {
+          if (filter === 'channel.is.null,channel.neq.internal_review') customerOnly = true;
+          else if (filter.startsWith('expires_at.is.null,')) expiry = true;
+          else throw new Error(`Unexpected filter: ${filter}`);
+          return query;
+        },
         order: () => query,
         limit: (value: number) => { limit = value; return query; },
         maybeSingle: () => { single = true; return query; },

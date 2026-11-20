@@ -10,7 +10,7 @@ jest.mock('@/lib/services/robot-instance/InstanceAssetsService', () => ({
 }));
 jest.mock('../utils', () => ({
   fetchMemoriesContext: jest.fn(async () => ''),
-  generateAgentBackground: jest.fn(async () => ''),
+  generateAssistantAgentIdentity: jest.fn(async () => ({ background: '', agentId: 'prompt-agent' })),
   getInstanceAssistantTools: jest.fn(async () => []),
   determineInstanceCapabilities: () => ({ capabilities: {}, shouldUseSDKTools: false }),
   getRequirementWorkflowInstruction: () => '',
@@ -28,7 +28,7 @@ jest.mock('@/app/api/agents/tools/publish/social-media', () => ({ validateSocial
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { InstanceContextManager } from '@/lib/services/robot-instance/InstanceContextManager';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
-import { getInstanceAssistantTools, generateAgentBackground } from '../utils';
+import { getInstanceAssistantTools, generateAssistantAgentIdentity } from '../utils';
 import { prepareAssistantContext } from '../steps';
 import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 import { MOTION_DESIGN_INSTRUCTION } from '../motion-design-instruction';
@@ -106,7 +106,8 @@ it('prepares an owned requirement through the same history/background pipeline w
     { requirementId: 'owned-requirement', assertActive });
   expect(assertActive).toHaveBeenCalled();
   expect(buildHistory).toHaveBeenCalledWith('Research objective', 'openrouter', 'test-model');
-  expect(generateAgentBackground).toHaveBeenCalledWith(SITE, USER);
+  expect(generateAssistantAgentIdentity).toHaveBeenCalledWith(SITE, USER);
+  expect(context.connectorAgentId).toBe('prompt-agent');
   expect(context.executionOptions.requirement_id).toBe('owned-requirement');
   expect(context.systemPrompt).toContain('requirement_plan/requirement_progress');
   expect(context.systemPrompt).not.toContain('MUST call instance_plan with action="create"');
@@ -150,7 +151,7 @@ it.each([
   expect(supabaseAdmin.from).not.toHaveBeenCalled();
   expect(InstanceContextManager).not.toHaveBeenCalled();
   expect(InstanceAssetsService.getAssetsContext).not.toHaveBeenCalled();
-  expect(generateAgentBackground).not.toHaveBeenCalled();
+  expect(generateAssistantAgentIdentity).not.toHaveBeenCalled();
   expect(getInstanceAssistantTools).not.toHaveBeenCalled();
 });
 

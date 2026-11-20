@@ -34,7 +34,7 @@ export type ChannelSendResult = {
 };
 
 export async function getConversationChannel(
-  conversationId: string
+  conversationId: string, siteId?: string
 ): Promise<ChannelContactInfo | null> {
   try {
     if (!conversationId || !isValidUUID(conversationId)) {
@@ -44,7 +44,7 @@ export async function getConversationChannel(
 
     console.log(`🔍 Detectando canal para conversación: ${conversationId}`);
 
-    const { data: conversation, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('conversations')
       .select(`
         id,
@@ -60,15 +60,16 @@ export async function getConversationChannel(
           custom_data
         )
       `)
-      .eq('id', conversationId)
-      .single();
+      .eq('id', conversationId);
+    if (siteId) query = query.eq('site_id', siteId);
+    const { data: conversation, error } = await query.single();
 
     if (error) {
       console.error('Error al obtener información de conversación:', error);
       return null;
     }
 
-    if (!conversation) {
+    if (!conversation || conversation.channel === 'internal_review') {
       console.log(`⚠️ No se encontró la conversación: ${conversationId}`);
       return null;
     }
@@ -166,6 +167,13 @@ export async function sendMessageByChannel(
   mediaInput: OutboundMediaInput = {},
 ): Promise<ChannelSendResult> {
   try {
+    // Contact info can come from a caller or comment, not just the resolver.
+    // Check the actual thread before starting any workflow or placing a call.
+    const { data, error } = await supabaseAdmin.from('conversations').select('channel')
+      .eq('id', conversationId).eq('site_id', siteId).maybeSingle();
+    if (error || !data || data.channel === 'internal_review') {
+      return { success: false, workflowStarted: false, error: 'Conversation unavailable for delivery' };
+    }
     validateResponseFormat(responseFormat, channel);
     const media = await validateOutboundMedia({ ...mediaInput, response_format: responseFormat }, channel);
     const mediaFields = media ? { message_type: media.messageType, media_url: media.content.mediaUrl,

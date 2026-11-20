@@ -23,6 +23,7 @@ export const maxDuration = 800; // 13 min (Pro + Fluid Compute); falls back to 3
 
 const AssistantSchema = z.object({
   instance_id: z.string().uuid('instance_id must be valid UUID').optional(),
+  connector_id_hint: z.string().uuid().transform(value => value.toLowerCase()).optional(),
   instance_node_id: z.string().uuid().optional(),
   expected_results_amount: z.number().int().min(1).max(20).optional().default(1),
   message: z.string().min(1, 'message is required'),
@@ -56,6 +57,12 @@ export async function POST(request: NextRequest) {
 
     // Node-shaped requests must not fall through to conversation execution or
     // normalize node overrides before a scoped node can be resolved durably.
+    if (/\/assistant\/connector\/?$/.test(request.nextUrl.pathname) && !parsedBody.connector_id_hint) {
+      return NextResponse.json({ error: 'Selected connector account required.' }, { status: 400 });
+    }
+    if (parsedBody.connector_id_hint && (principal.internal || !principal.userId || !parsedBody.instance_id || parsedBody.instance_node_id)) {
+      return NextResponse.json({ error: 'Connector selection requires an interactive instance conversation.' }, { status: 400 });
+    }
     const hasNodeContext = isNodeSpecificContext(parsedBody.context);
     if (hasNodeContext && !parsedBody.instance_node_id) {
       return NextResponse.json({
@@ -201,7 +208,8 @@ export async function POST(request: NextRequest) {
         expectedResults,
         parsedBody.context,
         normalizedToolOverrides,
-        { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode, executionRouting }
+        { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode, executionRouting,
+          callerSource: principal.internal ? 'background' : 'interactive' }
       ]);
 
       return assistantResponseStream(workflowRun, newInstance.id, userAction.id, { signal: request.signal });
@@ -228,6 +236,19 @@ export async function POST(request: NextRequest) {
 
     const site_id = providedSiteId || instance.site_id;
     const user_id = principal.internal ? providedUserId || instance.user_id : principal.userId!;
+    const connectorIdHint = parsedBody.connector_id_hint;
+    if (connectorIdHint) {
+      if (instance.site_id !== site_id || instance.user_id !== principal.userId) {
+        return NextResponse.json({ error: 'Selected account unavailable for this conversation.' }, { status: 403 });
+      }
+      const { getVisibleConnector } = await import('@/lib/connectors/access');
+      try { await getVisibleConnector(instance.site_id, principal.userId!, connectorIdHint); }
+      catch (error) {
+        const { ConnectorError } = await import('@/lib/connectors/types');
+        const status = error instanceof ConnectorError && error.status < 500 ? 404 : 503;
+        return NextResponse.json({ error: 'Selected account unavailable for this conversation.' }, { status });
+      }
+    }
     failureContext = { instanceId: providedInstanceId, siteId: site_id, userId: user_id };
 
     const userAction = await withRetries(() => insertUserActionLog({
@@ -259,7 +280,8 @@ export async function POST(request: NextRequest) {
       expectedResults,
       parsedBody.context,
       normalizedToolOverrides,
-      { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode, executionRouting }
+      { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode, executionRouting,
+          ...(connectorIdHint ? { connectorIdHint } : {}), callerSource: principal.internal ? 'background' : 'interactive' }
     ]);
 
     return assistantResponseStream(workflowRun, providedInstanceId, userAction.id, { signal: request.signal });

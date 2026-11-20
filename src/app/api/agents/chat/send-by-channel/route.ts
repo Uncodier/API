@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConversationChannel, sendMessageByChannel } from '../intervention/send-intervention-by-channel';
 import { validateOutboundMedia, OutboundMediaError } from '@/lib/services/channels/outbound-media';
 import { canAccessSite } from '@/lib/security/site-access';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,9 +24,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (!await canAccessSite(request, site_id)) return NextResponse.json({ success: false, error: 'Site access denied' }, { status: 403 });
-    const scoped = await supabaseAdmin.from('conversations').select('id').eq('id', conversation_id).eq('site_id', site_id).maybeSingle();
-    if (scoped.error || !scoped.data) return NextResponse.json({ success: false, error: 'Conversation access denied' }, { status: 403 });
-    const conversationInfo = await getConversationChannel(conversation_id);
+    const conversationInfo = await getConversationChannel(conversation_id, site_id);
+    if (!conversationInfo) return NextResponse.json({ success: false, error: 'Conversation access denied' }, { status: 403 });
     const channel = requestedChannel || conversationInfo?.channel;
 
     if (!channel) {

@@ -13,6 +13,7 @@ import {
   CreateCommandParams as DbCreateCommandParams
 } from '@/lib/database/command-db';
 
+import { requiresAssignedChannelAgent } from '@/lib/connectors/channel-tool-names';
 import { StatusConverter } from './StatusConverter';
 import { generateUUID, isValidUUID } from '../utils/UuidUtils';
 import { ensureTargetContentExists } from '../utils/DataFormatUtils';
@@ -121,7 +122,7 @@ export class CommandConverter {
     
     // Extraer el agentId original del contexto si existe y no tiene un agent_id válido
     let originalAgentId = dbCommand.agent_id;
-    if ((!originalAgentId || !isValidUUID(originalAgentId)) && dbCommand.context) {
+    if ((!originalAgentId || !isValidUUID(originalAgentId)) && dbCommand.context && !requiresAssignedChannelAgent(dbCommand)) {
       const match = dbCommand.context.match(/Original Agent ID: (.+)$/m);
       if (match && match[1]) {
         originalAgentId = match[1];

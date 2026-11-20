@@ -1,6 +1,6 @@
 /** @jest-environment node */
 jest.mock('@/lib/database/supabase-client', () => ({
-  supabaseAdmin: { from: jest.fn(), channel: jest.fn(), auth: { getUser: jest.fn() } },
+  supabaseAdmin: { from: jest.fn(), rpc: jest.fn(), channel: jest.fn(), auth: { getUser: jest.fn() } },
 }));
 // An intentionally stale infrastructure cache must not keep a credential alive.
 jest.mock('@/lib/security/upstash-rest', () => ({
@@ -46,11 +46,26 @@ beforeEach(async () => {
   fixture = database();
   row = await credentialRow();
   fixture.state.apiKeys = [row];
+  (supabaseAdmin.rpc as jest.Mock).mockImplementation((name, { p_site_id, p_user_id }) => ({
+    abortSignal: async () => ({ error: null, data: name === 'site_user_has_effective_access' && (
+      fixture.state.sites.some(s => s.id === p_site_id && s.user_id === p_user_id) ||
+      fixture.state.members.some(m => m.site_id === p_site_id && m.user_id === p_user_id && m.status === 'active')
+    ) }),
+  }));
   (supabaseAdmin.from as jest.Mock).mockImplementation(fixture.db.from);
   (supabaseAdmin.channel as jest.Mock).mockImplementation(fixture.db.channel);
   (supabaseAdmin.auth.getUser as jest.Mock).mockImplementation(fixture.db.auth.getUser);
 });
 afterEach(() => { jest.clearAllTimers(); jest.useRealTimers(); restoreEnvironment(previous); });
+
+it.each(['GET', 'POST'])('a live site credential cannot open, read or post to a review thread via %s', async method => {
+  fixture.state.conversations[0].channel = 'internal_review';
+  const response = method === 'GET' ? await GET(request()) : await POST(request(undefined, true));
+  expect(response.status).toBe(403);
+  expect(fixture.state.queries.some(q => q.table === 'messages')).toBe(false);
+  expect(fixture.state.channels).toHaveLength(0);
+  expect(fixture.state.inserts).toHaveLength(0);
+});
 
 it.each(['revoked', 'expired', 'scope', 'site', 'encrypted-material', 'forged-metadata'])(
   'GET rejects %s despite initially accepted principal metadata before reading history', async change => {

@@ -184,6 +184,23 @@ describe('public prompt image route caching', () => {
     expect(acquireLock).not.toHaveBeenCalled();
   });
 
+  it.each([[2_259, 401], [3_000, 401], [3_001, 400]])(
+    'applies the image prompt length limit before generation (%i characters)',
+    async (length, status) => {
+      downloadFromCache.mockResolvedValue(null as never);
+      const prompt = 'a'.repeat(length);
+      const response = await GET(new NextRequest(`https://backend.makinari.com/api/public/image/prompt/${prompt}`), context);
+
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({
+        error: status === 400
+          ? 'Prompt must be 3000 characters or fewer'
+          : 'Authentication is required to access generated images',
+      });
+      expect(start).not.toHaveBeenCalled();
+    },
+  );
+
   it('does not generate an uncached image for an unauthenticated request', async () => {
     downloadFromCache.mockResolvedValue(null as never);
 

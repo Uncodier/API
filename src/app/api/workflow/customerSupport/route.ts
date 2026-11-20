@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { issueVisitorTurn } from '@/lib/connectors/channel-visitor-turn';
 import { randomUUID } from 'node:crypto';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { hasAuthenticatedPrincipal, isInternalServiceRequest } from '@/lib/security/request-rate-limit';
@@ -97,6 +98,7 @@ export async function POST(request: NextRequest) {
       request,
       siteId: body.site_id as string,
       sessionId: body.session_id as string | undefined,
+      checkIngressConversation: true,
       conversationId: body.conversationId as string | undefined
     });
     if (identity) {
@@ -186,6 +188,7 @@ export async function POST(request: NextRequest) {
     const workflowService = WorkflowService.getInstance();
 
     // Preparar argumentos para el workflow
+    const visitorTurn = identity ? await issueVisitorTurn(request, identity, conversationId, origin_message_id, message) : undefined;
     const workflowArgs: CustomerSupportWorkflowArgs = {
       conversationId,
       userId,
@@ -200,7 +203,8 @@ export async function POST(request: NextRequest) {
       website_chat_origin,
       lead_notification,
       origin,
-      origin_message_id
+      origin_message_id,
+      ...(visitorTurn ? { custom_data: { connector_visitor_turn: visitorTurn } } : {}),
     };
 
     // Both HTTP response modes start Temporal asynchronously. Final-reply mode

@@ -1,3 +1,4 @@
+import { CUSTOMER_CONVERSATION_FILTER } from '@/lib/services/support-conversation-visibility';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export function isValidUUID(uuid: string): boolean {
@@ -59,6 +60,7 @@ export async function getConversationsCore(params: GetConversationsParams): Prom
         : '*, messages:messages(content, role, created_at, id, custom_data)',
       { count: 'exact' },
     )
+    .or(CUSTOMER_CONVERSATION_FILTER)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 

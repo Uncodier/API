@@ -1,3 +1,4 @@
+import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
 import { NextRequest } from 'next/server';
 const mockSingle = jest.fn();
 const mockProof = jest.fn();
@@ -53,6 +54,29 @@ describe('passive token identity restore and post-logout ownership', () => {
   it('denies another logged-in account even when the browser visitor is unchanged', async () => {
     mockSingle.mockResolvedValue({ data: { visitor_id: visitorId, lead_id: otherLead }, error: null });
     await expect(new VisitorSessionAuthorizationService().assertConversationOwnership(identity, 'conversation')).rejects.toMatchObject({ code: 'CONVERSATION_FORBIDDEN' });
+  });
+
+  it('rejects review ownership even with a matching lead grant', async () => {
+    mockSingle.mockResolvedValueOnce({ data: { channel: 'internal_review', visitor_id: visitorId, lead_id: leadId }, error: null });
+    await expect(new VisitorSessionAuthorizationService().assertConversationOwnership(identity, 'review')).rejects.toMatchObject({ code: 'CONVERSATION_FORBIDDEN' });
+  });
+
+  it('checks supplied support ingress IDs for a service principal without breaking new and legacy conversations', async () => {
+    const probe = () => {
+      jest.mocked(hasAuthenticatedPrincipal).mockReturnValueOnce(true);
+      return new VisitorSessionAuthorizationService().authorizeBrowserRequest({ request: request(),
+        siteId: SUPPORT_SITE_ID, conversationId: otherLead, checkIngressConversation: true });
+    };
+    mockSingle.mockResolvedValueOnce({ data: { site_id: SUPPORT_SITE_ID, channel: 'internal_review' } });
+    await expect(probe()).rejects.toMatchObject({ code: 'CONVERSATION_FORBIDDEN' });
+    mockSingle.mockResolvedValueOnce({ data: { site_id: 'another-site', channel: null } });
+    await expect(probe()).rejects.toMatchObject({ code: 'CONVERSATION_FORBIDDEN' });
+    for (const data of [null, { site_id: SUPPORT_SITE_ID, channel: null }, { site_id: SUPPORT_SITE_ID, channel: 'email' }]) {
+      mockSingle.mockResolvedValueOnce({ data });
+      await expect(probe()).resolves.toBeNull();
+    }
+    mockSingle.mockResolvedValueOnce({ error: { message: 'unavailable' } });
+    await expect(probe()).rejects.toMatchObject({ code: 'AUTHORIZATION_UNAVAILABLE' });
   });
 
   it('allows only unowned anonymous history by visitor or account history by grant', async () => {

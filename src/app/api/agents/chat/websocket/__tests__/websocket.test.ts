@@ -28,6 +28,11 @@ beforeEach(() => {
 });
 afterEach(() => { ws.close(); jest.clearAllTimers(); jest.useRealTimers(); });
 
+it('denies a review conversation even if the visitor and lead IDs otherwise match', async () => {
+  fixture.state.conversations[0].channel = 'internal_review';
+  expect(await authorizeConnection(fixture.db, params)).toMatchObject({ ok: false, code: 'CONVERSATION_FORBIDDEN' });
+});
+
 it('denies remembered visitor ownership for a lead conversation after logout', async () => {
   fixture.logout();
   expect(await authorizeConnection(fixture.db, params)).toMatchObject({ ok: false, code: 'CONVERSATION_FORBIDDEN' });

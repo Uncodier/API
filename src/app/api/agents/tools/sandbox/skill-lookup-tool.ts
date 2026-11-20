@@ -1,5 +1,8 @@
 import { SkillsService } from '@/lib/services/skills-service';
 import { searchSkillsByKeywords } from '@/lib/services/skill-keyword-search';
+import { getSkillDomains } from '@/lib/connectors/domains';
+import { connectorSkillAppendix } from '@/lib/connectors/skill-discovery';
+import type { ConnectorContextResolver } from '@/lib/connectors/host-context';
 import { deductSandboxToolCredits, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 
 export type SkillLookupToolContext = {
@@ -9,6 +12,7 @@ export type SkillLookupToolContext = {
   toolsCtx?: SandboxToolsContext;
   /** Tenant scope for user-uploaded skills. Never derive this from tool arguments. */
   siteId?: string;
+  connectorContext?: ConnectorContextResolver;
 };
 
 function summarizeForList(
@@ -20,6 +24,7 @@ function summarizeForList(
     slug: s.slug,
     description: s.description,
     types: s.types ?? [],
+    domains: getSkillDomains(s.slug).map(domain => domain.id),
   }));
 }
 
@@ -133,6 +138,7 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
         description: skill.description,
         types: skill.types ?? [],
         content: skill.content,
+        connector_capabilities: await connectorSkillAppendix(skill.slug, ctx?.connectorContext),
         message: `Full SKILL.md loaded for "${skill.name}".${scopeNote}`,
       };
     },

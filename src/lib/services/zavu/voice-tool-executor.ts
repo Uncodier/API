@@ -1,3 +1,4 @@
+import { channelRequestReceipt, channelRequestTool, requestChannelReview } from '@/lib/connectors/channel-request';
 import { v5 as uuidv5 } from "uuid";
 import { z } from "zod";
 import { getApiBaseUrl } from "@/app/api/agents/tools/utils/fetch-helper";
@@ -91,7 +92,7 @@ function omitEmptyOptionalArguments(tool: CustomerSupportToolDefinition, args: R
 }
 
 async function resolveLiveConversation(siteId: string, contactPhone?: string): Promise<{
-  conversationId: string; deliveryId: string; messageId?: string; direction: 'inbound' | 'outbound';
+  conversationId: string; deliveryId: string; messageId?: string; callId: string; providerAgentId?: string; senderVerified: boolean; direction: 'inbound' | 'outbound';
 }> {
   const phone = normalizeVoiceIdentityPhone(contactPhone);
   if (!phone) throw new Error("Trusted Voice caller context is required for human assistance");
@@ -130,7 +131,8 @@ async function resolveLiveConversation(siteId: string, contactPhone?: string): P
   }
   // Outbound deliveries can reuse an existing chat/email conversation. The
   // persisted delivery is the call binding, not the conversation's channel.
-  return { conversationId, deliveryId: data[0].id, messageId: data[0].message_id, direction: call.direction };
+  return { conversationId, callId: call.id, providerAgentId: call.agentId,
+    senderVerified: !!call.senderId && call.senderId === data[0].zavu_sender_id, deliveryId: data[0].id, messageId: data[0].message_id, direction: call.direction };
 }
 
 async function scopeToolArguments(params: {
@@ -295,11 +297,33 @@ export async function executeCustomerSupportVoiceTool(params: {
   siteId: string;
   context?: ZavuVoiceToolContext;
   rawPayload: string;
+  signedAgentId?: string;
 }): Promise<unknown> {
   const tool = getCustomerSupportVoiceToolDefinitions(params.siteId)
     .find((candidate) => candidate.name === params.toolName);
   if (!tool) throw new Error(`Unknown Customer Support tool "${params.toolName}"`);
   const recheckLicense = await requireVoiceToolLicense(params.siteId);
+
+  if (tool.name === channelRequestTool.name) {
+    const { signedAgentId, siteId } = params;
+    if (!signedAgentId || !params.context?.sessionId) return channelRequestReceipt;
+    return requestChannelReview({ siteId, agentId: signedAgentId, resolve: async () => {
+      const live = await resolveLiveConversation(siteId, params.context?.contactPhone);
+      // Opaque sessions cannot prove this callback belongs to this specific live call.
+      if (!live.senderVerified || !live.providerAgentId || live.callId !== params.context?.sessionId) return null;
+      const db = tenantDatabase();
+      const agent = await db.from('agents').select('id, site_id').eq('site_id', siteId)
+        .eq('configuration->zavu->>agent_id', live.providerAgentId).eq('status', 'active')
+        .abortSignal(AbortSignal.timeout(5000)).maybeSingle();
+      if (agent.error || agent.data?.id !== signedAgentId || agent.data.site_id !== siteId) return null;
+      const conv = await db.from('conversations').select('id, site_id, agent_id').eq('site_id', siteId)
+        .eq('id', live.conversationId).eq('agent_id', signedAgentId).abortSignal(AbortSignal.timeout(5000)).maybeSingle();
+      if (conv.error || conv.data?.id !== live.conversationId || conv.data.site_id !== siteId || conv.data.agent_id !== signedAgentId) return null;
+      await recheckLicense();
+      return { conversationId: conv.data.id, siteId: conv.data.site_id, agentId: conv.data.agent_id,
+        idempotencyKey: `channel-call:${live.deliveryId}` };
+    } }, params.arguments);
+  }
 
   if (tool.name === 'get_call_context') {
     validateVoiceToolArguments(tool, params.arguments);

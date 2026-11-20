@@ -1,3 +1,4 @@
+import { enableMemberConversationReview } from '@/lib/connectors/channel-member-host';
 import { withAuthorizedCommandRequest } from '@/lib/services/ai/command-http-routing';
 import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
@@ -129,6 +130,7 @@ async function handleCommandRequest(request: Request) {
                 }
             ]
         });
+        await enableMemberConversationReview(request, command, conversationId, message);
         const internalCommandId = await commandService.submitCommand(command);
         console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
         let initialDbUuid = await getCommandDbUuid(internalCommandId);

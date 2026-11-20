@@ -6,6 +6,8 @@ import { WhatsAppLeadService } from '@/lib/services/whatsapp/WhatsAppLeadService
 import { ConversationService } from '@/lib/services/conversation-service';
 import { visitorAuthorizationErrorResponse } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
 import { isValidUUID, findActiveCustomerSupportAgent, getAgentInfo } from './agent-data';
+import { memberConversationHost } from '@/lib/connectors/channel-member-host';
+import { supportConnectorRequestHost } from './connector-request-host';
 import { readSupportRequest } from './request';
 import { buildSupportContext } from './context';
 import { generateSupportReply } from './generate';
@@ -29,7 +31,7 @@ async function handleSupportRequest(request: Request) {
         const parsed = await readSupportRequest(request);
         if (parsed instanceof Response)
             return parsed;
-        const { body, browserIdentity } = parsed;
+        const { body, browserIdentity, visitorTurn } = parsed;
         const initialZavuAdmission = await checkZavuSupportAdmission(request, body);
         if (initialZavuAdmission)
             return initialZavuAdmission;
@@ -278,7 +280,13 @@ async function handleSupportRequest(request: Request) {
         const deniedZavu = await checkZavuSupportAdmission(request, body);
         if (deniedZavu)
             return deniedZavu;
-        const generated = await generateSupportReply({ effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, effectiveConversationId, contextMessage, agentUserId, request,
+        const connectorHost = await supportConnectorRequestHost({ request, browserIdentity, siteId: effectiveSiteId,
+            agentId: effectiveAgentId, conversationId: effectiveConversationId, suppliedAgentId: agentId,
+            requestedConversationId: conversationId, origin: leadOrigin, channelDelivery: channel_delivery, visitorTurn, message, originMessageId: origin_message_id, metadata: inboundCustomData, inboundId: persistedInboundId })
+            ?? (!browserIdentity && visitorTurn === undefined && !inboundCustomData && !lead_id && !visitor_id && !website_chat_origin
+                && !channel_delivery && (!origin || origin === 'chat') && conversationId === effectiveConversationId
+                ? await memberConversationHost(request, { siteId: effectiveSiteId, agentId: effectiveAgentId, conversationId, message, commandUserId: effectiveUserId }) : undefined);
+        const generated = await generateSupportReply({ effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, effectiveConversationId, contextMessage, agentUserId, request, connectorHost,
             response_format: explicitResponseFormat,
             ...(inboundCustomData?.source === 'zavu_inbound_message' ? {
                 originMessageId: origin_message_id, connectionId: inboundCustomData.connection_id,

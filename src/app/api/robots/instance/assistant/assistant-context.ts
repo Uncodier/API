@@ -7,7 +7,7 @@ import { findAssistantManagedPlan } from '@/lib/services/workflow-robot/plan-own
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 import {
   fetchMemoriesContext,
-  generateAgentBackground,
+  generateAssistantAgentIdentity,
   getInstanceAssistantTools,
   determineInstanceCapabilities,
   ICP_CATEGORY_IDS_INSTRUCTION,
@@ -228,7 +228,7 @@ async function prepareContext(
     toolOverrides: uiMediaContract?.toolOverrides ?? toolOverrides,
   }) : null;
 
-  const agentBackground = await generateAgentBackground(siteId, userId);
+  const { background: agentBackground, agentId: connectorAgentId } = await generateAssistantAgentIdentity(siteId, userId);
   const memoriesContext = await fetchMemoriesContext(siteId, userId, instanceId);
   const historyContext = instanceNodeId || (systemPrompt || '').includes('WORKFLOW MODE')
     ? ''
@@ -464,6 +464,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
   }
 
   return {
+    connectorAgentId: isWorkflowMode ? undefined : connectorAgentId,
     executionRouting: getExecutionRouting(siteId),
     ...(executionMode ? { executionMode } : {}),
     instance,

@@ -1,3 +1,4 @@
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { NextRequest } from 'next/server';
 import { authorizeVisitorSession } from '@/lib/security/authorize-visitor-session';
 import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
@@ -70,4 +71,11 @@ export async function authorizeUploadBeforeParsing(request: NextRequest) {
     sessionId,
     error: authorized ? null : 'Visitor session authorization is required',
   };
+}
+
+/** Authorize the delivery destination before uploading any files or starting work. */
+export async function canReceiveUpload(siteId: string, conversationId: string) {
+  const { data, error } = await supabaseAdmin.from('conversations').select('id,channel')
+    .eq('id', conversationId).eq('site_id', siteId).maybeSingle();
+  return !error && data?.id === conversationId && data.channel !== 'internal_review';
 }

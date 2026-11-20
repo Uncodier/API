@@ -270,7 +270,14 @@ describe('POST contact-human: offline voice escalation', () => {
       if (headers['x-api-key']) expect(output).not.toContain(headers['x-api-key']);
     });
 
-    it('requires a configured service credential instead of trusting a marker alone', async () => {
+    it('does not escalate internal review conversations or notify a customer', async () => {
+    const db = mockDatabase({ conversation: {channel:'internal_review', lead_id:null, visitor_id:null} });
+    const response = await POST(request());
+    expect(response.status).toBe(404);
+    expectNoEscalationSideEffects(db);
+  });
+
+  it('requires a configured service credential instead of trusting a marker alone', async () => {
       const db = mockDatabase();
       delete process.env.SERVICE_API_KEY;
 

@@ -1,3 +1,4 @@
+import { CUSTOMER_CONVERSATION_FILTER } from '@/lib/services/support-conversation-visibility';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export function isValidUUID(value: unknown): value is string {
@@ -9,7 +10,7 @@ export async function getOrCreateConversation(
   visitorId: string, siteId: string, leadId: string | null, agentId?: string | null,
 ): Promise<string> {
   let query = supabaseAdmin.from('conversations').select('id')
-    .eq('site_id', siteId).eq('status', 'active');
+    .or(CUSTOMER_CONVERSATION_FILTER).eq('site_id', siteId).eq('status', 'active');
   // A remembered visitor must not select history belonging to a previous account.
   query = leadId ? query.eq('lead_id', leadId)
     : query.eq('visitor_id', visitorId).is('lead_id', null);

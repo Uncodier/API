@@ -9,7 +9,7 @@ import {
   visitorSessionAuthorizationService
 } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
 import {
-  authorizeUploadBeforeParsing,
+  canReceiveUpload, authorizeUploadBeforeParsing,
   corsHeaders,
   isValidUuid as isValidUUID,
   json,
@@ -51,8 +51,6 @@ export async function POST(request: NextRequest) {
     if (!contentType.toLowerCase().includes('multipart/form-data')) {
       return jsonT({ success: false, error: 'Unsupported content type. Use multipart/form-data' }, 415, request, traceId);
     }
-
-    // 5d) If workflow didn't return a title, we'll try to read the conversation title later once conversationId is confirmed
 
     let form: FormData;
     try {
@@ -228,6 +226,7 @@ export async function POST(request: NextRequest) {
       return json({ success: false, error: 'conversation_id could not be resolved or created' }, 400, request);
     }
 
+    if (!await canReceiveUpload(siteId, conversationId!)) return jsonT({ success: false, error: 'Conversation not available' }, 403, request, traceId);
     // 2) Ensure user_id fallback from site owner if still missing
     if (!userId) {
       const { data: siteRow } = await supabaseAdmin

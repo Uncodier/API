@@ -1,3 +1,4 @@
+import { CUSTOMER_CONVERSATION_FILTER } from '@/lib/services/support-conversation-visibility';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export function isValidUUID(uuid: string): boolean {
@@ -54,6 +55,7 @@ export async function getMessagesCore(params: GetMessagesParams): Promise<{
     let siteQuery = supabaseAdmin
       .from('messages')
       .select('*, conversations!inner(site_id)', { count: 'exact' })
+      .or(CUSTOMER_CONVERSATION_FILTER, { referencedTable: 'conversations' })
       .eq('conversations.site_id', siteId)
       .order('created_at', { ascending: false })
       .range(offset, offset + safeLimit - 1);
@@ -95,7 +97,8 @@ export async function getMessagesCore(params: GetMessagesParams): Promise<{
     .select('id')
     .eq('id', conversationId)
     .eq('site_id', siteId)
-    .single();
+    .or(CUSTOMER_CONVERSATION_FILTER)
+    .maybeSingle();
 
   if (conversationError) {
     const detail = typeof conversationError.message === 'string'

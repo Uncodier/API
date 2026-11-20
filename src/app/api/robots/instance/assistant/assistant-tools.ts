@@ -1,5 +1,5 @@
 import { normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
-import { getComposioApiKeyForSite } from '@/lib/services/composio-service';
+import { assistantConnectorContext, type ConnectorContextResolver } from '@/lib/connectors/host-context';
 import { readToolExecutionContext, type ToolExecutionContext } from '@/lib/services/tool-execution-context';
 import { hasInstanceHistoryScope } from '@/lib/services/robot-instance/instance-history-reader';
 
@@ -113,6 +113,7 @@ export const getAssistantToolDefinitions = (
   approvedImport?: { url: string; sha256: string; userId: string },
   executionContext?: ToolExecutionContext,
   commandSource?: RequirementCommandSource,
+  connectorContext?: ConnectorContextResolver,
 ) => {
   const allowedMediaTool = uiMediaOutputType === 'image'
     ? 'generate_image'
@@ -217,7 +218,7 @@ export const getAssistantToolDefinitions = (
     sendBulkMessagesTool(siteId),
     placeVoiceCallTool(siteId, userId),
     publishTool(siteId, userId ?? '', instanceId),
-    skillLookupTool({ siteId }),
+    skillLookupTool({ siteId, connectorContext }),
     externalSkillLookupTool(siteId, approvedImport?.userId, approvedImport),
     activateCodingAgentsTool(siteId, instanceId, commandSource),
     updateRepoTool(siteId, instanceId, userId),
@@ -290,9 +291,10 @@ export const getAssistantTools = (
   executionContext?: ToolExecutionContext,
   commandSource?: RequirementCommandSource,
   decorateHostTools?: (tools: RoutedTool[]) => RoutedTool[],
+  connectorContext?: ConnectorContextResolver,
 ) => {
   const definitions = getAssistantToolDefinitions(siteId, userId, instanceId, customTools,
-    agentType, userPhone, requirementId, uiMediaOutputType, approvedImport, executionContext, commandSource);
+    agentType, userPhone, requirementId, uiMediaOutputType, approvedImport, executionContext, commandSource, connectorContext);
   return refreshHarnessToolManifest(routeTools(
     decorateHostTools ? decorateHostTools(definitions) : definitions,
     { siteId, userId },
@@ -300,8 +302,8 @@ export const getAssistantTools = (
 };
 
 /**
- * Builds the interactive instance assistant tools, including Composio only
- * when the current site has configured its own Composio secret.
+ * Builds a lazy connector gateway before host decorators. Key presence never
+ * grants access; only an explicitly admitted interactive host can resolve it.
  */
 export async function getInstanceAssistantTools(
   siteId: string,
@@ -316,11 +318,14 @@ export async function getInstanceAssistantTools(
   executionContext?: ToolExecutionContext,
   commandSource?: RequirementCommandSource,
   decorateHostTools?: (tools: RoutedTool[]) => RoutedTool[],
+  connectorHost: 'assistant' | 'workflow' = 'workflow',
+  connectorAgentId?: string,
+  connectorIdHint?: string,
+  sourceDigest?: string,
 ) {
-  const composioKey = await getComposioApiKeyForSite(siteId);
-  const instanceTools = composioKey
-    ? [...customTools, composioActionTool(siteId, composioKey)]
-    : customTools;
+  const connectorContext = assistantConnectorContext({ siteId, userId, instanceId, host: connectorHost, agentId: connectorAgentId, requestId: commandSource?.actionId, sourceDigest, connectorIdHint });
+  const instanceTools = [...customTools.filter(tool => tool?.name !== 'use_composio_tools'),
+    composioActionTool(connectorContext)];
 
   return getAssistantTools(
     siteId,
@@ -335,5 +340,6 @@ export async function getInstanceAssistantTools(
     executionContext,
     commandSource,
     decorateHostTools,
+    connectorContext,
   );
 }

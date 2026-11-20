@@ -27,8 +27,8 @@ export async function markAudioPreflightFailed(params: {
   if (!params.conversationId || !params.messageId) return;
   try {
     const { data: conversation, error: scopeError } = await supabaseAdmin.from('conversations')
-      .select('id').eq('id', params.conversationId).eq('site_id', params.siteId).maybeSingle();
-    if (scopeError || !conversation) return;
+      .select('id, channel').eq('id', params.conversationId).eq('site_id', params.siteId).maybeSingle();
+    if (scopeError || !conversation || conversation.channel === 'internal_review') return;
     const { data: row, error } = await supabaseAdmin.from('messages').select('custom_data, role')
       .eq('id', params.messageId).eq('conversation_id', params.conversationId).maybeSingle();
     if (error || !row || !['assistant', 'team_member'].includes(row.role) || row.custom_data?.audio_delivery || row.custom_data?.template_delivery
@@ -58,8 +58,10 @@ export async function deliverExplicitAudio(params: AudioDeliveryParams): Promise
     throw new AudioDeliveryError('Audio delivery requires a saved message and conversation');
   }
   const { data: conversation, error: conversationError } = await supabaseAdmin.from('conversations')
-    .select('id').eq('id', params.conversationId).eq('site_id', params.siteId).maybeSingle();
-  if (conversationError || !conversation) throw new AudioDeliveryError('Audio conversation scope could not be verified');
+    .select('id, channel').eq('id', params.conversationId).eq('site_id', params.siteId).maybeSingle();
+  if (conversationError || !conversation || conversation.channel === 'internal_review') {
+    throw new AudioDeliveryError('Audio conversation scope could not be verified');
+  }
   const { data: row, error } = await supabaseAdmin.from('messages')
     .select('id, content, role, custom_data').eq('id', params.messageId)
     .eq('conversation_id', params.conversationId).maybeSingle();

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { EmbeddingsService } from './embeddings-service';
 import { searchSkillsByKeywords } from './skill-keyword-search';
+import { expandDomainQuery, getSkillDomainAliases } from '@/lib/connectors/domains';
 
 export interface SkillMetadata {
   /** Directory name under src/skills (e.g. makinari-rol-frontend). */
@@ -142,7 +143,7 @@ export class SkillsService {
         }
 
         const inputs = skills.map(
-          (skill) => `${skill.name}\n${skill.description}\n${(skill.types || []).join(' ')}`
+          (skill) => `${skill.name}\n${skill.description}\n${(skill.types || []).join(' ')}\n${getSkillDomainAliases(skill.slug).join(' ')}`
         );
 
         const { embeddings } = await EmbeddingsService.generateEmbeddings(inputs);
@@ -170,7 +171,7 @@ export class SkillsService {
    * Semantic vector search over skills. Falls back to keyword search on failure.
    */
   static async searchSkillsVector(query: string, requirementType?: string): Promise<SkillMetadata[]> {
-    const q = query.trim();
+    const q = expandDomainQuery(query.trim());
     if (!q) return this.matchSkillsForRequirement(requirementType);
 
     try {

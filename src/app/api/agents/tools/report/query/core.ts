@@ -1,3 +1,4 @@
+import { CUSTOMER_CONVERSATION_FILTER } from '@/lib/services/support-conversation-visibility';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getSchemaCore } from '../schema/core';
 import {
@@ -171,6 +172,9 @@ export async function runReportQuery(params: ReportQueryParams): Promise<ReportQ
     } else {
       query = query.eq('site_id', site_id);
     }
+
+    if (table === 'conversations') query = query.or(CUSTOMER_CONVERSATION_FILTER);
+    if (table === 'messages') query = query.or(CUSTOMER_CONVERSATION_FILTER, { referencedTable: 'conversations' });
 
     // Apply caller-provided filters
     for (const f of filters) {

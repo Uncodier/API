@@ -14,6 +14,7 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 ## Current architecture
 
+- [Connectors runtime and API](CONNECTORS.md) — per-account grants, category/skill discovery, pinned REST execution, local migrations and explicit live/deployment gates.
 - [Finder selected-list persistence](FINDER_SELECTED_LISTS.md) — authenticated selected-only creation, atomic append, durable request receipts and worker rollout boundaries.
 
 - [Assistant video analysis](VIDEO_ANALYSIS_TOOL.md) — configurable frame/audio intervals, transcription, resolution, iterative crop/temporal zoom, safe local extraction and runtime prerequisites.

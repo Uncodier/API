@@ -1,3 +1,5 @@
+import { expandDomainQuery, getSkillDomainAliases } from '@/lib/connectors/domains';
+
 type SearchableSkill = {
   name: string;
   slug: string;
@@ -14,11 +16,11 @@ function normalize(value: string): string {
 
 /** Rank only the caller's authorized pool; never load or broaden a catalog here. */
 export function searchSkillsByKeywords<T extends SearchableSkill>(skills: T[], query: string): T[] {
-  const words = [...new Set(normalize(query).split(/[^a-z0-9_-]+/)
+  const words = [...new Set(normalize(expandDomainQuery(query)).split(/[^a-z0-9_-]+/)
     .filter(word => word.length > 2 || SHORT_TECHNICAL_TERMS.has(word)))];
   if (!words.length) return [];
   return skills.map(skill => {
-    const haystack = normalize(`${skill.name} ${skill.description} ${skill.slug} ${(skill.types ?? []).join(' ')}`);
+    const haystack = normalize(`${skill.name} ${skill.description} ${skill.slug} ${(skill.types ?? []).join(' ')} ${getSkillDomainAliases(skill.slug).join(' ')}`);
     return { skill, score: words.reduce((score, word) => score + Number(haystack.includes(word)), 0) };
   }).filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score).map(({ skill }) => skill);

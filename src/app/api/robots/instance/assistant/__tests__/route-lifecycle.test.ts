@@ -6,6 +6,7 @@ import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-re
 import { runAssistantWorkflow } from '../workflow';
 import { insertUserActionLog, markRemoteInstanceError } from '../user-message-log';
 import { POST } from '../route';
+import { POST as scopedAssistant } from '../connector/route';
 import { normalizePublishToolOverrides } from '../publish-tool-overrides';
 import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
 
@@ -26,6 +27,9 @@ jest.mock('../skill-selection', () => {
 jest.mock('@/lib/security/site-access', () => ({ canAccessSite: jest.fn() }));
 jest.mock('@/lib/services/site-skill-access', () => ({ isSiteSkillManager: jest.fn() }));
 jest.mock('@/lib/security/tool-request-principal', () => ({ canToolPrincipalAccessSite: jest.fn(), resolveToolRequestPrincipal: jest.fn() }));
+
+jest.mock('@/lib/connectors/access', () => ({ getVisibleConnector: jest.fn() }));
+import { getVisibleConnector } from '@/lib/connectors/access';
 
 const INSTANCE = '00000000-0000-4000-8000-000000000001';
 const SITE = '00000000-0000-4000-8000-000000000002';
@@ -331,4 +335,30 @@ it('preserves legacy scoped-node overrides even when context only contains outpu
   expect(normalizePublishToolOverrides).toHaveBeenCalledWith(context, tool_overrides);
   expect((start as jest.Mock).mock.calls[0][1][9]).toBe(nodeId);
   expect((start as jest.Mock).mock.calls[0][1][12]).toEqual(normalized);
+});
+
+it('passes only the exact visible account and authenticated instance owner into a linked workflow', async () => {
+  (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue({ internal: false, userId: USER, siteId: null });
+  (getVisibleConnector as jest.Mock).mockResolvedValue({ id: LOG, site_id: SITE });
+  expect((await POST(request({ ...payload, user_id: LOG, connector_id_hint: LOG }))).status).toBe(200);
+  expect(getVisibleConnector).toHaveBeenCalledWith(SITE, USER, LOG);
+  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ callerSource: 'interactive', connectorIdHint: LOG });
+});
+
+it.each(['not-visible', 'not-owner', 'service', 'new-instance', 'node', 'malformed'])('rejects unusable connector hint before logging or workflow start: %s', async reason => {
+  (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue({ internal: reason === 'service', userId: reason === 'not-owner' ? LOG : USER, siteId: null });
+  (getVisibleConnector as jest.Mock).mockRejectedValue(Error('unavailable'));
+  const response = await POST(request({ ...payload, instance_id: reason === 'new-instance' ? undefined : INSTANCE,
+    instance_node_id: reason === 'node' ? LOG : undefined, connector_id_hint: reason === 'malformed' ? 'supabase' : LOG }));
+  expect(response.status).toBeGreaterThanOrEqual(400);
+  expect(start).not.toHaveBeenCalled(); expect(insertUserActionLog).not.toHaveBeenCalled();
+});
+
+
+it('never starts an unscoped turn at the scoped-only entry point', async () => {
+  const req = new NextRequest('https://example.test/api/robots/instance/assistant/connector/', {
+    method: 'POST', body: JSON.stringify(payload),
+  });
+  expect((await scopedAssistant(req)).status).toBe(400);
+  expect(start).not.toHaveBeenCalled();
 });

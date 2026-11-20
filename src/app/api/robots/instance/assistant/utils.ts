@@ -34,6 +34,11 @@ export async function fetchMemoriesContext(
  * Generate agent background using BackgroundBuilder service
  */
 export async function generateAgentBackground(siteId: string, userId?: string): Promise<string> {
+  return (await generateAssistantAgentIdentity(siteId, userId)).background;
+}
+
+/** The prompt and connector identity are one server selection, never instance metadata. */
+export async function generateAssistantAgentIdentity(siteId: string, userId?: string): Promise<{ background: string; agentId?: string }> {
   try {
     console.log(`🧩 [Assistant] Generating agent background for site: ${siteId}`);
     
@@ -41,7 +46,7 @@ export async function generateAgentBackground(siteId: string, userId?: string): 
     const robotAgent = await findGrowthRobotAgent(siteId);
     if (!robotAgent) {
       console.log(`⚠️ [Assistant] No Growth Robot agent found for site: ${siteId}`);
-      return '';
+      return { background: '' };
     }
     
     console.log(`✅ [Assistant] Found Growth Robot agent: ${robotAgent.agentId}`);
@@ -50,12 +55,12 @@ export async function generateAgentBackground(siteId: string, userId?: string): 
     const { data: agentData, error: agentError } = await supabaseAdmin
       .from('agents')
       .select('*')
-      .eq('id', robotAgent.agentId)
+      .eq('id', robotAgent.agentId).eq('site_id', siteId).eq('status', 'active')
       .single();
     
     if (agentError || !agentData) {
       console.error(`❌ [Assistant] Error fetching agent data:`, agentError);
-      return '';
+      return { background: '' };
     }
     
     // Get site information and campaigns
@@ -80,11 +85,11 @@ export async function generateAgentBackground(siteId: string, userId?: string): 
     );
     
     console.log(`✅ [Assistant] Generated agent background (${background.length} characters)`);
-    return background;
+    return { background, agentId: agentData.id };
     
   } catch (error) {
     console.error(`❌ [Assistant] Error generating agent background:`, error);
-    return '';
+    return { background: '' };
   }
 }
 

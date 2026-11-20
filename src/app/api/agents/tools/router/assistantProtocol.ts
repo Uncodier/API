@@ -21,6 +21,8 @@
 import { injectThoughtProcess, isAlwaysOnToolName } from './tool-routing-policy';
 export { DEFAULT_ALWAYS_ON_TOOL_NAMES, isAlwaysOnToolName } from './tool-routing-policy';
 
+import { shareQueryVector, withSearchContext } from './search-context';
+import { withConnectorResolver } from '@/lib/connectors/tool-resolver';
 import { EmbeddingsService } from '@/lib/services/embeddings-service';
 import { bindCatalogBatchActor } from '../catalog_commerce/batch-admin-tool';
 import {
@@ -84,12 +86,14 @@ function screenAccessFailure(error: ToolScreenAccessDenied | ToolScreenAccessUna
  */
 export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenScope) {
   scope = scope ? { siteId: scope.siteId, userId: scope.userId } : undefined;
-  routedTools = routedTools.map(tool => bindCatalogBatchActor(tool, scope));
+  routedTools = routedTools.filter(tool => tool.name !== 'use_composio_tools' ||
+    (tool as any)[Symbol.for('makinari.connector-gateway')] === true).map(tool => bindCatalogBatchActor(tool, scope));
   // Catalog-local cache: one user's filtered catalog must not poison another's
   // semantic search. Only permitted toolIndex entries are returned below.
-  let cachedToolEmbeddings: Map<string, number[]> | null = null;
-  let toolsEmbeddingsInitPromise: Promise<void> | null = null;
+  const nativeEmbeddings = new Map<string, Promise<{ model: string; vector: number[] }>>();
   const byName = new Map<string, RoutedTool>(routedTools.map((t) => [t.name, t]));
+  const screenName = (name: string) => name === 'use_composio_tools' &&
+    (byName.get(name) as any)?.[Symbol.for('makinari.connector-gateway')] === true ? 'connector_gateway' : name;
 
   const unfilteredToolIndex = routedTools.map((t) => ({
     name: t.name,
@@ -110,7 +114,7 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
     'Core planning/sandbox/requirement tools (instance_plan, requirement_status, requirements, sandbox_*, skill_lookup) are NOT routed here — they are always directly available.',
   ].join('\n');
 
-  return {
+  const nativeRouter = {
     name: 'tools',
     description,
     parameters: {
@@ -153,18 +157,18 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
       const denied = () => screenAccessFailure(new ToolScreenAccessDenied(), true);
       const target = (action === 'describe' || action === 'call') && args.name ? byName.get(args.name) : undefined;
       // Unmapped tools cannot be allowed even for admins, regardless of DB health.
-      if (target && !canUseToolScreen(target.name, { isAdmin: true, blockedScreens: [] })) return denied();
+      if (target && !canUseToolScreen(screenName(target.name), { isAdmin: true, blockedScreens: [] })) return denied();
       let access: ToolScreenAccess | null;
       try {
         // A screen-independent target does not need a permission lookup.
-        access = target && canUseToolScreen(target.name, null) ? null : await loadToolScreenAccess(scope);
+        access = target && canUseToolScreen(screenName(target.name), null) ? null : await loadToolScreenAccess(scope);
       } catch (error) {
         if (error instanceof ToolScreenAccessUnavailable) {
           return screenAccessFailure(new ToolScreenAccessUnavailable(), true);
         }
         throw error;
       }
-      const toolIndex = unfilteredToolIndex.filter(tool => canUseToolScreen(tool.name, access));
+      const toolIndex = unfilteredToolIndex.filter(tool => canUseToolScreen(screenName(tool.name), access));
       const categoriesAvailable = Array.from(new Set(toolIndex.map(tool => tool.category))).sort();
 
       // `args.args` is declared as a JSON-encoded string (see schema note).
@@ -203,109 +207,50 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
       }
 
       if (action === 'search') {
-        const q = (args.query ?? '').trim();
+        const q = typeof args.query === 'string' ? args.query.trim() : '';
         if (!q) {
           return { success: false, error: 'Missing "query" — provide a natural language description for the search.' };
         }
 
+        const words = [...new Set(q.toLowerCase().split(/\s+/).filter(w => w.length > 2))];
+        const eligible = args.category ? toolIndex.filter(t => t.category === args.category) : toolIndex;
+        const scores = eligible.map(tool => {
+          const text = `${tool.name} ${byName.get(tool.name)?.description || tool.description} ${tool.category}`.toLowerCase();
+          const keywords = words.filter(word => text.includes(word)).length;
+          return (tool.name.toLowerCase() === q.toLowerCase() ? 10 : 0) + keywords / Math.max(words.length, 1);
+        });
         try {
-          if (!cachedToolEmbeddings) {
-            if (!toolsEmbeddingsInitPromise) {
-              toolsEmbeddingsInitPromise = (async () => {
-                try {
-                  if (unfilteredToolIndex.length === 0) {
-                    cachedToolEmbeddings = new Map();
-                    return;
-                  }
-                  const inputs = unfilteredToolIndex.map(
-                    (t) => {
-                      const fullTool = byName.get(t.name);
-                      return `${t.name}\n${fullTool?.description || t.description}\n${t.category}`;
-                    }
-                  );
-                  const { embeddings } = await EmbeddingsService.generateEmbeddings(inputs);
-                  const map = new Map<string, number[]>();
-                  for (let i = 0; i < unfilteredToolIndex.length; i++) {
-                    if (embeddings[i]) {
-                      map.set(unfilteredToolIndex[i].name, embeddings[i]);
-                    }
-                  }
-                  cachedToolEmbeddings = map;
-                  console.log(`[ToolsRouter] Cached vector embeddings for ${map.size} tools.`);
-                } catch (e) {
-                  console.error('[ToolsRouter] Failed to initialize tool embeddings:', e);
-                  toolsEmbeddingsInitPromise = null;
-                  throw e;
-                }
-              })();
-            }
-            await toolsEmbeddingsInitPromise;
+          // Host-decorated descriptions may contain tenant context. Only
+          // screen-mapped names and static categories belong in the index.
+          const missing = [...new Map(eligible.filter(t => !nativeEmbeddings.has(t.name)).map(t => [t.name, t])).values()];
+          if (missing.length) {
+            const batch = EmbeddingsService.generateEmbeddings(missing.map(t => `${t.name}\n${t.category}`));
+            missing.forEach((t, i) => nativeEmbeddings.set(t.name, batch.then(result => ({ model: result.model, vector: result.embeddings[i] })).catch(error => {
+              nativeEmbeddings.delete(t.name);
+              throw error;
+            })));
           }
-
-          const { embeddings: [queryEmbedding] } = await EmbeddingsService.generateEmbeddings(q);
-          if (!queryEmbedding) {
-            throw new Error('No embedding returned for query');
-          }
-
-          if (!cachedToolEmbeddings) {
-            throw new Error('Tool embeddings not initialized properly');
-          }
-
-          const scored = toolIndex.map((tool) => {
-            const toolVec = cachedToolEmbeddings!.get(tool.name);
-            const score = toolVec ? EmbeddingsService.cosineSimilarity(queryEmbedding, toolVec) : 0;
-            return { tool, score };
+          const vectors = await Promise.all(eligible.map(t => nativeEmbeddings.get(t.name)));
+          const { model, embeddings: [queryEmbedding] } = await EmbeddingsService.generateEmbeddings(q);
+          if (!queryEmbedding) throw new Error('Missing query embedding');
+          shareQueryVector(q, { model, vector: queryEmbedding });
+          vectors.forEach((doc, i) => {
+            if (!doc || doc.model !== model || doc.vector?.length !== queryEmbedding.length) return;
+            const score = EmbeddingsService.cosineSimilarity(queryEmbedding, doc.vector);
+            if (score > 0.7) scores[i] += score;
           });
-
-          const matches = scored
-            .filter((x) => x.score > 0.7)
-            .sort((a, b) => b.score - a.score)
-            .map((x) => {
-              const fullTool = byName.get(x.tool.name);
-              return {
-                ...x.tool,
-                description: fullTool?.description || x.tool.description,
-                parameters: fullTool?.parameters,
-              };
-            })
-            .slice(0, 10);
-
-          return {
-            success: true,
-            query: q,
-            count: matches.length,
-            tools: matches,
-            hint: matches.length > 0
-              ? 'You can call action="call" directly with name+args using the parameters schema provided in the results.'
-              : 'No matches found. Try a different query or use action="list" to see all tools.',
-          };
-        } catch (e: any) {
-          console.warn('[ToolsRouter] Vector search failed, falling back to keyword search:', e);
-          const lowerQ = q.toLowerCase();
-          const words = lowerQ.split(/\s+/).filter(Boolean);
-          const keywordMatches = toolIndex.filter(t => {
-            const fullTool = byName.get(t.name);
-            const hay = `${t.name} ${fullTool?.description || t.description} ${t.category}`.toLowerCase();
-            return words.some(w => hay.includes(w));
-          }).map(t => {
-            const fullTool = byName.get(t.name);
-            return {
-              ...t,
-              description: fullTool?.description || t.description,
-              parameters: fullTool?.parameters,
-            };
-          }).slice(0, 10);
-          
-          return {
-            success: true,
-            query: q,
-            count: keywordMatches.length,
-            tools: keywordMatches,
-            hint: keywordMatches.length > 0
-              ? 'You can call action="call" directly with name+args using the parameters schema provided in the results.'
-              : 'No matches found. Try a different query or use action="list" to see all tools.',
-          };
+        } catch {
+          console.warn('[ToolsRouter] Vector search unavailable; using keyword search.');
         }
+        const matches = eligible.map((tool, i) => ({ tool, score: scores[i] })).filter(x => x.score > 0)
+          .sort((a, b) => b.score - a.score).slice(0, 10).map(({ tool }) => {
+            const fullTool = byName.get(tool.name);
+            return { ...tool, description: fullTool?.description || tool.description, parameters: fullTool?.parameters };
+          });
+        return { success: true, query: q, count: matches.length, tools: matches,
+          hint: matches.length ? 'Use action="call" with name and arguments matching the returned schema.'
+            : 'No matches found. Try another query or use action="list".' };
+
       }
 
       if (action === 'describe') {
@@ -313,7 +258,7 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
           return { success: false, error: 'Missing "name" — provide the tool name to describe.' };
         }
         const tool = byName.get(args.name);
-        if (tool && !canUseToolScreen(tool.name, access)) return denied();
+        if (tool && !canUseToolScreen(screenName(tool.name), access)) return denied();
         if (!tool) {
           return {
             success: false,
@@ -338,7 +283,7 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
           return { success: false, error: 'Missing "name" — provide the tool name to call.' };
         }
         const tool = byName.get(args.name);
-        if (tool && !canUseToolScreen(tool.name, access)) return denied();
+        if (tool && !canUseToolScreen(screenName(tool.name), access)) return denied();
         if (!tool) {
           return {
             success: false,
@@ -399,6 +344,14 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
       return { success: false, error: `Unknown action "${(args as any).action}". Use "list", "describe", or "call".` };
     },
   };
+  // The facade lazily loads provider/runtime code only after a real host binding.
+  if (!routedTools.some(tool => (tool as any)[Symbol.for('makinari.connector-gateway')] === true)) return nativeRouter;
+  const resolved = withConnectorResolver(nativeRouter, routedTools, scope);
+  return { ...resolved, execute: (args: Parameters<typeof nativeRouter.execute>[0]) => {
+    const run = async () => resolved.execute(args);
+    return args.action === 'search' && typeof args.query === 'string' ? withSearchContext(args.query, run) : run();
+  } };
+
 }
 
 /**

@@ -68,11 +68,11 @@ export async function POST(request: NextRequest) {
     // Verificar que la conversación existe
     const { data: conversationData, error: conversationError } = await supabaseAdmin
       .from('conversations')
-      .select('id, user_id, site_id, lead_id, visitor_id')
+      .select('id, user_id, site_id, lead_id, visitor_id, channel')
       .eq('id', conversation_id)
       .single();
     
-    if (conversationError || !conversationData) {
+    if (conversationError || !conversationData || conversationData.channel === 'internal_review') {
       console.error('Error al verificar la conversación:', conversationError);
       return NextResponse.json(
         { 
@@ -237,7 +237,7 @@ export async function GET(request: NextRequest) {
     // Primero, obtener los datos básicos de la conversación
     const { data: conversationData, error: conversationError } = await supabaseAdmin
       .from('conversations')
-      .select('id, title, user_id, site_id, delegate_id')
+      .select('id, title, user_id, site_id, delegate_id, channel')
       .eq('id', conversationId)
       .single();
     
@@ -255,7 +255,7 @@ export async function GET(request: NextRequest) {
       );
     }
     
-    if (!conversationData) {
+    if (!conversationData || conversationData.channel === 'internal_review') {
       return NextResponse.json(
         { 
           success: false, 

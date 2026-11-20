@@ -43,7 +43,13 @@ describe('browser route authorization contract', () => {
 
   it.each(routeFiles)('%s invokes canonical visitor session authorization', (file) => {
     const source = readFileSync(resolve(process.cwd(), file), 'utf8');
-    expect(source).toContain('visitorSessionAuthorizationService.authorizeBrowserRequest');
+    if (file === 'src/app/api/agents/customerSupport/message/route.ts') {
+      expect(source).toContain('await readSupportRequest(request)');
+      expect(readFileSync(resolve(process.cwd(), 'src/app/api/agents/customerSupport/message/request.ts'), 'utf8'))
+        .toContain('visitorSessionAuthorizationService.authorizeBrowserRequest');
+    } else {
+      expect(source).toContain('visitorSessionAuthorizationService.authorizeBrowserRequest');
+    }
     expect(source).toContain('visitorAuthorizationErrorResponse');
   });
 

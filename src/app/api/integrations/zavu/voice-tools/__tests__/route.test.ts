@@ -70,6 +70,23 @@ describe("Zavu Voice tools webhook", () => {
     mockDecryptToken.mockReturnValue(signingSecret);
   });
 
+  it('requires a signed tool name, an authenticated timestamp and the actual signing agent for reviews', async () => {
+    const name = 'request_connector_review';
+    const agentId = crypto.randomUUID();
+    const data = { id: agentId, site_id: SITE_ID, configuration: { zavu: { tool_webhook_secret: 'encrypted' } } };
+    mockMaybeSingle.mockResolvedValue({ data });
+    const body = { tool: name, arguments: { tool_slug: 'HUBSPOT_LIST_CONTACTS', arguments: {} } };
+    const t = Math.floor(Date.now()/1000);
+    const mac = (v: string) => crypto.createHmac('sha256', signingSecret).update(v).digest('hex');
+    const v1 = mac(JSON.stringify(body));
+    for (const sig of [v1, `t=${t},v1=${v1},v2=`]) {
+      expect(await (await POST(request(body, sig, name))).json()).toEqual({ status: 'review_requested_if_available' });
+      expect(mockExecuteCustomerSupportVoiceTool).not.toHaveBeenCalled();
+    }
+    await POST(request(body, `t=${t},v2=${mac(`${t}.${JSON.stringify(body)}`)}`, name));
+    expect(mockExecuteCustomerSupportVoiceTool).toHaveBeenCalledWith(expect.objectContaining({ signedAgentId: agentId }));
+  });
+
   it("executes a Customer Support tool from Zavu's arguments payload", async () => {
     mockExecuteCustomerSupportVoiceTool.mockResolvedValue({
       success: true,
@@ -101,6 +118,14 @@ describe("Zavu Voice tools webhook", () => {
       siteId: SITE_ID,
       rawPayload: expect.any(String),
     });
+  });
+
+  it('does not disclose agent presence before authenticating a callback', async () => {
+    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+    const result = await POST(request({ tool: 'request_connector_review', arguments: {} }, undefined, null));
+    expect(result.status).toBe(401);
+    expect(await result.json()).toMatchObject({ code: 'VOICE_TOOL_AUTH_FAILED', error: 'Invalid signature' });
+    expect(mockExecuteCustomerSupportVoiceTool).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid signature without executing a tool", async () => {

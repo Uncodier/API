@@ -33,7 +33,7 @@ export async function runAssistantWorkflow(
   expectedResultsAmount?: number,
   contextString?: string,
   toolOverrides?: Record<string, any>,
-   options?: { silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string; resumeToken?: string; executionMode?: AssistantExecutionMode; executionRouting?: import('@/lib/services/ai/customer-routing').ExecutionRoutingReference }
+   options?: { connectorIdHint?: string; callerSource?: 'interactive' | 'background'; silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string; resumeToken?: string; executionMode?: AssistantExecutionMode; executionRouting?: import('@/lib/services/ai/customer-routing').ExecutionRoutingReference }
 ) {
   'use workflow';
 
@@ -65,7 +65,7 @@ export async function runAssistantWorkflow(
       customTools, useSdkTools, systemPrompt, agentType, userPhone, instanceNodeId,
       expectedResultsAmount, contextString, toolOverrides, selectedSkills: options?.selectedSkills,
       approvedImport: options?.approvedImport,
-      executionRouting: options?.executionRouting,
+      executionRouting: options?.executionRouting, callerSource: options?.callerSource, connectorIdHint: options?.connectorIdHint,
       ...(options?.executionMode ? { executionMode: options.executionMode } : {}),
     }, options?.resumeToken);
     if (!recovery.ok) return blockedResult;
@@ -83,7 +83,7 @@ export async function runAssistantWorkflow(
       options = { ...options, selectedSkills: execution.selectedSkills as AssistantSkillSelection | undefined,
         approvedImport: execution.approvedImport as { url: string; sha256: string; userId: string } | undefined,
         // The claimed snapshot, not the new request, owns continuation intent.
-        executionMode: execution.executionMode, executionRouting: execution.executionRouting };
+        executionMode: execution.executionMode, executionRouting: execution.executionRouting, callerSource: execution.callerSource, connectorIdHint: execution.connectorIdHint };
       recoveryScope.generation = recovery.snapshot.respawnCount;
     }
 
@@ -109,6 +109,11 @@ export async function runAssistantWorkflow(
     options?.executionMode,
     options?.executionRouting,
   );
+  context.callerSource = options?.callerSource;
+  context.connectorIdHint = options?.connectorIdHint;
+  if (context.connectorIdHint) {
+    context.systemPrompt += '\nA connector account is selected for this turn. If relevant to the request, search the available connector tools. If the selected account has no suitable action, say so; do not substitute another account or project. The selection is not a request to execute anything.';
+  }
   context.recoveryScope = recoveryScope;
   context.executionMode = options?.executionMode;
   context.nodeContinuation = recovery.snapshot?.continuation;

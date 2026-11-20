@@ -1,3 +1,6 @@
+import { CommandConverter } from '../../../adapters/CommandConverter';
+import { supportConnectorTool } from '@/lib/connectors/support-runtime-contract';
+import { channelRequestTool } from '@/lib/connectors/channel-request';
 import { recoverMissingAgent } from '../recoverMissingAgent';
 import { initializeAgentCommand } from '../initialize-agent';
 import { ensureDefaultAgents, findActiveAgentForRole } from '@/lib/services/agents/ensureDefaultAgents';
@@ -66,6 +69,16 @@ describe('recoverMissingAgent', () => {
     expect(findActiveAgentForRole).toHaveBeenCalledWith(SITE_ID, 'Sales/CRM Specialist');
     expect(recovered.agent_id).toBe(AGENT_ID);
     expect(recovered.metadata?.agent_role).toBe('Sales/CRM Specialist');
+  });
+
+  it.each([supportConnectorTool, channelRequestTool])('never repairs a channel tool command with prompt or role identity ($name)', async tool => {
+    const raw = { ...baseCommand, context: `Original Agent ID: ${AGENT_ID}`, agent_role: 'Customer Support',
+      agent_id: null, tools: [{ type: 'function', function: tool }] };
+    const converted = CommandConverter.toAgentbaseFormat(raw as any);
+    expect(converted.agent_id).toBeUndefined();
+    expect((await recoverMissingAgent(converted)).agent_id).toBeUndefined();
+    expect(ensureDefaultAgents).not.toHaveBeenCalled();
+    expect(findActiveAgentForRole).not.toHaveBeenCalled();
   });
 
   it('does not seed when agent_role is missing', async () => {

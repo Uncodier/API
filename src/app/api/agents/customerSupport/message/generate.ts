@@ -1,3 +1,7 @@
+import { attachSupportConnectorHost } from '@/lib/connectors/channel-command';
+import { isAssignedChannelCommand } from '@/lib/connectors/channel-command-row';
+import { channelRequestTool } from '@/lib/connectors/channel-request';
+import { supportConnectorTool } from '@/lib/connectors/support-runtime-contract';
 import { NextResponse } from 'next/server';
 import { CommandFactory } from '@/lib/agentbase';
 import { buildCustomerSupportTools } from '@/lib/services/customer-support-tool-catalog';
@@ -20,7 +24,10 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
       try {
         const claim = await claimInboundCommand(inboundKey);
         if (claim.state === 'busy') return unavailable();
-        if (claim.state === 'reuse') reusedCommandId = claim.commandId;
+        if (claim.state === 'reuse') {
+          if (!isValidUUID(claim.commandId)) return unavailable();
+          reusedCommandId = claim.commandId;
+        }
         else ownerToken = claim.token;
       } catch { return unavailable(); }
     }
@@ -59,7 +66,7 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
       ],
       // Persist execution provenance outside the model-facing function schema.
       // The task endpoint validates the conversation's site and lead before insertion.
-      tools: buildCustomerSupportTools(effectiveSiteId).map(tool => tool.function.name === 'CREATE_TASK'
+      tools: [...buildCustomerSupportTools(effectiveSiteId), ...(input.connectorHost && !reusedCommandId ? [supportConnectorTool, channelRequestTool].map(tool => ({ type: 'function', function: tool })) : [])].map(tool => tool.function.name === 'CREATE_TASK'
         && input.effectiveConversationId ? { ...tool, task_creation_context: {
           conversation_id: input.effectiveConversationId,
           lead_id: effectiveLeadId,
@@ -85,6 +92,8 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
       toolsModelType: 'openrouter'
     });
     
+    if (input.connectorHost && !reusedCommandId) attachSupportConnectorHost(command, input.connectorHost);
+
     // Submit the command for processing
     const internalCommandId = reusedCommandId || await commandService.submitCommand(command);
     console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
@@ -117,13 +126,18 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
     
     // Esperar a que el comando se complete utilizando nuestra función
     const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
-    if (reusedCommandId && executedCommand && (
-      (executedCommand.metadata?.dbUuid || executedCommand.id) !== reusedCommandId
-      || executedCommand.site_id !== effectiveSiteId
-      || executedCommand.agent_id !== effectiveAgentId
-      || executedCommand.user_id !== effectiveUserId
-    )) return unavailable();
-    
+    if (reusedCommandId) {
+      // A receipt permits polling its existing command, never re-submission or
+      // restoring connector authority. Converted command metadata and legacy
+      // agent IDs parsed out of prompt text do not establish identity.
+      if (executedCommand?.id !== reusedCommandId || dbUuid !== reusedCommandId
+        || executedCommand.site_id !== effectiveSiteId || executedCommand.agent_id !== effectiveAgentId
+        || executedCommand.user_id !== effectiveUserId) return unavailable();
+      try {
+        if (!await isAssignedChannelCommand(reusedCommandId, effectiveSiteId, effectiveAgentId, effectiveUserId)) return unavailable();
+      } catch { return unavailable(); }
+    }
+
     // CRITICAL: Verify command completed successfully BEFORE processing results
     // This check must run regardless of UUID validity
     if (!completed || !executedCommand) {

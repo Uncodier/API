@@ -6,6 +6,11 @@ import type { AssistantImageAsset } from '@/lib/services/robot-instance/assistan
 import type { AssistantExecutionMode } from './execution-mode';
 
 export interface AssistantContext {
+  /** Pinned to the agent whose background was included in this prepared prompt. */
+  connectorAgentId?: string;
+  /** Server route admission or protected recovery snapshot only; absent denies connectors. */
+  callerSource?: 'interactive' | 'background';
+  connectorIdHint?: string;
   executionRouting?: import('@/lib/services/ai/customer-routing').ExecutionRoutingReference;
   executionMode?: AssistantExecutionMode;
   instance: any;

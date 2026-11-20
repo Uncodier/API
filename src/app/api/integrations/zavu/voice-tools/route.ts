@@ -1,3 +1,4 @@
+import { channelRequestReceipt, channelRequestTool } from '@/lib/connectors/channel-request';
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { z } from "zod";
@@ -57,25 +58,24 @@ export async function POST(request: NextRequest) {
     const supabase = getSupabaseAdmin();
     const { data: agent, error: agentError } = await supabase
       .from("agents")
-      .select("configuration")
+      .select("id, site_id, configuration")
       .eq("site_id", siteId)
       .eq("role", "Customer Support")
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (agentError || !agent) {
-      log("agent_lookup_failed", { status: agentError ? 503 : 404 }, true);
-      return respond(
-        { error: agentError ? "Voice tool configuration unavailable" : "Customer Support agent not found" },
-        agentError ? 503 : 404
-      );
+    if (agentError) {
+      log("agent_lookup_failed", { status: 503 }, true);
+      return respond({ error: "Voice tool configuration unavailable" }, 503);
     }
 
-    const encryptedSecret = (agent.configuration as any)?.zavu?.tool_webhook_secret;
-    const secret = typeof encryptedSecret === "string" ? decryptToken(encryptedSecret) : null;
+    // Missing agents/secrets are indistinguishable from bad signatures to the caller.
+    const encryptedSecret = (agent?.configuration as any)?.zavu?.tool_webhook_secret;
+    let secret: string | null = null;
+    try { if (typeof encryptedSecret === "string") secret = decryptToken(encryptedSecret); } catch { /* Invalid signing key. */ }
     const signatureCheck = checkZavuSignature(signature, rawBody, secret || undefined);
-    if (!signatureCheck.valid) {
+    if (!signatureCheck.valid || !agent) {
       log("authentication_failed", {
         status: 401,
         reason: signatureCheck.reason,
@@ -118,6 +118,10 @@ export async function POST(request: NextRequest) {
     const toolLabel = /^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(toolName)
       ? toolName : "invalid_tool_name";
 
+    const review = toolName === channelRequestTool.name;
+    // Require a signed tool name and a timestamp authenticated by v2 (not an unsigned t on v1).
+    if (review && (parsed.data.tool !== toolName || !signature?.match(/^\s*(?:t=\d+,\s*v2=[a-f0-9]{64}|v2=[a-f0-9]{64},\s*t=\d+)\s*$/i)
+      || agent.site_id !== siteId || !z.string().uuid().safeParse(agent.id).success)) return respond(channelRequestReceipt);
     try {
       const result = await executeCustomerSupportVoiceTool({
         toolName,
@@ -125,11 +129,13 @@ export async function POST(request: NextRequest) {
         context: parsed.data.context,
         siteId,
         rawPayload: rawBody,
+        ...(review ? { signedAgentId: agent.id } : {}),
       });
       const failed = Boolean(result && typeof result === 'object' && 'success' in result && result.success === false);
       log(failed ? 'execution_recovery' : 'execution_completed', { tool: toolLabel, status: 200 }, failed);
       return respond(result ?? { success: true });
     } catch (error) {
+      if (review) return respond(channelRequestReceipt);
       if (error instanceof ResourceLicenseError) {
         log('execution_rejected', { tool: toolLabel, status: error.status, code: error.code }, true);
         return respond({ success: false, error: error.message, code: error.code, request_id: requestId }, error.status);

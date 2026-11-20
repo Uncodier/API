@@ -6,7 +6,7 @@ import { POST } from '@/app/api/agents/tools/sendChannelMessage/route';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 jest.mock('../automation-send-guard', () => ({ ...jest.requireActual('../automation-send-guard'), assertAutomationSendAllowed: jest.fn() }));
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), schema: jest.fn() } }));
 jest.mock('@/lib/services/zavu/client', () => ({ sendChannelMessage: jest.fn() }));
 jest.mock('@/lib/services/zavu/voice-call-service', () => ({ assertVoiceCallAllowed: jest.fn() }));
 jest.mock('@/lib/security/site-access', () => ({ canAccessSite: jest.fn(async () => true) }));
@@ -45,4 +45,22 @@ test('HTTP skip is terminal success without sent metadata writes or receipt vali
   expect(await response.json()).toMatchObject({ success: true, status: 'skipped', skipped: true, delivered: false, reason: 'stale_automatic_reply' });
   expect(sendChannelMessage).not.toHaveBeenCalled();
   expect(supabaseAdmin.from).not.toHaveBeenCalled();
+});
+
+test.each(['instagram','telegram'])('sendChannelMessage rejects a review ID despite a caller-supplied %s destination', async channel => {
+  jest.mocked(assertAutomationSendAllowed).mockImplementation(jest.requireActual('../automation-send-guard').assertAutomationSendAllowed);
+  (supabaseAdmin.schema as jest.Mock).mockReturnValue(supabaseAdmin);
+  const select = jest.fn().mockReturnThis();
+  const eq = jest.fn().mockReturnThis();
+  (supabaseAdmin.from as jest.Mock).mockReturnValue({ select, eq,
+    maybeSingle: async () => ({ data: { id: input.conversation_id, channel: 'internal_review' } }) });
+  const response = await POST(new Request('https://api.example.test/send', { method: 'POST',
+    body: JSON.stringify({ ...input, channel, message_id: undefined }) }) as any);
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({ success: false });
+  expect(select).toHaveBeenCalledWith(expect.stringContaining('channel'));
+  expect(eq).toHaveBeenCalledWith('site_id', input.site_id);
+  expect(supabaseAdmin.from).not.toHaveBeenCalledWith('messages');
+  expect(tryPrepareLongReplyAudio).not.toHaveBeenCalled();
+  expect(sendChannelMessage).not.toHaveBeenCalled();
 });

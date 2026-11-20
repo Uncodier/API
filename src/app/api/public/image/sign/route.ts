@@ -3,6 +3,7 @@ import {
   hasAuthenticatedPrincipal,
 } from '@/lib/security/request-rate-limit';
 import { canAccessSite } from '@/lib/security/site-access';
+import { IMAGE_PROMPT_MAX_LENGTH } from '@/lib/services/image/promptImageLimits';
 import {
   issuePublicImageSignature,
 } from '@/lib/security/public-image-signature';
@@ -47,10 +48,10 @@ export async function POST(request: NextRequest) {
   if (
     typeof body.prompt !== 'string'
     || body.prompt.trim().length === 0
-    || body.prompt.length > 2_000
+    || body.prompt.length > IMAGE_PROMPT_MAX_LENGTH
   ) {
     return NextResponse.json(
-      { error: 'prompt must contain between 1 and 2000 characters' },
+      { error: `prompt must contain between 1 and ${IMAGE_PROMPT_MAX_LENGTH} characters` },
       { status: 400 },
     );
   }

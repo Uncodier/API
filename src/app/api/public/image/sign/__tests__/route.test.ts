@@ -5,15 +5,15 @@ const hasAuthenticatedPrincipal = jest.fn();
 const canAccessSite = jest.fn();
 const issuePublicImageSignature = jest.fn();
 
-jest.mock('@/lib/security/request-rate-limit', () => ({
+jest.unstable_mockModule('@/lib/security/request-rate-limit', () => ({
   hasAuthenticatedPrincipal,
 }));
-jest.mock('@/lib/security/site-access', () => ({ canAccessSite }));
-jest.mock('@/lib/security/public-image-signature', () => ({
+jest.unstable_mockModule('@/lib/security/site-access', () => ({ canAccessSite }));
+jest.unstable_mockModule('@/lib/security/public-image-signature', () => ({
   issuePublicImageSignature,
 }));
 
-import { POST } from '../route';
+const { POST } = await import('../route');
 
 const siteId = '11111111-1111-4111-8111-111111111111';
 
@@ -62,6 +62,19 @@ describe('public image signing route', () => {
     );
     expect(url.searchParams.get('site_id')).toBe(siteId);
     expect(url.searchParams.get('signature')).toBe('a'.repeat(64));
+  });
+
+  it.each([[3_000, 200], [3_001, 400]])('applies the image prompt length limit when signing (%i characters)', async (length, status) => {
+    const prompt = 'a'.repeat(length);
+    const response = await POST(request({ site_id: siteId, prompt }));
+
+    expect(response.status).toBe(status);
+    if (status === 200) {
+      expect(issuePublicImageSignature).toHaveBeenCalledWith(expect.objectContaining({ prompt }), 600);
+    } else {
+      expect(await response.json()).toEqual({ error: 'prompt must contain between 1 and 3000 characters' });
+      expect(issuePublicImageSignature).not.toHaveBeenCalled();
+    }
   });
 
   it('rejects unauthenticated signing requests', async () => {

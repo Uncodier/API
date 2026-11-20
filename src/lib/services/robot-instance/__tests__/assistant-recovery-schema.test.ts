@@ -163,3 +163,10 @@ describe('lossless recovery serialization', () => {
     expect(parseRecoverySnapshot({ ...snapshot, conversationOnly: true }).conversationOnly).toBe(true);
   });
 });
+
+it('retains the account ceiling during interactive recovery and rejects malformed or background substitutions', () => {
+  const bound = { ...execution, connectorIdHint: 'abcd0000-0000-4000-8000-000000000001', callerSource: 'interactive' };
+  expect(parseRecoveryExecution(bound)).toEqual(bound);
+  expect(() => parseRecoveryExecution({ ...bound, callerSource: 'background' })).toThrow(RecoveryError);
+  expect(() => parseRecoveryExecution({ ...bound, connectorIdHint: '' })).toThrow(RecoveryError);
+});

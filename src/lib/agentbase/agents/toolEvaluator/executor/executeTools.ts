@@ -4,11 +4,13 @@
  * Este módulo proporciona la funcionalidad para ejecutar las herramientas
  * que han sido seleccionadas por el ToolEvaluator.
  */
+import { channelRequestTool } from '@/lib/connectors/channel-request';
+import { supportConnectorTool } from '@/lib/connectors/support-runtime-contract';
+import { executeBoundSupportConnector, requestBoundCommandReview } from '@/lib/connectors/channel-command';
 import { FunctionCall, ToolExecutionResult } from '../types';
 import { ToolsMap } from './toolsMap';
 import { hasCustomTool, getCustomToolDefinition } from './customToolsMap';
 import { hasMcpNativeTool, executeMcpNativeTool, resolveDottedMcpCall } from './mcpNativeTools';
-import { OpenAIToolSet } from "composio-core";
 import { WorkflowService } from '../../../../services/workflow-service';
 
 // Interfaz para el input del workflow
@@ -42,9 +44,6 @@ function debugHeaders(headers: Record<string, string>, context: string) {
   });
 }
 
-// Cache para el toolset de Composio (evita múltiples inicializaciones)
-let composioToolset: OpenAIToolSet | null = null;
-
 // Instancia del WorkflowService (singleton)
 // Se inicializa de forma perezosa para evitar problemas de dependencias circulares
 let workflowServiceInstance: WorkflowService | null = null;
@@ -54,54 +53,6 @@ function getWorkflowService(): WorkflowService {
     workflowServiceInstance = WorkflowService.getInstance();
   }
   return workflowServiceInstance;
-}
-
-// Inicializar el toolset de Composio si es necesario
-async function getComposioToolset(): Promise<OpenAIToolSet> {
-  if (!composioToolset) {
-    try {
-      composioToolset = new OpenAIToolSet({
-        // Opciones de configuración si son necesarias
-      });
-      console.log(`[ToolExecutor] Composio toolset inicializado correctamente`);
-    } catch (error: any) {
-      console.error(`[ToolExecutor] Error inicializando Composio toolset:`, error);
-      throw new Error(`Failed to initialize Composio: ${error.message}`);
-    }
-  }
-  return composioToolset;
-}
-
-/**
- * Ejecuta una acción a través de Composio
- * @param functionName Nombre de la función/acción a ejecutar
- * @param args Argumentos para la acción
- * @returns Resultado de la ejecución de la acción
- */
-async function executeComposioAction(functionName: string, args: any): Promise<any> {
-  try {
-    console.log(`[ToolExecutor] Ejecutando acción Composio: ${functionName}`);
-    
-    const toolset = await getComposioToolset();
-    
-    // Ejecutar la acción en Composio
-    const result = await toolset.executeAction({
-      action: functionName,
-      params: args,
-      entityId: 'default' // Add required entityId
-    });
-    
-    if (result.successful) {
-      console.log(`[ToolExecutor] Acción Composio ejecutada con éxito: ${functionName}`);
-      return result.data;
-    } else {
-      console.error(`[ToolExecutor] Error en acción Composio: ${functionName}`, result.error);
-      throw new Error(result.error || `Failed to execute Composio action: ${functionName}`);
-    }
-  } catch (error: any) {
-    console.error(`[ToolExecutor] Error ejecutando acción Composio ${functionName}:`, error);
-    throw error;
-  }
 }
 
 /**
@@ -362,6 +313,17 @@ export async function executeTools(
         continue;
       }
 
+      // No injected arguments, persisted metadata, global tool map or API fallback.
+      if (functionName === supportConnectorTool.name || functionName === channelRequestTool.name) {
+        const output = functionName === supportConnectorTool.name
+          ? await executeBoundSupportConnector(context?.command_id, context?.site_id, functionName, parsedArgs)
+          : await requestBoundCommandReview(context?.command_id, context?.site_id, parsedArgs);
+        const failed = 'success' in output && output.success === false;
+        results.push({ id: callId, function_name: functionName, arguments: functionArgs,
+          status: failed ? 'error' : 'success', output, error: failed ? 'This support operation is unavailable.' : null });
+        continue;
+      }
+
       // On task lists command_id is an explicit query filter, not execution metadata.
       const isTaskList = functionName === 'GET_TASKS'
         || (functionName === 'tasks' && parsedArgs.action === 'list');
@@ -436,16 +398,9 @@ export async function executeTools(
           output = await executeMcpNativeTool(mcpName, mcpArgs);
           success = true;
         }
-        // 5. External Composio apps only (Gmail, Slack, ...). Internal names 410 on v2.
+        // Unknown names are not permission to execute through a global/default account.
         else {
-          try {
-            output = await executeComposioAction(functionName, parsedArgs);
-            success = true;
-          } catch (composioError: any) {
-            errorMessage = `Composio action failed: ${composioError.message}`;
-            console.error(`[ToolExecutor] Error en Composio:`, composioError.message);
-            throw new Error(errorMessage);
-          }
+          throw new Error('Tool is not available in this host. External connectors require the authorized connector tools router.');
         }
         
         // Registrar resultado exitoso

@@ -30,9 +30,13 @@ export async function assertAutomationSendAllowed(input: AutomationSendIdentity)
   // Non-conversation sends (campaigns/setup) have no conversation snooze to inspect.
   if (!conversationId) return;
   const { data: conversation, error: scopeError } = await db.from('conversations')
-    .select('id, automation_paused_until, last_human_reply_at')
+    .select('id, channel, automation_paused_until, last_human_reply_at')
     .eq('id', conversationId).eq('site_id', input.site_id).maybeSingle();
   if (scopeError || !conversation) throw new Error('Send conversation scope could not be verified');
+  // Even a saved human message or explicit recipient cannot route a review thread.
+  if (conversation.channel === 'internal_review') {
+    throw Object.assign(new Error('Conversation unavailable for delivery'), { status: 403 });
+  }
   let message: any;
   if (input.message_id) {
     const { data, error } = await db.from('messages').select('id, role, content, created_at, custom_data')

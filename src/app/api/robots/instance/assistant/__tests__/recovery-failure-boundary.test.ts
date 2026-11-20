@@ -62,6 +62,7 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   jest.clearAllMocks(); db = recoveryDatabase();
+  jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-18T12:00:00Z'));
   complete.mockImplementation(async (_id, generation) => {
     await recovery.assertAssistantRecoveryActive({ ...scope, generation });
     db.action().details.status = 'completed';

@@ -4,6 +4,8 @@ const mockTenantFrom = jest.fn();
 const mockIdentifyVoiceLead = jest.fn();
 const mockFindInboundVoiceLead = jest.fn();
 const mockGetVoiceCall = jest.fn();
+const mockPropose = jest.fn();
+jest.mock('@/lib/connectors/approval-proposals', () => ({ proposeConversationConnectorAction: (...args: unknown[]) => mockPropose(...args) }));
 const mockLoadVoiceExecutionContext = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {
   rpc: () => jest.requireActual('./licensed-voice-test-rpc').licensedVoiceTestRpc(),
@@ -41,12 +43,14 @@ const CONVERSATION = "33333333-3333-4333-8333-333333333333";
 
 function singleResult(data: unknown) {
   const chain: any = {
+    abortSignal: jest.fn(),
     select: jest.fn(),
     eq: jest.fn(),
     order: jest.fn(),
     limit: jest.fn(),
     maybeSingle: jest.fn().mockResolvedValue({ data, error: null }),
   };
+  chain.abortSignal.mockReturnValue(chain);
   chain.select.mockReturnValue(chain);
   chain.eq.mockReturnValue(chain);
   chain.order.mockReturnValue(chain);
@@ -87,6 +91,25 @@ describe("executeCustomerSupportVoiceTool live call binding", () => {
     });
     return query;
   }
+
+  it.each(['verified', 'opaque session', 'wrong signer', 'wrong conversation agent', 'missing provider agent'])('private review requires agreement of signer, live call and assigned local agent: %s', async scenario => {
+    useSourceCatalog();
+    const conversation = { id: CONVERSATION, site_id: 'site-1', agent_id: scenario === 'wrong conversation agent' ? OTHER_LEAD : LEAD };
+    const delivery = liveCall([{ id: OTHER_LEAD, conversation_id: CONVERSATION, zavu_call_id: 'call-1' }], conversation);
+    mockTenantFrom.mockImplementation(table => table === 'voice_call_deliveries' ? delivery : singleResult(
+      table === 'agents' ? { id: LEAD, site_id: 'site-1' } : conversation));
+    mockGetVoiceCall.mockResolvedValue({ id: 'call-1', senderId: 'sender-1', direction: 'inbound',
+      from: '+14155550100', status: 'answered', agentId: scenario === 'missing provider agent' ? undefined : 'voice-agent' });
+    const action = { tool_slug: 'HUBSPOT_LIST_CONTACTS', arguments: { limit: 1 } };
+    const result = await executeCustomerSupportVoiceTool({ siteId: 'site-1', toolName: 'request_connector_review',
+      signedAgentId: scenario === 'wrong signer' ? OTHER_LEAD : LEAD, arguments: action, rawPayload: '{}',
+      context: { contactPhone: '+14155550100', sessionId: scenario === 'opaque session' ? 'opaque' : 'call-1' } });
+    expect(result).toEqual({ status: 'review_requested_if_available' });
+    if (scenario === 'verified') expect(mockPropose).toHaveBeenCalledWith({ siteId: 'site-1', conversationId: CONVERSATION,
+      agentId: LEAD, idempotencyKey: `channel-call:${OTHER_LEAD}` }, action);
+    else expect(mockPropose).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 
   function requestHuman(argumentsOverride = {}) {
     return executeCustomerSupportVoiceTool({ toolName: "CONTACT_HUMAN", siteId: "site-1", rawPayload: "{}",

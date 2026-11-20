@@ -8,10 +8,17 @@ import { commentConversationId, commentMetadata, SocialCommentError } from '@/li
 import { findCommentProposal } from '@/lib/services/social-comments/persistence';
 export async function readSupportRequest(request: Request) {
     const body = await request.json();
+    // Private handoff must never enter a prompt, message, log or customer response.
+    const visitorTurn = body.custom_data?.connector_visitor_turn;
+    if (visitorTurn !== undefined) {
+      delete body.custom_data.connector_visitor_turn;
+      if (!Object.keys(body.custom_data).length) delete body.custom_data;
+    }
     const browserIdentity = await visitorSessionAuthorizationService.authorizeBrowserRequest({
       request,
       siteId: body.site_id,
       sessionId: body.session_id,
+      checkIngressConversation: true,
       conversationId: body.conversationId
     });
     if (browserIdentity) {
@@ -115,5 +122,5 @@ const { visitor_id, lead_id, userId, site_id, origin_message_id, conversationId 
     }
     
 
-return { body, browserIdentity };
+return { body, browserIdentity, visitorTurn };
 }

@@ -21,7 +21,7 @@ export interface VoicePromptTool {
 
 const MAX_TOOL_NAME_LENGTH = 80;
 // Full descriptions and schemas are registered on the provider tools themselves.
-const MAX_TOOL_DESCRIPTION_LENGTH = 65;
+const MAX_TOOL_DESCRIPTION_LENGTH = 48;
 
 export const VOICE_RUNTIME_REMINDER = [
   "# Final Voice Response Check",

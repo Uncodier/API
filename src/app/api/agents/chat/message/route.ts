@@ -1,3 +1,5 @@
+import { ingressConversationStatus } from '@/lib/services/support-conversation-visibility';
+import { enableMemberConversationGateway } from '@/lib/connectors/channel-member-host';
 import { withAuthorizedCommandRequest } from '@/lib/services/ai/command-http-routing';
 import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
@@ -26,6 +28,12 @@ async function handleCommandRequest(request: Request) {
         }
         if (!site_id) {
             return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'site_id is required' } }, { status: 400 });
+        }
+        if (conversationId && isValidUUID(conversationId)) {
+            const status = await ingressConversationStatus(site_id, conversationId);
+            if (status !== 'allowed') return NextResponse.json({ success: false, error: {
+                code: 'CONVERSATION_UNAVAILABLE', message: 'Conversation is unavailable',
+            } }, { status: status === 'forbidden' ? 403 : 503 });
         }
         const agentInfo = await getAgentInfo(agentId);
         if (!agentInfo) {
@@ -250,6 +258,7 @@ async function handleCommandRequest(request: Request) {
             ],
             modelType: 'openrouter'
         });
+        await enableMemberConversationGateway(request, command, conversationId, message);
         const internalCommandId = await commandService.submitCommand(command);
         console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
         let initialDbUuid = await getCommandDbUuid(internalCommandId, commandService);

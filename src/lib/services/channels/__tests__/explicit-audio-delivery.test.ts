@@ -46,6 +46,7 @@ jest.mock('@/lib/services/ai/tts-service', () => ({
 describe('explicit audio delivery', () => {
   let row: any;
   let updates: any[];
+  let storedChannel: string | null;
   const upload = jest.fn();
   const dispatch = jest.fn();
   const params = { siteId: 'site', conversationId: 'conversation', messageId: 'message',
@@ -55,11 +56,12 @@ describe('explicit audio delivery', () => {
     jest.clearAllMocks();
     row = { id: 'message', content: 'Hello', role: 'assistant', custom_data: { source: 'telegram', response_format: 'audio' } };
     updates = [];
+    storedChannel = null;
     (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
       let next: any;
       const filters: any[] = [];
       const execute = async () => {
-        if (table === 'conversations') return { data: { id: 'conversation' } };
+        if (table === 'conversations') return { data: { id: 'conversation', channel: storedChannel } };
         if (!next) return { data: structuredClone(row) };
         const matches = filters.every(([key, value]) =>
           key === 'custom_data' ? JSON.stringify(row.custom_data) === value || row.custom_data === value
@@ -89,6 +91,16 @@ describe('explicit audio delivery', () => {
     jest.mocked(sendChannelMessage).mockResolvedValue({ message: { id: 'provider-id', status: 'sent' } });
   });
 
+  it('does not read messages, generate audio or write a preflight failure on an internal thread', async () => {
+    storedChannel = 'internal_review';
+    await expect(deliverExplicitAudio(params)).rejects.toThrow('Audio conversation scope');
+    await markAudioPreflightFailed(params);
+    expect(supabaseAdmin.from).not.toHaveBeenCalledWith('messages');
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(updates).toEqual([]);
+  });
   it.each(['whatsapp', 'telegram', 'messenger'])('accepts explicit audio for %s', channel => {
     expect(validateResponseFormat('audio', channel)).toBe('audio');
   });

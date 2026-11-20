@@ -1,3 +1,4 @@
+import { ingressConversationStatus } from '@/lib/services/support-conversation-visibility';
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { authorizeVisitorSession } from '@/lib/security/authorize-visitor-session';
@@ -28,6 +29,8 @@ interface AuthorizationInput {
   siteId?: string | null;
   sessionId?: string | null;
   conversationId?: string | null;
+  // Support ingress can supply a deterministic ID before creating its row.
+  checkIngressConversation?: boolean;
 }
 
 export class VisitorSessionAuthorizationService {
@@ -44,6 +47,13 @@ export class VisitorSessionAuthorizationService {
         hasAuthenticatedPrincipal(input.request)
         && await authorizeVisitorSession(input.request, { siteId: input.siteId })
       ) {
+        if (input.checkIngressConversation && input.conversationId) {
+          const status = await ingressConversationStatus(input.siteId, input.conversationId);
+          if (status === 'unavailable') throw new VisitorAuthorizationError('AUTHORIZATION_UNAVAILABLE', 'Unable to authorize conversation', 503);
+          if (status === 'forbidden') {
+            throw new VisitorAuthorizationError('CONVERSATION_FORBIDDEN', 'Conversation is unavailable', 403);
+          }
+        }
         return null;
       }
       throw new VisitorAuthorizationError(
@@ -107,7 +117,7 @@ export class VisitorSessionAuthorizationService {
   ): Promise<void> {
     const { data, error } = await supabaseAdmin
       .from('conversations')
-      .select('id, site_id, visitor_id, lead_id')
+      .select('id, site_id, visitor_id, lead_id, channel')
       .eq('id', conversationId)
       .eq('site_id', identity.siteId)
       .maybeSingle();
@@ -117,7 +127,7 @@ export class VisitorSessionAuthorizationService {
     // A remembered visitor id must never unlock another account after logout.
     const ownedByVisitor = !data?.lead_id && data?.visitor_id === identity.visitorId;
     const ownedByLead = Boolean(identity.leadId && data?.lead_id === identity.leadId);
-    if (!data || (!ownedByVisitor && !ownedByLead)) {
+    if (!data || data.channel === 'internal_review' || (!ownedByVisitor && !ownedByLead)) {
       throw new VisitorAuthorizationError('CONVERSATION_FORBIDDEN', 'Conversation does not belong to this session', 403);
     }
   }

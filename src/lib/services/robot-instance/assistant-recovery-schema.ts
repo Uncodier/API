@@ -12,6 +12,9 @@ export type AssistantRecoveryScope = {
 };
 
 export type AssistantRecoveryExecution = {
+  /** Browser mutation of recovery details is forbidden by the identity guard migration. */
+  callerSource?: 'interactive' | 'background';
+  connectorIdHint?: string;
   executionRouting?: import('@/lib/services/ai/customer-routing').ExecutionRoutingReference;
   customTools: unknown[];
   useSdkTools: boolean;
@@ -154,7 +157,7 @@ export function assertRecoveryScope(scope: AssistantRecoveryScope): void {
 export function parseRecoveryExecution(value: unknown): AssistantRecoveryExecution {
   if (!isRecord(value)) throw new RecoveryError('invalid_state');
   const stringKeys = ['systemPrompt', 'agentType', 'userPhone', 'instanceNodeId', 'contextString'];
-  const optionalKeys = [...stringKeys, 'expectedResultsAmount', 'toolOverrides', 'selectedSkills', 'approvedImport', 'executionMode', 'executionRouting'];
+  const optionalKeys = [...stringKeys, 'expectedResultsAmount', 'toolOverrides', 'selectedSkills', 'approvedImport', 'executionMode', 'executionRouting', 'callerSource', 'connectorIdHint'];
   onlyKeys(value, ['customTools', 'useSdkTools', ...optionalKeys]);
   // Absent optional arguments are common at the workflow boundary. Only this top-level
   // omission is permitted; nested undefined values could erase a tool receipt.
@@ -167,6 +170,11 @@ export function parseRecoveryExecution(value: unknown): AssistantRecoveryExecuti
     present[key] = descriptor.value;
   }
   const result = cloneRecoveryJson(present, MAX_RECOVERY_EXECUTION_BYTES);
+  if ('connectorIdHint' in result && (result.callerSource !== 'interactive' || typeof result.connectorIdHint !== 'string' ||
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(result.connectorIdHint))) throw new RecoveryError('invalid_state');
+  if ('callerSource' in result && result.callerSource !== 'interactive' && result.callerSource !== 'background') {
+    throw new RecoveryError('invalid_state');
+  }
   if ('executionRouting' in result) {
     const ref = result.executionRouting;
     if (!isRecord(ref) || typeof ref.siteId !== 'string' || !ref.siteId.trim()) throw new RecoveryError('invalid_state');

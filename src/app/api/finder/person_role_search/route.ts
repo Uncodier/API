@@ -6,7 +6,6 @@ import { normalizePersonRoleSearchPayload } from '@/lib/finder/normalize-person-
 export async function POST(req: NextRequest) {
   let requestBody: unknown;
   try {
-    const isDev = process.env.NODE_ENV !== 'production';
     const preview = (val: unknown): string => {
       try {
         const str = typeof val === 'string' ? val : JSON.stringify(val);
@@ -26,6 +25,17 @@ export async function POST(req: NextRequest) {
     }
 
     requestBody = await req.json();
+
+    // Reject the persisted selected-list placeholder even from older workers.
+    // Stripping its internal fields would turn this into an unrestricted search.
+    if (requestBody && typeof requestBody === 'object') {
+      const query = requestBody as Record<string, unknown>;
+      if (query.person_id === '__selected_people_only__' || query.source === 'selected_people'
+        || 'selected_request_id' in query || 'selected_actor_id' in query) {
+        return NextResponse.json({ success: false, error: { code: 'SELECTED_LIST_NOT_SEARCHABLE',
+          message: 'Selected lists must be processed from saved membership.' } }, { status: 400 });
+      }
+    }
 
     // Log incoming request to debug what properties are received
     logInfo('finder.person_role_search', 'Incoming request body', { 

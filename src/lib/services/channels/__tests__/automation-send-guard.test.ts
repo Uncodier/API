@@ -61,6 +61,15 @@ test('terminal skipped stays skipped after expiry and never rewrites receipts', 
   await expect(assertAutomationSendAllowed(input)).rejects.toBeInstanceOf(AutomationSendSuppressed);
   expect(writes).toHaveLength(0);
 });
+test.each([
+  { ...input, message_id: undefined }, input, { ...input, conversation_id: undefined },
+])('review conversations never authorize a human bypass, fallback transport or receipt', async identity => {
+  conversation.channel = 'internal_review';
+  message.role = 'team_member';
+  await expect(assertAutomationSendAllowed(identity)).rejects.toMatchObject({ status: 403 });
+  expect(writes).toHaveLength(0);
+  expect(filters).toContainEqual(['conversations', 'site_id', input.site_id]);
+});
 test('only persisted team_member with exact content bypasses', async () => {
   conversation.automation_paused_until = '2999-01-01T00:00:00Z';
   await expect(assertAutomationSendAllowed({ ...input, ...{ role: 'team_member' } })).rejects.toBeInstanceOf(AutomationSendSuppressed);

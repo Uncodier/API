@@ -1,3 +1,4 @@
+import { CUSTOMER_CONVERSATION_FILTER } from '@/lib/services/support-conversation-visibility';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 // Function to check if a message with origin_message_id already exists and was responded to
 export async function checkDuplicateOriginMessage(
@@ -17,7 +18,8 @@ export async function checkDuplicateOriginMessage(
     let query = supabaseAdmin
       .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('messages')
-      .select('id, conversation_id, role, created_at')
+      .select('id, conversation_id, role, created_at, conversations!inner(site_id)')
+      .or(CUSTOMER_CONVERSATION_FILTER, { referencedTable: 'conversations' })
       .filter('custom_data->>origin_message_id', 'eq', originMessageId)
       .order('created_at', { ascending: false });
 
@@ -31,8 +33,7 @@ export async function checkDuplicateOriginMessage(
       query = query.eq('lead_id', leadId);
     }
 
-    // If we have siteId, we can filter by conversation's site_id
-    // But we need to join with conversations table, so let's get all matches first
+    if (siteId) query = query.eq('conversations.site_id', siteId);
     const { data: matchingMessages, error } = await query;
 
     if (error) {
@@ -59,20 +60,6 @@ export async function checkDuplicateOriginMessage(
 
     // Check each conversation for user message + assistant response
     for (const [convId, messages] of Array.from(messagesByConversation.entries())) {
-      // If we have siteId, verify the conversation belongs to that site
-      if (siteId) {
-        const { data: conv, error: convError } = await supabaseAdmin
-          .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
-          .from('conversations')
-          .select('site_id')
-          .eq('id', convId)
-          .single();
-
-        if (convError || !conv || conv.site_id !== siteId) {
-          continue;
-        }
-      }
-
       // Find user message (should be the one with origin_message_id)
       const userMessage = messages.find((m: { id: any; conversation_id: any; role: any; created_at: any }) => m.role === 'user');
       if (!userMessage) continue;

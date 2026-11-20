@@ -44,7 +44,7 @@ export async function GET(request: Request) {
       limit,
       offset
     };
-    const cacheKey = `cache:conversation-list:${Buffer.from(
+    const cacheKey = `cache:customer-conversation-list:v2:${Buffer.from(
       JSON.stringify(queryParams),
     ).toString('base64url')}`;
     const cached = await readRedisJson<Record<string, unknown>>(cacheKey);

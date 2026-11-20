@@ -1,3 +1,4 @@
+import { CUSTOMER_CONVERSATION_FILTER } from '@/lib/services/support-conversation-visibility';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { canAccessSite } from '@/lib/security/site-access';
@@ -13,7 +14,7 @@ export async function GET(request: Request) {
   const { site_id, conversation_id, message_id } = parsed.data;
   if (!await canAccessSite(request, site_id)) return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403, headers });
   const { data: conversation, error: scopeError } = await supabaseAdmin.from('conversations').select('id')
-    .eq('id', conversation_id).eq('site_id', site_id).maybeSingle();
+    .eq('id', conversation_id).eq('site_id', site_id).or(CUSTOMER_CONVERSATION_FILTER).maybeSingle();
   if (scopeError) return NextResponse.json({ success: false, error: 'Status unavailable' }, { status: 503, headers });
   if (!conversation) return NextResponse.json({ success: false, error: 'Conversation not found' }, { status: 404, headers });
   const { data: message, error } = await supabaseAdmin.from('messages').select('custom_data, role')
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
   const { site_id, conversation_id, message_id, template_id } = parsed.data;
   if (!await canAccessSite(request, site_id)) return NextResponse.json({ success: false }, { status: 403, headers });
   const { data: conversation, error: scopeError } = await supabaseAdmin.from('conversations').select('id')
-    .eq('id', conversation_id).eq('site_id', site_id).maybeSingle();
+    .eq('id', conversation_id).eq('site_id', site_id).or(CUSTOMER_CONVERSATION_FILTER).maybeSingle();
   if (scopeError || !conversation) return NextResponse.json({ success: false }, { status: scopeError ? 503 : 404, headers });
   const { data: row, error } = await supabaseAdmin.from('messages').select('custom_data, role')
     .eq('id', message_id).eq('conversation_id', conversation_id).maybeSingle();

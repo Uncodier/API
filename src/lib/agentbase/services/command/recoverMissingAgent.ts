@@ -1,3 +1,4 @@
+import { requiresAssignedChannelAgent } from '@/lib/connectors/channel-tool-names';
 import { DbCommand } from '../../models/types';
 import { ensureDefaultAgents, findActiveAgentForRole } from '@/lib/services/agents/ensureDefaultAgents';
 
@@ -6,7 +7,7 @@ export function getCommandAgentRole(command: DbCommand): string | undefined {
 }
 
 export async function recoverMissingAgent(command: DbCommand): Promise<DbCommand> {
-  if (command.agent_id) {
+  if (command.agent_id || requiresAssignedChannelAgent(command)) {
     return command;
   }
 

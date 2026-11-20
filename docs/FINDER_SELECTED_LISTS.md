@@ -50,6 +50,18 @@ its migration before admitting selected-only jobs; legacy workers are not safe
 consumers. ICP GET returns the marker and `role_query: null` for selected-only
 lists so UI loading cannot translate a placeholder into an unfiltered search.
 
+The `person_role_search` route also rejects the selected-only sentinel or reserved
+selection metadata with HTTP 400 (`SELECTED_LIST_NOT_SEARCHABLE`) before billing
+or forwarding. Deploy this guard before rolling worker images; do not strip the
+marker or translate such a rejection into a successful empty result. It cannot
+undo provider calls or enrichments already in flight.
+
+The worker's identity/recovery migration `20261119220000` is forward-only.
+Opaque person IDs, including leading-zero IDs, are distinct from canonical
+BIGINT IDs. A saved member may only be marked `matched` to a same-site lead
+whose linked person has the exact provider ID. The API still accepts the same
+opaque ID grammar: do not truncate or cast IDs to JavaScript numbers.
+
 Append locks the parent, inserts only new IDs, increments `total_targets` only
 for selected-only lists, and changes completed to pending only when
 `execution_active = false`. It does not reset cursor, counters, snapshot,

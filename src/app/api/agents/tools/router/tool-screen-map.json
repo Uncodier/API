@@ -113,6 +113,7 @@
     "transactions": { "screens": ["transactions"] },
     "update_repo": { "screens": ["applicationsRepositories", "requirements"] },
     "use_composio_tools": { "screens": ["integrations"], "adminOnly": true },
+    "connector_gateway": { "screens": ["connectors"], "requiresUser": true, "bindActor": true },
     "webhooks": { "screens": ["integrations"], "adminOnly": true },
     "whatsappTemplate": { "screens": ["chat", "channels"] },
     "workflows": { "screens": ["workflows"] },

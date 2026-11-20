@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { attachChannelRequestHost, requestBoundCommandReview } from '@/lib/connectors/channel-command';
+import { proposeConversationConnectorAction } from '@/lib/connectors/approval-proposals';
 import { EventEmitter } from 'events';
 import { CommandSubmitService } from '../CommandSubmitService';
 import { CommandQueryService } from '../CommandQueryService';
@@ -7,6 +9,8 @@ import { CommandCache } from '../CommandCache';
 import { DatabaseAdapter } from '../../../adapters/DatabaseAdapter';
 import type { CreateCommandParams } from '../../../models/types';
 
+jest.mock('@/lib/connectors/channel-command-row', () => ({ isAssignedChannelCommand: jest.fn(async () => true) }));
+jest.mock('@/lib/connectors/approval-proposals', () => ({ proposeConversationConnectorAction: jest.fn() }));
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {} }));
 jest.mock('../../../adapters/DatabaseAdapter', () => ({
   DatabaseAdapter: {
@@ -69,6 +73,23 @@ describe('CommandSubmitService identity', () => {
     (DatabaseAdapter.getCommandById as jest.Mock).mockResolvedValue({ id, status: 'completed' });
     expect((await query.getCommandById(id, { fresh: true }))?.status).toBe('completed');
     expect(DatabaseAdapter.getCommandById).toHaveBeenCalledWith(id);
+  });
+
+  it('emits request authority only for the initiating capability, not serialized command metadata', async () => {
+    const id = randomUUID(), siteId = randomUUID(), agentId = randomUUID();
+    const cmd = { ...params, site_id: siteId, agent_id: agentId };
+    const action = { tool_slug: 'HUBSPOT_LIST_CONTACTS', arguments: {} };
+    const scope = { siteId, agentId, conversationId: randomUUID(), idempotencyKey: randomUUID() };
+    attachChannelRequestHost(cmd, { siteId, agentId, resolve: async () => scope });
+    (DatabaseAdapter.createCommand as jest.Mock).mockResolvedValue({ ...JSON.parse(JSON.stringify(cmd)), id });
+    let done: Promise<unknown> | undefined;
+    emitter.on('commandCreated', (saved) => { done = requestBoundCommandReview(saved.id, saved.site_id, action); });
+    await service.submitCommand(cmd);
+    await done;
+    expect(proposeConversationConnectorAction).toHaveBeenCalledWith(scope, action);
+    await service.submitCommand(JSON.parse(JSON.stringify(cmd)));
+    await done;
+    expect(proposeConversationConnectorAction).toHaveBeenCalledTimes(1);
   });
 
   it('retains a local fallback on insert failure without querying Postgres for its legacy ID', async () => {

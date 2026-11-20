@@ -47,6 +47,7 @@ describe("syncVoiceTools", () => {
     expect(getCustomerSupportToolDefinitions("site-1").map((tool) => tool.name))
       .toEqual([
         "skill_lookup",
+        "read_document",
         "catalog_commerce",
         "promotions",
         "reservations",
@@ -92,7 +93,8 @@ describe("syncVoiceTools", () => {
       "agent_1",
       expect.objectContaining({ name: "GET_TASKS" })
     );
-    expect(mockUpsertAgentTool).toHaveBeenCalledTimes(17);
+    expect(mockUpsertAgentTool).toHaveBeenCalledWith('agent_1', expect.objectContaining({ name: 'request_connector_review' }));
+    expect(mockUpsertAgentTool).toHaveBeenCalledTimes(19);
     expect(mockUpsertAgentTool).toHaveBeenCalledWith(
       "agent_1",
       expect.objectContaining({
@@ -156,7 +158,7 @@ describe("syncVoiceTools", () => {
     }));
     const tools = await syncVoiceTools({ agentId: "agent_1", siteId: "site-1", webhookSecret });
     expect(tools.map((tool) => tool.name)).toEqual(getCustomerSupportVoiceToolDefinitions().map((tool) => tool.name));
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(19);
     const catalog = tools.find((tool) => tool.name === "catalog_commerce")!;
     const properties = catalog.parameters.properties as any;
     expect(properties.resource.enum).toBeUndefined();

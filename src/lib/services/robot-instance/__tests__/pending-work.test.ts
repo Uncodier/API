@@ -18,6 +18,9 @@ jest.mock('@/lib/database/supabase-client', () => ({
   },
 }));
 
+jest.mock('@/lib/security/tool-request-principal', () => ({ canToolPrincipalAccessSite: jest.fn(async () => true) }));
+jest.mock('@/app/api/robots/instance/assistant/execution-routing', () => ({ admitAssistantRouting: async () => ({ payer: 'platform', siteId: 'site-1' }) }));
+
 jest.mock('workflow/api', () => ({
   start: jest.fn(),
 }));
@@ -115,6 +118,7 @@ describe('processPendingWorkTick', () => {
       .mockReturnValueOnce(createChain({ data: [pendingRow], error: null }))
       .mockReturnValueOnce(createChain({ data: [], error: null }))
       .mockReturnValueOnce(createChain({ data: claimed, error: null }))
+      .mockReturnValueOnce(createChain({ data: { user_id: 'user-1', actor_verified: true }, error: null }))
       .mockReturnValueOnce(createChain({
         data: { site_id: 'site-1', user_id: 'user-1', status: 'running' },
         error: null,
@@ -150,6 +154,7 @@ describe('sendPendingWorkNow', () => {
       .mockReturnValueOnce(createChain({ error: null }))
       .mockReturnValueOnce(createChain({ data: [], error: null }))
       .mockReturnValueOnce(createChain({ data: claimed, error: null }))
+      .mockReturnValueOnce(createChain({ data: { user_id: 'user-1', actor_verified: true }, error: null }))
       .mockReturnValueOnce(createChain({
         data: { site_id: 'site-1', user_id: 'user-1', status: 'running' },
         error: null,
@@ -174,7 +179,9 @@ describe('queued conversational output preferences', () => {
   it.each(['text', 'image', 'video', 'audio', 'audience'])('forwards %s preferences through the workflow node boundary without a node ID', async mediaType => {
     const context = { mediaType, output_type: mediaType, parameters: { tone: 'friendly' },
       selected_context: { records: ['selected-record'] }, expected_results_amount: 3 };
-    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(createChain({
+    (supabaseAdmin.from as jest.Mock)
+      .mockReturnValueOnce(createChain({ data: { user_id: 'user-1', actor_verified: true }, error: null }))
+      .mockReturnValueOnce(createChain({
       data: { site_id: pendingRow.site_id, user_id: pendingRow.user_id, status: 'paused' }, error: null,
     }));
     (start as jest.Mock).mockImplementation(async (_workflow, args) => {
@@ -191,13 +198,15 @@ describe('queued conversational output preferences', () => {
     expect(args[9]).toBeUndefined();
     expect(args[10]).toBe(3);
     expect(JSON.parse(args[11])).toEqual(context);
-    expect(args[13]).toEqual({ userMessageLogId: 'log-1', executionMode: 'direct' });
+    expect(args[13]).toEqual({ userMessageLogId: 'log-1', executionMode: 'direct', executionRouting: { payer: 'platform', siteId: 'site-1' }, callerSource: 'background' });
     expect(insertUserActionLog).toHaveBeenCalledTimes(1);
     expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
   });
 
   it('rejects a pending row whose site differs from its instance before persisting or starting', async () => {
-    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(createChain({
+    (supabaseAdmin.from as jest.Mock)
+      .mockReturnValueOnce(createChain({ data: { user_id: 'user-1', actor_verified: true }, error: null }))
+      .mockReturnValueOnce(createChain({
       data: { site_id: 'other-site', user_id: pendingRow.user_id, status: 'running' }, error: null,
     }));
     await expect(startPendingAssistant(pendingRow)).rejects.toThrow('scope mismatch');
@@ -206,11 +215,13 @@ describe('queued conversational output preferences', () => {
   });
 
   it('preserves the legacy explicit Plan action without resetting its requirement', async () => {
-    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(createChain({
+    (supabaseAdmin.from as jest.Mock)
+      .mockReturnValueOnce(createChain({ data: { user_id: 'user-1', actor_verified: true }, error: null }))
+      .mockReturnValueOnce(createChain({
       data: { site_id: pendingRow.site_id, user_id: pendingRow.user_id, status: 'running' }, error: null,
     }));
     await startPendingAssistant({ ...pendingRow, activity: 'plan', system_prompt: 'plan' });
-    expect((start as jest.Mock).mock.calls[0][1][13]).toEqual({ userMessageLogId: 'log-1', executionMode: 'harness' });
+    expect((start as jest.Mock).mock.calls[0][1][13]).toEqual({ userMessageLogId: 'log-1', executionMode: 'harness', executionRouting: { payer: 'platform', siteId: 'site-1' }, callerSource: 'background' });
     expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
   });
 });

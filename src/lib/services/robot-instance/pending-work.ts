@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
+import { canToolPrincipalAccessSite } from '@/lib/security/tool-request-principal';
 import { runAssistantWorkflow } from '@/app/api/robots/instance/assistant/workflow';
 import { insertUserActionLog, withRetries } from '@/app/api/robots/instance/assistant/user-message-log';
 import { resolveAssistantRequestMode } from '@/app/api/robots/instance/assistant/execution-mode';
@@ -154,6 +155,14 @@ export function expectedResultsFromContext(context: unknown): number {
 }
 
 export async function startPendingAssistant(row: PendingWorkRow): Promise<void> {
+  // The dispatch argument and historical rows are not proof of actor admission.
+  const admission = await supabaseAdmin.from('instance_pending_work')
+    .select('user_id, actor_verified').eq('id', row.id)
+    .eq('site_id', row.site_id).eq('instance_id', row.instance_id).maybeSingle();
+  if (admission.error || !admission.data?.actor_verified || !admission.data.user_id
+    || admission.data.user_id !== row.user_id) {
+    throw new Error('Pending work actor admission is unavailable');
+  }
   const { data: instance, error } = await supabaseAdmin
     .from('remote_instances')
     .select('site_id, user_id, status')
@@ -166,7 +175,10 @@ export async function startPendingAssistant(row: PendingWorkRow): Promise<void> 
 
   const siteId = row.site_id || instance.site_id;
   if (siteId !== instance.site_id) throw new Error('Pending work instance scope mismatch');
-  const userId = row.user_id || instance.user_id;
+  const userId = row.user_id;
+  if (!userId || !await canToolPrincipalAccessSite({ internal: false, userId, siteId }, siteId)) {
+    throw new Error('Pending work requires a verified, currently authorized actor');
+  }
   const activity = row.activity || 'ask';
   const contextString = stringifyPendingContext(row.context);
   const executionMode = resolveAssistantRequestMode(undefined, row.system_prompt ?? undefined);
@@ -203,7 +215,7 @@ export async function startPendingAssistant(row: PendingWorkRow): Promise<void> 
     expectedResultsFromContext(row.context),
     contextString,
     undefined,
-    { userMessageLogId: userAction.id, executionMode, executionRouting },
+    { userMessageLogId: userAction.id, executionMode, executionRouting, callerSource: 'background' },
   ]);
 }
 
