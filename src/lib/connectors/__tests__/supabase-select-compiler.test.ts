@@ -52,7 +52,7 @@ test.each([
   ['type mismatch', `${base} where units = date '2026-01-01'`], ['int overflow', `${base} where units = 9223372036854775808`],
   ['invalid day', `${base} where sale_date = date '2026-02-29'`], ['timestamp needs timezone', `${base} where created_at < '2026-11-04'`],
   ['identifier as value', `${base} where amount = units`], ['bad operator', `${base} where currency LIKE 'US%'`],
-  ['unprojected sort', `${base} order by units`], ['unsupported order', `${base} order by 1`], ['invalid limit', `${base} limit 26`],
+  ['unprojected sort', `${base} order by units`], ['out-of-range order position', `${base} order by 2`], ['invalid limit', `${base} limit 26`],
   ['duplicate group', `${base} group by units, units`], ['too many columns', 'select count(*) a,count(*) b,count(*) c,count(*) d,count(*) e,count(*) f from sales'],
   ['numeric trailing junk', `${base} where units >= 1and paid = true`], ['parameter trailing junk', `${base} where units = $1or paid = true`],
   ['predicate bound', `${base} where ${Array(17).fill('units = 1').join(' AND ')}`],

@@ -55,6 +55,24 @@ and [access model](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/C
 - Search pages use `connector_cursor` / `connector_next_cursor`, with optional
   exact `connector_id`; all pages recheck member/agent policy, never cursor authority.
 
+### Contract checks for Robots tool calls
+
+A locally rejected call can return `INVALID_TOOL_ARGUMENTS` with `argument_issue`
+(a declared path, rule and, where relevant, a type or bound), `executed: false`
+and `automatic_retry: false`. Unknown keys are reported at their declared
+parent, never by copying the submitted name; values, enum contents, tokens and
+provider diagnostics are not part of a correction. The agent should correct
+the arguments, keeping the account and requested scope. A changed version or
+schema instead requires a fresh description. Neither response grants access.
+
+Native tool preflight is conservative: unsupported schema constructs and
+legacy wire representations defer to the tool's own validator. Connector
+schemas and provider permissions are still checked strictly; local semantic
+checks (e.g. the SQL grammar) and privacy restrictions are not bypassed. A
+permission denial, an upstream quota or an uncertain dispatch is not a reason
+to replay a call with different arguments. Public support keeps its minimal
+unavailable response rather than exposing the member's private contract.
+
 Offline validation:
 
 ```bash

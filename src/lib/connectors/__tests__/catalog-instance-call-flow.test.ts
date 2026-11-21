@@ -60,6 +60,9 @@ it('finds a new action, handles an app resource denial and can still satisfy a s
   const name=`connector:${connectorId}:${slug}`;
   expect(found.tools.map((t:{name:string})=>t.name)).toContain(name);
   const desc=await router.execute({action:'describe',name}); expect(desc.success).toBe(true); expect(dispatches).toBe(0);
+  const invalid=await router.execute({action:'call',name,args:JSON.stringify({version:desc.version,schema_hash:desc.schema_hash,arguments:{limit:99}})});
+  expect(invalid).toMatchObject({executed:false,automatic_retry:false,argument_issue:{path:'arguments.limit',rule:'maximum',bound:25},recovery:{action:'fix_arguments'}});
+  expect(dispatches).toBe(0);
   const args=JSON.stringify({version:desc.version,schema_hash:desc.schema_hash,arguments:{limit:2}});
   const denied=await router.execute({action:'call',name,args});
   expect(denied).toMatchObject({code:'APP_RESOURCE_DENIED',automatic_retry:false,recovery:{action:'ask_user'}});

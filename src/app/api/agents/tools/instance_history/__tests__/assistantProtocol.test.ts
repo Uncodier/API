@@ -162,14 +162,16 @@ describe('instance_history tool contract', () => {
     expect(readQuery.eq.mock.calls).toEqual([['site_id', SITE], ['instance_id', INSTANCE], ['id', LOG]]);
   });
 
-  it('returns an actionable incident correction and the action-specific schema through the router', async () => {
+  it('rejects mixed legacy arguments and offers authorized schema discovery separately', async () => {
     const router = routeTools([instanceHistoryTool(SITE, INSTANCE)]).find(tool => tool.name === 'tools')!;
     const failed = await router.execute({ action: 'call', name: 'instance_history', args: {
       action: 'read', log_id: LOG, query: 'search', log_type: 'agent_action', before: null,
     } });
-    expect(failed.success).toBe(false);
-    expect(failed.error).toContain('action="read" does not allow list-only fields: query, log_type, before');
-    expect(failed.parameters.properties.request.anyOf).toHaveLength(2);
+    expect(failed).toMatchObject({ success: false, code: 'INVALID_TOOL_ARGUMENTS', executed: false,
+      effectStarted: false, automatic_retry: false, recovery: { action: 'fix_arguments' } });
+    expect(failed).not.toHaveProperty('parameters');
+    const description = await router.execute({ action: 'describe', name: 'instance_history' });
+    expect(description.parameters.properties.request.anyOf).toHaveLength(2);
     expect(supabaseAdmin.from).not.toHaveBeenCalled();
     (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(chain({ id: LOG, created_at: STAMP, log_type: 'agent_action', tool_name: null, message: 'recovered' }));
     const corrected = await router.execute({ action: 'call', name: 'instance_history', args: {

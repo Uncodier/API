@@ -8,6 +8,7 @@ import { validateJson } from './composio-transport';
 import { describeConnectorTool, executeConnectorTool, hashConnectorSchema, validateConnectorArguments } from './composio-sessions';
 import { reviewedInputSchema, assertReviewedInputLimits } from './reviewed-tool-schema';
 import { validateConnectorInput } from './schema-validation';
+import { supportMemberInput } from './support-member-input';
 import { assertScopes } from './action-policy';
 import { ConnectorError } from './types';
 import { proposeExactSupportAction } from './approval-proposals';
@@ -63,23 +64,21 @@ export async function executeSupportConnectorTool(host: SupportConnectorHost, na
     if (scope.audience !== 'member' && !publication) throw denied();
     const needsReview = publication ? access.policy.require_approval !== false : access.requestOnly === true;
     const field = capField(tool.slug);
+    const { parameters, readLimit } = publication ? {parameters:emptySchema, readLimit:undefined} : supportMemberInput(reviewed, field);
     if (request.action === 'describe') {
-      const parameters = publication ? emptySchema : reviewed;
-      if (!publication && field && !Object.hasOwn(reviewed.properties, field)) throw denied();
       if (Buffer.byteLength(JSON.stringify(parameters)) > 8192) throw denied();
       await reauthorize();
       return { success: true, name: request.name, version: descriptor.toolkitVersion, schema_hash: schemaHash,
         description: publication ? publicDescription : tool.description, parameters,
-        ...(!publication && field ? {read_limit: {field, maximum: 5, default: 5}} : {}), require_approval: needsReview };
+        ...(readLimit && {read_limit:readLimit}), require_approval: needsReview };
     }
     if (request.version !== descriptor.toolkitVersion || request.schema_hash !== schemaHash) throw denied();
     validateConnectorArguments(request.arguments);
     if (publication && Object.keys(request.arguments).length) throw denied();
     const input = fixed ?? {...request.arguments};
-    if (!publication && field) {
-      if (!(field in input)) input[field] = 5;
-      const count = input[field];
-      if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > 5) throw denied();
+    if (!publication) {
+      validateConnectorInput(parameters, input);
+      if (readLimit?.default !== undefined && !Object.hasOwn(input, readLimit.field)) input[readLimit.field] = readLimit.default;
     }
     validateConnectorInput(reviewed, input);
     assertReviewedInputLimits(tool.slug, input);

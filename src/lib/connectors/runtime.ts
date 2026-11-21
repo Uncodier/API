@@ -12,6 +12,7 @@ import { catalogDefinition, catalogGrant, catalogInstance, catalogScreens, insta
 
 import { analyticsRelease } from './analytics-release';
 import { directQueryMode } from './supabase-direct-query';
+import { ConnectorArgumentError } from './connector-argument-error';
 import { SUPABASE_CATALOG_SLUG } from './supabase-report-contract';
 import { privateResultBinding, checkPrivateDestination, deliverPrivateResult } from './private-result-delivery';
 
@@ -102,14 +103,14 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
             version: { type: 'string', const: descriptor.toolkitVersion },
             schema_hash: { type: 'string', const: descriptor.schemaHash }, arguments: modelSchema,
           } }, effect: 'read', require_approval: authorized.requestOnly === true,
-        expected_use: 'tools call args must contain version, schema_hash and arguments from this description. Use the operation only if its documented inputs and scope answer the request. Do not substitute a list of names, a sample, or a different account for the requested data. Explain missing capabilities instead. A descriptor is not an access grant.' };
+        expected_use: 'Use the described version, schema_hash and arguments. Keep the JSON envelope within 32,000 UTF-16 units. Do not supply credentials, account overrides, file paths or URLs. Only a verified pre-dispatch argument rejection is a reason to correct the input; do not replay an uncertain call. Do not substitute a list of names, a sample, or another account for the requested result. A descriptor is not an access grant.' };
     },
 
     async call(name: string, input: unknown) {
       let dispatched = false;
       try {
         const serialized = JSON.stringify(input);
-        if (!serialized || serialized.length > 32000) throw new ConnectorError('INVALID_TOOL_ARGUMENTS', 'Arguments must be bounded JSON.', 400);
+        if (!serialized || serialized.length > 32000) throw new ConnectorArgumentError({path:'arguments',rule:'bounded'});
         input = JSON.parse(serialized);
         const { context, authorized, tool, dynamic } = await authorize(name);
         const envelope = input as { version?: unknown; schema_hash?: unknown; arguments?: unknown } | null;
@@ -123,7 +124,7 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
         const credential = await loadConnectorCredential(context.siteId);
         if (credential.revision !== authorized.provider.credential_revision) throw new ConnectorError('STALE_CREDENTIAL', 'Provider credential changed.', 409);
         if (!envelope.arguments || typeof envelope.arguments !== 'object' || Array.isArray(envelope.arguments)) {
-          throw new ConnectorError('INVALID_TOOL_ARGUMENTS', 'Tool arguments must be an object.', 400);
+          throw new ConnectorArgumentError({path:'arguments',rule:'json_object'});
         }
         const args = envelope.arguments as Record<string, unknown>;
         // The catalog adapter verifies and projects its pinned descriptor with live grants immediately

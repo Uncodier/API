@@ -64,6 +64,27 @@ test('only the winning manager dispatches; exactly stored arguments and requesti
   expect(store.finishRow).toHaveBeenCalledWith(site,id,actor,'succeeded');
 });
 
+test.each([10, 501])('a retained Gmail request keeps the provider pin and exact omitted count (provider default %i)', async def => {
+  const scopes = ['https://www.googleapis.com/auth/gmail.readonly'];
+  const pinned = { slug: 'GMAIL_FETCH_EMAILS', toolkitSlug: 'gmail', toolkitVersion: '20261119_00', scopes, scopeRequirements: null,
+    inputSchema: { type: 'object', properties: { max_results: { type: 'integer', default: def }, user_id: { type: 'string' } } } };
+  const tool = { ...pinned, schemaHash: hashConnectorSchema(pinned), description: 'Read Gmail.' };
+  auth.connector.toolkit_slug = 'gmail'; auth.connector.granted_scopes = scopes;
+  row.action = actionSnapshot(row.action.origin, auth, tool, {});
+  const saved = structuredClone(row.action);
+  jest.mocked(describeConnectorTool).mockResolvedValue(tool);
+  if (def === 10) {
+    await expect(decide()).resolves.toEqual({ id, status: 'completed', result: { private: 'approver only' } });
+    expect(executeConnectorTool).toHaveBeenCalledWith(expect.objectContaining({ input: {}, schemaHash: saved.schema_hash,
+      requiredScopes: scopes, toolkitVersion: saved.version }));
+  } else {
+    await expect(decide()).rejects.toMatchObject({ code: 'INVALID_TOOL_ARGUMENTS' });
+    expect(executeConnectorTool).not.toHaveBeenCalled();
+    expect(store.finishRow).toHaveBeenCalledWith(site, id, actor, 'failed');
+  }
+  expect(row.action).toEqual(saved); // no guessed count or rewritten legacy snapshot
+});
+
 test('private list contains review fields only and rejection never executes', async () => {
   expect(await listConnectorApprovals(site, actor)).toEqual({ items: [{ id, created_at:row.created_at, context:{agent_label:'Agent', conversation_title:null, instance_label:null, instance_id:null, source_excerpt:null}, agent_id: agent, connector_id: auth.connector.id,
     conversation_id: row.conversation_id, review_conversation_id: row.conversation_id, account_label: 'Sales', tool_slug: descriptor.slug, arguments: { limit: 4 }, version: descriptor.toolkitVersion, expires_at: row.expires_at }] });

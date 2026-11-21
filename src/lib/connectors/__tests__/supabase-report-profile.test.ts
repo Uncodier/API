@@ -1,9 +1,9 @@
 import { attestedProject } from './byok-rpc-fixture';
 import publishedContract from './fixtures/supabase-report-20261116_00.json';
 import { randomUUID } from 'node:crypto';
-import { describeConnectorTool, executeConnectorTool } from '../composio-sessions';
+import { describeConnectorTool, executeConnectorTool, hashConnectorSchema } from '../composio-sessions';
 import { loadExternalDataset } from '../supabase-analytics-registry';
-import { assertReportContract, reportBinding, reportRequest } from '../supabase-report-contract';
+import { assertReportContract, reportBinding, reportModelSchema, reportRequest } from '../supabase-report-contract';
 import { projectSupabaseCatalogResult, SUPABASE_CATALOG_SLUG } from '../supabase-report-profile';
 import { conversationReviewSlugs, getReviewedTool } from '../reviewed-tools';
 import { accountFixture, connectorFixture, providerFixture, toolkitFixture, toolFixture, secret, jsonResponse } from './composio-fixtures';
@@ -164,9 +164,18 @@ test('publishes explicit inventory coverage, validates continuation and retains 
 it('accepts the published release and validates its explicit result wrapper at dispatch', async () => {
   const f=fixture(); const tool={...f.tool,...publishedContract};
   f.queue(tool,f.toolkit,f.account); const descriptor=await describeConnectorTool(f.input);
+  // A saved report choice carries the original full catalog-read-v1 pin, not a hash of
+  // the latest public JSON projection. Never re-describe or weaken that pin to open it.
+  const {connector,provider}=f.input;
+  const savedPin=hashConnectorSchema({ mode:'catalog-read-v1', contractHash:hashConnectorSchema(tool),
+    model:reportModelSchema(), binding:reportBinding(connector), connector:connector.id, site:connector.site_id,
+    project:provider.project_id, account:connector.provider_account_id, authConfig:connector.auth_config_id,
+    revision:provider.credential_revision, providerId:provider.id });
+  expect(descriptor.schemaHash).toBe(savedPin);
+  expect(descriptor.inputSchema).toEqual(reportModelSchema());
   const frame=f.frame('sales',[{label:'USD',value:'91.25'}]);
   f.queue(tool,f.toolkit,f.account,{successful:true,error:null,data:{result:frame,rows_returned:1}});
-  const result=await executeConnectorTool({...f.input,input:{view:'sales'},allowedTools:[tool.slug],schemaHash:descriptor.schemaHash,
+  const result=await executeConnectorTool({...f.input,input:{view:'sales'},allowedTools:[tool.slug],schemaHash:savedPin,
     toolkitVersion:descriptor.toolkitVersion,requiredScopes:['database_read'],beforeDispatch:async()=>undefined});
   expect(result.data).toMatchObject({rows:[{label:'USD',value:'91.25'}]});
   for(const invalid of [{result:frame,rows_returned:2},{result:frame,rows_returned:1,diagnostic:'noise'},{result:[]},

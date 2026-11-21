@@ -98,6 +98,8 @@ describe('requirement backlog read contract', () => {
 
   it('passes list filters and pagination through the assistant protocol', async () => {
     const tool = requirementBacklogTool('site', 'req');
+    expect(tool.parameters.required).not.toContain('requirement_id');
+    expect(requirementBacklogTool('site').parameters.required).toContain('requirement_id');
     const result = await tool.execute({ action: 'list', list_status: 'done', limit: 1, offset: 0 });
     expect(result).toMatchObject({
       success: true, backlog: { items: [{ id: 'done' }] },

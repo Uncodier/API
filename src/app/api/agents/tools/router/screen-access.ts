@@ -133,6 +133,12 @@ export async function assertToolScreenAccess(name: string, scope?: ToolScreenSco
   if (!canUseToolScreen(name, await loadToolScreenAccess(scope))) throw new ToolScreenAccessDenied();
 }
 
+// An arbitrary thrown code or effectStarted property is not evidence of this guard's decision.
+const screenGuardRejections = new WeakSet<object>();
+export function isScreenGuardRejection(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && screenGuardRejections.has(error);
+}
+
 export function guardToolScreen<T extends { name: string; execute: (...args: any[]) => any }>(
   tool: T, scope?: ToolScreenScope,
 ): T {
@@ -147,6 +153,7 @@ export function guardToolScreen<T extends { name: string; execute: (...args: any
         // Only this predispatch region proves the underlying execute never ran.
         // The error classes alone (or a matching code) do not establish that.
         if (error instanceof ToolScreenAccessDenied || error instanceof ToolScreenAccessUnavailable) {
+          screenGuardRejections.add(error);
           Object.assign(error, { executed: false, effectStarted: false });
         }
         throw error;

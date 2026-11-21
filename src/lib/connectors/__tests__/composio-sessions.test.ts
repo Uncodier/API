@@ -67,6 +67,9 @@ describe('Composio explicit version-pinned REST execution', () => {
     } };
     fetchMock.mockResolvedValueOnce(jsonResponse(tool));
     const descriptor = await describeConnectorTool(base);
+    const retainedPin = hashConnectorSchema({ slug: tool.slug, toolkitSlug: tool.toolkit.slug, toolkitVersion: tool.version,
+      inputSchema: tool.input_parameters, scopes: tool.scopes, scopeRequirements: tool.scope_requirements });
+    expect(descriptor.schemaHash).toBe(retainedPin); // the self selector is still pinned even though callers never see it
     fetchMock.mockClear();
     fetchMock.mockResolvedValueOnce(jsonResponse(tool)).mockResolvedValueOnce(jsonResponse(accountFixture()))
       .mockResolvedValueOnce(jsonResponse({ successful: true, error: null, data: {} }));
@@ -79,6 +82,30 @@ describe('Composio explicit version-pinned REST execution', () => {
       .rejects.toMatchObject({ effectStarted: false });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it.each(['invalid Gmail count', 'undeclared HubSpot field', 'scope revoked'] as const)(
+    'the direct reviewed adapter checks the public input after current account authority: %s', async reason => {
+      const crm = reason === 'undeclared HubSpot field';
+      const kit = crm ? 'hubspot' : 'gmail';
+      const slug = crm ? 'HUBSPOT_LIST_CONTACTS' : 'GMAIL_FETCH_EMAILS';
+      const scope = crm ? 'crm.objects.contacts.read' : 'email.read';
+      const base = baseInput();
+      const target = { ...base, connector: { ...base.connector, toolkit_slug: kit, granted_scopes: [scope] }, toolSlug: slug };
+      const tool = { ...toolFixture(), slug, toolkit: { slug: kit }, scopes: [scope], input_parameters: {
+        type: 'object', properties: crm ? { limit: { type: 'integer', minimum: 1, maximum: 10 } } : { max_results: { type: 'integer' } },
+      } };
+      const account = { ...accountFixture(), toolkit: { slug: kit }, state: { val: { scope: reason === 'scope revoked' ? '' : scope } } };
+      fetchMock.mockResolvedValueOnce(jsonResponse(tool));
+      const pin = await describeConnectorTool(target);
+      fetchMock.mockClear(); fetchMock.mockResolvedValueOnce(jsonResponse(tool)).mockResolvedValueOnce(jsonResponse(account));
+      const beforeDispatch = jest.fn();
+      await expect(executeConnectorTool({ ...target, input: crm ? { limit: 5, max_results: 5 } : { max_results: 501 },
+        allowedTools: [slug], requiredScopes: [scope], toolkitVersion: pin.toolkitVersion, schemaHash: pin.schemaHash, beforeDispatch }))
+        .rejects.toMatchObject({ code: reason === 'scope revoked' ? 'CONNECTOR_SCOPE_MISSING' : 'INVALID_TOOL_ARGUMENTS',
+          executed: false, effectStarted: false });
+      expect(fetchMock.mock.calls.map(([, init]) => init.method)).toEqual(['GET', 'GET']);
+      expect(beforeDispatch).not.toHaveBeenCalled();
+    });
 
   it('does not dispatch on fresh revocation, and reports proven no effect', async () => {
     const input = await prepared(); executionResponses();

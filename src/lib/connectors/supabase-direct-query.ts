@@ -24,8 +24,13 @@ export function directQueryMode(args:Record<string,unknown>): AnalyticsScope | n
 export function directQueryFields(dataset: BoundDataset) {
   const help = analyticsSourceHelp(dataset);
   const scopes = dataset.kind === 'native' ? ['workspace','platform'] : ['workspace'];
+  const hasDates = Object.values(dataset.sources).some(source => Object.values(source.columns).some(t => t === 'date' || t === 'timestamptz'));
+  const timeHelp = hasDates ? "For monthly totals use date_trunc('month', column) AS period on a listed date or timestamptz. It returns the first calendar day (UTC for timestamps). Prefer half-open date filters. " : '';
+  const queryHelp = 'For a data question send one SELECT on a listed analytics source; no published report is required. ' + timeHelp
+    + 'GROUP BY and ORDER BY accept names, projected aliases or 1-based SELECT positions, e.g. GROUP BY 1,2 ORDER BY 1,2. '
+    + 'LIMIT is at most 25. Platform queries must aggregate. For money, group by the source currency or filter to one currency; explain the date basis. ' + help;
   return {
-    query:{type:'string',minLength:1,maxLength:4096,description:'For a data question send a single SQL SELECT on one of these sources (prefix analytics.). No published report is required. Supports filters, aggregates, groups, ordering and LIMIT up to 25. Workspace can also project listed nonidentifying fields. Platform queries must aggregate. For money aggregates, group and report the currency or filter to one currency; explain the date basis. '+help},
+    query:{type:'string',minLength:1,maxLength:4096,description:queryHelp},
     parameters:{type:'array',maxItems:16,items:{anyOf:[{type:'string',maxLength:200},{type:'number'},{type:'boolean'}]},
       description:'Optional scalar bind values for $1, $2, etc. Use strings for exact decimals and large integers, ISO dates, and timestamps with timezone. Put LIMIT in the SELECT.'},
     scope:{type:'string',enum:scopes,default:'workspace',description:'Requested scope, not a permission. Use platform only for an explicitly all-account request with a matching independent platform grant. Never substitute workspace totals for platform totals.'},

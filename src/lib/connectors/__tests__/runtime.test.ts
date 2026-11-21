@@ -135,6 +135,15 @@ test('schema fingerprint drift and unsafe arguments stop before execute', async 
   expect(executeConnectorTool).not.toHaveBeenCalled();
 });
 
+test('the reviewed HubSpot read reports an actionable bound without executing a business action',async()=>{
+  const runtime=createConnectorRuntime(async()=>context);
+  const {failureForAgent}=await import('../agent-recovery');
+  const error=await runtime.call(name,{...envelope(),arguments:{limit:101}}).catch(e=>e);
+  expect(failureForAgent(error)).toMatchObject({argument_issue:{path:'arguments.limit',rule:'maximum',bound:100},executed:false,automatic_retry:false});
+  expect(JSON.stringify(failureForAgent(error))).not.toContain(descriptor.schemaHash);
+  expect(executeConnectorTool).not.toHaveBeenCalled();
+});
+
 test('credential rotation and unknown action never dispatch', async () => {
   jest.mocked(loadConnectorCredential).mockResolvedValue({ apiKey: randomBytes(24).toString('hex'), revision: 'rotated', source: 'byok' });
   const runtime = createConnectorRuntime(async () => context);

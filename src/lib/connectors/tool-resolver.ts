@@ -5,6 +5,7 @@ import type { ConnectorContextResolver } from './host-context';
 import type { ConnectorRuntime } from './runtime';
 import { CONNECTOR_DOMAINS } from './domains';
 import { agentRecovery, failureForAgent } from './agent-recovery';
+import { argumentFailure } from '@/lib/tools/argument-contract';
 
 /** A spread-safe host-private marker. A matching name/prefix alone grants nothing. */
 export const CONNECTOR_GATEWAY = Symbol.for('makinari.connector-gateway');
@@ -41,7 +42,8 @@ export function connectorGateway(resolveContext?: ConnectorContextResolver): Gat
         if (args.action === 'execute') {
           let input = args.action_params ?? {};
           if (typeof input === 'string') {
-            try { input = JSON.parse(input); } catch { throw new ConnectorError('INVALID_TOOL_ARGUMENTS', 'Arguments must be a JSON object.', 400); }
+            if (input.length > 32_000) return argumentFailure({path:'arguments',rule:'bounded'});
+            try { input = JSON.parse(input); } catch { return argumentFailure({path:'arguments',rule:'json_object'}); }
           }
           return await resolver.call(args.action_name ?? '', input);
         }

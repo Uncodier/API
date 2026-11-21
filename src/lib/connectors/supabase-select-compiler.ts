@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { Bindings, typed } from './supabase-select-bindings';
-import { invalid, simpleName } from './supabase-select-lexer';
+import { simpleName } from './supabase-select-lexer';
+import { invalid } from './supabase-select-diagnostics';
 import { parseSelect, type Expr, type Predicate, type Select } from './supabase-select-parser';
 import type { AnalyticsColumnType, AnalyticsDataset, AnalyticsResultType, AnalyticsSource, CompiledAnalyticsSelect } from './supabase-select-types';
 export type { AnalyticsColumnType, AnalyticsDataset, AnalyticsResultType, AnalyticsSource, CompiledAnalyticsSelect } from './supabase-select-types';
 
 type Field = { name: string; type: AnalyticsColumnType; sql: string };
-type Output = { name: string; type: AnalyticsResultType; sql: string; group?: string; money?: true };
+type Output = { name: string; type: AnalyticsResultType; sql: string; dimension?: true; sourceColumn?: string; money?: true };
 type Filter = { sql: string; fixesCurrency: boolean };
 const columnTypes = new Set<AnalyticsColumnType>(['text', 'integer', 'numeric', 'date', 'timestamptz', 'boolean', 'uuid']);
 const operators = new Map(['=', '<>', '<', '<=', '>', '>='].map(s => [s, `OPERATOR(pg_catalog.${s})`]));
@@ -18,21 +19,21 @@ class Relation {
     const money = src.money;
     if (money && (!simpleName(money.currency) || !Object.hasOwn(src.columns, money.currency) || src.columns[money.currency] !== 'text' ||
       !money.measures.length || !money.measures.every(c => simpleName(c) && Object.hasOwn(src.columns, c) && ['numeric', 'integer'].includes(src.columns[c])))) {
-      invalid('This source does not have a valid monetary measure and currency mapping.');
+      invalid('moneyMapping');
     }
   }
   field(path: string[]): Field {
     if ((path.length === 3 && (path[0] !== 'analytics' || this.alias)) ||
         (path.length >= 2 && path[path.length - 2] !== (this.alias ?? this.name))) invalid();
     const name = path[path.length - 1];
-    if (!Object.hasOwn(this.src.columns, name)) invalid('Use only columns listed for this analytics source.');
+    if (!Object.hasOwn(this.src.columns, name)) invalid('column');
     const type = this.src.columns[name];
     if (!columnTypes.has(type)) invalid();
     return { name, type, sql: `r."${name}"` };
   }
   dimension(path: string[]) {
     const field = this.field(path);
-    if (field.type === 'uuid') invalid('Identifiers are available only inside COUNT(DISTINCT column).');
+    if (field.type === 'uuid') invalid('identifier');
     return { ...field, type: field.type, sql: typed(field.sql, field.type) };
   }
   output(expr: Expr, alias?: string): Output {
@@ -43,16 +44,23 @@ class Relation {
       return { name: alias ?? 'count', type: 'integer', sql: `pg_catalog.count(DISTINCT ${value})` };
     }
     const f = this.dimension(expr.path);
-    if (expr.fn === null) return { name: alias ?? f.name, type: f.type, group: f.name, sql: f.sql };
+    if (expr.fn === null) return { name: alias ?? f.name, type: f.type, dimension: true, sourceColumn: f.name, sql: f.sql };
+    if (expr.fn === 'month') {
+      if (f.type !== 'date' && f.type !== 'timestamptz') invalid('month');
+      // Calendar dates stay dates; timestamp buckets are UTC regardless of the database session zone.
+      const stamp = f.type === 'date' ? `${f.sql}::pg_catalog.timestamp` : `pg_catalog.timezone('UTC'::pg_catalog.text, ${f.sql})`;
+      return { name: alias ?? 'date_trunc', type: 'date', dimension: true,
+        sql: `pg_catalog.date_trunc('month'::pg_catalog.text, ${stamp})::pg_catalog.date` };
+    }
     const name = alias ?? expr.fn;
     const measure = this.src.money?.measures.includes(f.name);
     switch (expr.fn) {
       case 'sum': case 'avg': {
-        if (f.type !== 'numeric' && f.type !== 'integer') invalid('Use SUM or AVG only on a numeric measure.');
+        if (f.type !== 'numeric' && f.type !== 'integer') invalid('numeric');
         return { name, type: 'numeric', sql: `pg_catalog.${expr.fn}(${typed(f.sql, 'numeric')})`, ...(measure && { money: true }) };
       }
       case 'min': case 'max': {
-        if (f.type === 'boolean') invalid('Use MIN or MAX only on a number, date, timestamp or text column.');
+        if (f.type === 'boolean') invalid('range');
         return { name, type: f.type, sql: `pg_catalog.${expr.fn}(${f.sql})`, ...(measure && { money: true }) };
       }
     }
@@ -79,35 +87,44 @@ class Relation {
 }
 
 function resolveGroups(plan: Select, relation: Relation, projections: Output[], allowRows: boolean) {
-  if (!projections.some(p => !p.group)) {
-    if (!allowRows) invalid('This scope requires an aggregate SELECT. Row samples are only available for explicitly admitted workspace sources.');
-    if (plan.groups.length) invalid('For a workspace row sample omit GROUP BY. For a grouped summary include an aggregate.');
+  if (projections.every(p => p.dimension)) {
+    if (!allowRows) invalid('scope');
+    if (plan.groups.length) invalid('sample');
     return '';
   }
   // As in PostgreSQL, GROUP BY prefers the input column to a conflicting output alias.
-  const fields = plan.groups.map(path => {
-    if (path.length === 1 && !Object.hasOwn(relation.src.columns, path[0])) {
-      const output = projections.find(p => p.name === path[0]);
-      if (output?.group) return relation.dimension([output.group]);
+  const groups = plan.groups.map(key => {
+    let output: Output | undefined;
+    if ('position' in key) {
+      output = projections[key.position - 1];
+      if (!output?.dimension) invalid('ordinal');
+    } else {
+      if (key.fn === null && key.path.length === 1 && !Object.hasOwn(relation.src.columns, key.path[0])) {
+        output = projections.find(p => p.name === key.path[0]);
+      }
+      output ??= relation.output(key);
     }
-    return relation.dimension(path);
+    if (!output.dimension) invalid('groupKey');
+    return output.sql;
   });
-  if (projections.some(p => p.group && !fields.some(f => f.name === p.group))) {
-    invalid('Include an aggregate and GROUP BY each non-aggregate projected column.');
-  }
-  if (new Set(fields.map(f => f.name)).size !== fields.length) invalid();
-  return fields.length ? ` GROUP BY ${fields.map(f => f.sql).join(', ')}` : '';
+  if (projections.some(p => p.dimension && !groups.includes(p.sql))) invalid('grouping');
+  if (new Set(groups).size !== groups.length) invalid('groupKey');
+  return groups.length ? ` GROUP BY ${groups.join(', ')}` : '';
 }
 function resolveOrders(plan: Select, relation: Relation, projections: Output[]) {
   const seen = new Set<number>();
-  const orders = plan.orders.map(({ expr, direction }) => {
+  const orders = plan.orders.map(({ key, direction }) => {
     // ORDER BY prefers the output alias; otherwise match a resolved projected expression.
-    let index = expr.fn === null && expr.path.length === 1 ? projections.findIndex(p => p.name === expr.path[0]) : -1;
-    if (index === -1) {
-      const sql = relation.output(expr).sql;
-      index = projections.findIndex(p => p.sql === sql);
+    let index: number;
+    if ('position' in key) index = key.position - 1;
+    else {
+      index = key.fn === null && key.path.length === 1 ? projections.findIndex(p => p.name === key.path[0]) : -1;
+      if (index === -1) {
+        const sql = relation.output(key).sql;
+        index = projections.findIndex(p => p.sql === sql);
+      }
     }
-    if (index < 0 || seen.has(index)) invalid('Order by a projected expression or its unique output alias.');
+    if (index < 0 || seen.has(index)) invalid('order');
     seen.add(index);
     return `v${index} ${direction}`;
   });
@@ -131,22 +148,22 @@ export function compileAnalyticsSelect(query: unknown, parameters: unknown, data
   const plan = parseSelect(query);
   const source = plan.relation[plan.relation.length - 1];
   if ((plan.relation.length === 2 && plan.relation[0] !== 'analytics') || !Object.hasOwn(dataset.sources, source)) {
-    invalid('Select one listed analytics source, unqualified or in the analytics schema.');
+    invalid('source');
   }
   const src = dataset.sources[source];
   if (!src?.sql || !src.guardSql) invalid();
   const relation = new Relation(source, plan.alias, src);
   const outputs = plan.projections.map(p => relation.output(p.expr, p.alias));
-  if (new Set(outputs.map(o => o.name)).size !== outputs.length) invalid('Give every projected column a unique, simple alias.');
+  if (new Set(outputs.map(o => o.name)).size !== outputs.length) invalid('alias');
   const binds = new Bindings(dataset.parameters, parameters);
   const filter = plan.where ? relation.predicate(plan.where, binds) : undefined;
   const where = filter ? ` WHERE ${filter.sql}` : '';
   const group = resolveGroups(plan, relation, outputs, Object.hasOwn(dataset, 'allowRows') && dataset.allowRows === true);
   const order = resolveOrders(plan, relation, outputs);
   const money = src.money;
-  const projectCurrency = money && outputs.some(p => p.group === money.currency);
+  const projectCurrency = money && outputs.some(p => p.sourceColumn === money.currency);
   if (outputs.some(p => p.money) && !projectCurrency && !filter?.fixesCurrency) {
-    invalid('For monetary aggregates, project and GROUP BY the source currency, or require currency equality to one uppercase three-letter code.');
+    invalid('currency');
   }
   // GROUP BY validation above proves a projected currency in an aggregate plan is grouped.
   // NULL (or a noncanonical currency label) is not a unit. Suppress only its money aggregate,

@@ -1,7 +1,8 @@
 import { getReviewedTool } from './reviewed-tools';
 import { DATABASE_READ, TABLE_TOOL, tableArguments } from './supabase-table-policy';
 import { projectTableNames } from './supabase-table-result';
-import { validateTableDispatchSchema } from './reviewed-tool-schema';
+import { reviewedInputSchema, validateTableDispatchSchema } from './reviewed-tool-schema';
+import { validateConnectorInput } from './schema-validation';
 import { hashConnectorSchema, validateConnectorArguments } from './composio-tool-json';
 import type { ConnectorDescriptionInput as DescriptionInput, ConnectorToolDescription } from './catalog-read-metadata';
 import { describeCatalogRead, executeCatalogRead } from './catalog-read-adapter';
@@ -132,20 +133,13 @@ export async function executeConnectorTool(input: ConnectorExecutionInput) {
     validateConnectorArguments(input.input);
     // Snapshot arguments before any await; caller mutation cannot change the authorized payload.
     const argumentsSnapshot = JSON.parse(JSON.stringify(input.input));
-    if (input.toolSlug === TABLE_TOOL) {
+    const privateTableArgs = input.toolSlug === TABLE_TOOL ? tableArguments(connector) : undefined;
+    if (privateTableArgs) {
       if (Object.keys(argumentsSnapshot).length) denied('CONNECTOR_INVALID_INPUT', 'This action accepts no caller arguments.');
-      Object.assign(argumentsSnapshot, tableArguments(connector));
     }
     const client = createComposioClient(input.credential.apiKey);
     const descriptor = await describe(client, input);
     if (descriptor.schemaHash !== input.schemaHash) denied('CONNECTOR_SCHEMA_CHANGED', 'The tool schema changed. Describe the tool again.');
-    // Gmail's documented user_id is a mailbox selector, not our execution actor.
-    // Never accept it from the caller; bind only this reviewed action to the exact
-    // authenticated account instead of permitting domain-wide delegation.
-    if (descriptor.slug === 'GMAIL_FETCH_EMAILS') {
-      const properties = descriptor.inputSchema.properties as Record<string, unknown> | undefined;
-      if (properties && Object.hasOwn(properties, 'user_id')) argumentsSnapshot.user_id = 'me';
-    }
     const account = await verifyAccountIdentity(client, {
       accountId: connector.provider_account_id, userId: provider.provider_user_id,
       toolkitSlug: connector.toolkit_slug, authConfigId: connector.auth_config_id,
@@ -159,6 +153,13 @@ export async function executeConnectorTool(input: ConnectorExecutionInput) {
       }
     } else if (![...descriptor.scopes, ...input.requiredScopes].every(scope => account.scopes.includes(scope))) {
       denied('CONNECTOR_SCOPE_MISSING', 'The account lacks the tool’s required OAuth scopes.');
+    }
+    // Every caller (including support and retained approvals) must fit the pinned public contract.
+    // Inject server-only selectors afterwards; they are never caller inputs or paths in an agent error.
+    validateConnectorInput(reviewedInputSchema(descriptor.slug, descriptor.inputSchema), argumentsSnapshot);
+    if (privateTableArgs) Object.assign(argumentsSnapshot, privateTableArgs);
+    if (descriptor.slug === 'GMAIL_FETCH_EMAILS' && Object.hasOwn(descriptor.inputSchema.properties as object, 'user_id')) {
+      argumentsSnapshot.user_id = 'me';
     }
     await input.beforeDispatch();
     dispatched = true;

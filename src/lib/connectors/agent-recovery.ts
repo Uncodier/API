@@ -1,4 +1,8 @@
 import { ConnectorError } from './types';
+import { AnalyticsSelectInputError } from './supabase-select-diagnostics';
+import { ConnectorArgumentError } from './connector-argument-error';
+import { argumentFailure } from '@/lib/tools/argument-contract';
+import type { ToolArgumentIssue } from '@/lib/tools/argument-contract';
 
 type Action = 'ask_manager' | 'ask_user' | 'verify_connection' | 'request_scope' | 'alternate_route' |
   'retry_later' | 'describe_again' | 'restart_search' | 'fix_arguments' | 'reconcile';
@@ -64,12 +68,20 @@ export function agentRecovery(code: string): Advice {
   }
 }
 
-export function failureForAgent(error: unknown) {
+type AgentFailure = {success:false; code:string; error:string; recovery:Advice; automatic_retry:false;
+  executed?:false; effectStarted?:false; retry_after_seconds?:number; argument_issue?:ToolArgumentIssue};
+export function failureForAgent(error: unknown): AgentFailure {
   const e = error as {code?: unknown; name?: unknown; effectStarted?: unknown; retryAfterSeconds?: unknown} | undefined;
   if (e?.name === 'RecoveryError' || e?.name === 'OpenRouterBillingError') throw error;
+  if (error instanceof ConnectorArgumentError && e?.effectStarted === false) return argumentFailure(error.issue);
   const code = error instanceof ConnectorError && /^[A-Z][A-Z_0-9]{0,70}$/.test(error.code) ? error.code :
     e?.code === 'TOOL_SCREEN_ACCESS_DENIED' || e?.code === 'TOOL_SCREEN_ACCESS_UNAVAILABLE' ? e.code : 'CONNECTOR_UNAVAILABLE';
-  const recovery = agentRecovery(code);
+  let recovery = error instanceof AnalyticsSelectInputError && e?.effectStarted === false
+    ? advice('fix_arguments', `${error.hint} Correct the query on the same connection and scope; do not repeat it unchanged or substitute a report listing.`)
+    : agentRecovery(code);
+  if ((code === 'INVALID_TOOL_ARGUMENTS' || code === 'CONNECTOR_INVALID_INPUT') && e?.effectStarted !== false) {
+    recovery = advice('reconcile', 'The operation was not confirmed as rejected before execution. Check its status before issuing another call; do not replay it based on an argument error.');
+  }
   const retryAfter = e?.retryAfterSeconds;
   // Use local guidance, never raw upstream text, arguments, customer IDs or credential material.
   return { success: false, code, error: recovery.message, recovery,

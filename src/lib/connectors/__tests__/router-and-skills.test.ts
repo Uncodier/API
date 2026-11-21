@@ -61,6 +61,15 @@ test('the exact decorated gateway retains host context/dry-run guards for concre
   expect(runtime.call).not.toHaveBeenCalled();
 });
 
+test('invalid connector JSON returns a safe pre-dispatch correction without inspecting credentials or replaying',async()=>{
+  const router=toolsRouterTool([native,connectorGateway(async()=>context)],scope);
+  const privateText=randomUUID();
+  const out=await router.execute({action:'call',name,args:`{${privateText}`});
+  expect(out).toMatchObject({code:'INVALID_TOOL_ARGUMENTS',executed:false,automatic_retry:false,
+    argument_issue:{path:'arguments',rule:'json_object'},recovery:{action:'fix_arguments'}});
+  expect(JSON.stringify(out)).not.toContain(privateText);expect(runtime.call).not.toHaveBeenCalled();
+});
+
 test('host removal, fake gateway names, and blocked connector screen cannot bypass native screen policy', async () => {
   const fake = { ...native, name: 'use_composio_tools' };
   const router = withConnectorResolver({ ...native, name: 'tools' }, [fake], scope);

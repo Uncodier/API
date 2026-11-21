@@ -48,6 +48,7 @@ const readArgsSchema = z.object({
   limit: safeInteger.min(1).max(INSTANCE_HISTORY_LIMITS.readChars).default(INSTANCE_HISTORY_DEFAULTS.readChars),
 }).strict();
 const argsSchema = z.discriminatedUnion('action', [listArgsSchema, readArgsSchema]);
+export { argsSchema as instanceHistoryLegacyArgsSchema };
 
 // A root union is not portable to strict tool providers. Nest the discriminated
 // request instead: all model properties are required, with explicit null only

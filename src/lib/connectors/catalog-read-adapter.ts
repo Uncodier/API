@@ -16,6 +16,7 @@ import { inputValue, providerValue, scopesSchema, toolSlug } from './composio-va
 import { hashConnectorSchema, validateConnectorArguments } from './composio-tool-json';
 import { assertProviderToolSucceeded, rethrowReadFailure } from './provider-outcome';
 import { validateConnectorInput, assertSupportedSchema } from './schema-validation';
+import { publicConnectorInputSchema } from './public-input-schema';
 import { ConnectorError } from './types';
 import type { ConnectorExecutionInput } from './composio-sessions';
 
@@ -102,9 +103,12 @@ async function prepareRead(client: ComposioClient, input: ConnectorDescriptionIn
     connector: connector.id, site: connector.site_id, project: provider.project_id, account: connector.provider_account_id,
     authConfig: connector.auth_config_id, revision: provider.credential_revision, providerId: provider.id });
   if (expectedHash && schemaHash !== expectedHash) changed();
+  // Disclose validation rules already in force without rotating the underlying contract pin:
+  // durable private report choices carry this exact hash. Changed plans/bindings still fail above.
+  const modelSchema = publicConnectorInputSchema(plan.modelSchema, 'catalog');
   // Neither provider annotations, SQL templates, provider schema, nor config bindings go to the model.
   const descriptor: ConnectorToolDescription = { slug: tool.slug, toolkitSlug: tool.toolkit.slug, toolkitVersion: tool.version,
-    description: plan.description, inputSchema: plan.modelSchema, catalogModelSchema: plan.modelSchema, scopeRequirements: null, scopes: tool.scopes, schemaHash };
+    description: plan.description, inputSchema: modelSchema, catalogModelSchema: modelSchema, scopeRequirements: null, scopes: tool.scopes, schemaHash };
   return { descriptor, plan, accountId: account.id, providerUserId: provider.provider_user_id };
 }
 

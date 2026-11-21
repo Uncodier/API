@@ -99,9 +99,12 @@ it('preserves the shared admin exemption but never bypasses revoked effective ac
   expect(dispatch).not.toHaveBeenCalled();
 });
 
-it('does not mask or weaken the canonical SQL denial after screen authorization', async () => {
+it('respects a canonical SQL rejection after screen authorization without echoing RPC diagnostics', async () => {
   dispatch.mockRejectedValue(new Error('Procurement manager access denied'));
-  expect(await router().execute({ action: 'call', name: 'procurement_tenders', args: '{"action":"list"}' }))
-    .toMatchObject({ success: false, error: 'Procurement manager access denied' });
+  const output = await router().execute({ action: 'call', name: 'procurement_tenders', args: '{"action":"list"}' });
+  expect(output).toMatchObject({ success: false, code: 'TOOL_OUTCOME_UNKNOWN', recovery: { action: 'reconcile' }, automatic_retry: false });
+  expect(output).not.toHaveProperty('result');
+  expect(output).not.toHaveProperty('executed');
+  expect(JSON.stringify(output)).not.toContain('Procurement manager access denied');
   expect(dispatch).toHaveBeenCalledTimes(1);
 });

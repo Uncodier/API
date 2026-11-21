@@ -327,13 +327,37 @@ it.each([ToolScreenAccessDenied, ToolScreenAccessUnavailable])('does not infer p
   expect(target.execute).toHaveBeenCalledTimes(2);
 });
 
-it.each(['TOOL_SCREEN_ACCESS_DENIED', 'TOOL_SCREEN_ACCESS_UNAVAILABLE'])('does not trust code-only %s errors after dispatch or expose their details', async code => {
+it.each(['TOOL_SCREEN_ACCESS_DENIED', 'TOOL_SCREEN_ACCESS_UNAVAILABLE'])('does not trust self-attested %s errors after dispatch or expose their details', async code => {
   const target = tool();
-  target.execute.mockImplementation(async () => { throw Object.assign(new Error(dbError.message), { code }); });
+  target.execute.mockImplementation(async () => { throw Object.assign(new Error(dbError.message), { code, executed: false, effectStarted: false }); });
   const result = await toolsRouterTool([target], scope).execute({ action: 'call', name: target.name });
   expect(result).toMatchObject({ success: false, code });
   expect(result).not.toHaveProperty('executed');
   expect(result.error).not.toHaveProperty('effectStarted');
   expectNoPrivateDetails(result);
   expect(target.execute).toHaveBeenCalledTimes(1);
+});
+
+it('resolves screen and scope admission before exposing any native argument issue, routed or direct', async () => {
+  const target = { ...tool('requirements'), parameters: { type: 'object', required: ['count'],
+    properties: { count: { type: 'integer', maximum: 1 } } } };
+  const routed = withToolsRouter([target], new Set(), scope)[0];
+  const direct = routeTools([target], scope)[0];
+  const call = (args: unknown) => routed.execute({ action: 'call', name: target.name, args });
+  effective.error = dbError;
+  expect(await call('{')).toEqual(unavailable);
+  await expect(direct.execute({ count: 2 })).rejects.toMatchObject({ code: unavailable.code });
+  effective.error = null;
+  records.site_members.data.blocked_screens = ['requirements'];
+  expect(await call('{')).toEqual(denied);
+  await expect(direct.execute({ count: 2 })).rejects.toMatchObject({ code: denied.code });
+  records.site_members.data.blocked_screens = [];
+  for (const args of [{ action: 'create', user_id: otherUser }, { site_id: randomUUID(), count: 2 }]) {
+    expect(await call(args)).toEqual(denied);
+    await expect(direct.execute(args)).rejects.toMatchObject({ code: denied.code });
+  }
+  const proof = { code: 'INVALID_TOOL_ARGUMENTS', executed: false, argument_issue: { path: 'arguments.count', rule: 'maximum' } };
+  expect(await call({ count: 2 })).toMatchObject(proof);
+  expect(await direct.execute({ count: 2 })).toMatchObject(proof);
+  expect(target.execute).not.toHaveBeenCalled();
 });

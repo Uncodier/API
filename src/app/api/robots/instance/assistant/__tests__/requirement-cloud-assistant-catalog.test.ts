@@ -38,6 +38,7 @@ function catalog() {
   };
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
+      '@/lib/tools/argument-contract': jest.requireActual('@/lib/tools/argument-contract'),
       './search-context': jest.requireActual('@/app/api/agents/tools/router/search-context'),
       '@/lib/connectors/tool-resolver': jest.requireActual('@/lib/connectors/tool-resolver'),
       './tool-categories': loadRuntimeModule('src/app/api/agents/tools/router/tool-categories.ts', {}),

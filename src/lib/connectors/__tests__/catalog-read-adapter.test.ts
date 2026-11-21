@@ -3,8 +3,11 @@ import companies from './fixtures/HUBSPOT_LIST_COMPANIES-20261116_01.json';
 import deals from './fixtures/HUBSPOT_LIST_DEALS-20261116_01.json';
 import calendars from './fixtures/GOOGLECALENDAR_LIST_CALENDARS-20261116_00.json';
 import { randomUUID } from 'node:crypto';
+import { publicConnectorInputSchema } from '../public-input-schema';
+import { validateConnectorInput } from '../schema-validation';
 import { describeConnectorTool, executeConnectorTool } from '../composio-sessions';
 import { ConnectorError } from '../types';
+import { failureForAgent } from '../agent-recovery';
 import { accountFixture, connectorFixture, providerFixture, toolkitFixture, toolFixture, secret, jsonResponse } from './composio-fixtures';
 
 const mockProofRpc = jest.fn();
@@ -70,6 +73,26 @@ it.each([['planning', 'deliverables'], ['warehouse', 'pallets']])('projects and 
   expect(http.mock.calls[0][0]).toMatch(new RegExp(`/tools/${tool.slug}\\?version=${tool.version}$`));
   expect(JSON.parse(http.mock.calls[3][1].body)).toEqual({ connected_account_id: account.id, user_id: account.user_id, version: tool.version, arguments: { limit: 3 } });
   expect(call.beforeDispatch).toHaveBeenCalledTimes(1);
+});
+
+it('only normalizes server-owned input, retaining alternatives, tighter bounds and trusted guidance', () => {
+  const schema = { anyOf: [{ type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 7 } } },
+    { type: 'object', properties: {
+      values: { type: ['array', 'null'], maxItems: 5, items: { anyOf: [
+        { type: 'string', maxLength: 20 }, { type: 'integer', minimum: 2, maximum: 3 }] } },
+      q: { type: 'string', description: 'Locally reviewed guidance.' },
+      mode: { type: 'string', enum: ['workspace', 'platform'] },
+    }, required: ['values'] }] };
+  const before = structuredClone(schema);
+  const normalized = publicConnectorInputSchema(schema, 'catalog');
+  expect(normalized.anyOf.every((n: { additionalProperties: unknown }) => n.additionalProperties === false)).toBe(true);
+  expect(normalized.anyOf[1].properties.q).toMatchObject({ maxLength: 8000, description: expect.stringContaining('Locally reviewed guidance.') });
+  expect(normalized.anyOf[1].properties.mode).toEqual(schema.anyOf[1].properties.mode); // enum already bounds the input
+  expect(normalized.anyOf[1].properties.values).toEqual(schema.anyOf[1].properties.values);
+  for (const valid of [{ limit: 7 }, { values: null }, { values: ['a', 2, 3] }]) expect(() => validateConnectorInput(normalized, valid)).not.toThrow();
+  for (const invalid of [{ limit: 8 }, { values: [1] }, { values: Array(6).fill('a') }, { values: ['b'.repeat(21)] },
+    { values: [], q: 'a'.repeat(8001) }, { values: null, extra: 1 }]) expect(() => validateConnectorInput(normalized, invalid)).toThrow();
+  expect(schema).toEqual(before);
 });
 
 it('does not use catalog proofs by default, or bypass a reviewed action when opted in', async () => {
@@ -231,6 +254,16 @@ it.each(['companies', 'deals'] as const)('executes the public %s schema with loc
     http.mockReset(); f.queue(f.tool, f.api, f.account);
     await expect(executeConnectorTool({ ...call, input: { limit: 1, [field]: sensitive } })).rejects.toMatchObject({ effectStarted: false }); noPost();
   }
+});
+
+it.each([['calendars','max_results'],['deals','limit']] as const)('gives an actionable correction from the published %s profile without calling its provider action',async (kind,field)=>{
+  const f=published(kind);const {call,description}=await pinned(f);
+  expect(description.catalogModelSchema).toMatchObject({required:[field],properties:{[field]:{minimum:1,maximum:25}}});
+  f.queue(f.tool,f.api,f.account);
+  const err=await executeConnectorTool({...call,input:{[field]:26}}).catch(e=>e);
+  expect(failureForAgent(err)).toMatchObject({executed:false,automatic_retry:false,recovery:{action:'fix_arguments'},
+    argument_issue:{path:`arguments.${field}`,rule:'maximum',bound:25}});
+  noPost();expect(call.beforeDispatch).not.toHaveBeenCalled();
 });
 
 it('projects a CalendarList from the published data.calendars field without reflecting calendar identifiers, summary, owner, URL or sync token', async () => {

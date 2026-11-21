@@ -1,4 +1,7 @@
 import { ConnectorError } from './types';
+import { ConnectorArgumentError } from './connector-argument-error';
+import { CONNECTOR_MAX_ARRAY_ITEMS, CONNECTOR_MAX_STRING_UNITS } from './public-input-schema';
+import { findToolArgumentIssue, schemaFieldPath } from '@/lib/tools/argument-contract';
 
 type Schema = Record<string, any>;
 const supported = new Set(['type', 'properties', 'required', 'additionalProperties', 'items', 'enum',
@@ -39,10 +42,10 @@ export function assertSupportedSchema(schema: unknown, depth = 0): asserts schem
   if (types.includes('array')) assertSupportedSchema(value.items, depth + 1);
 }
 
-function validate(schema: Schema, value: any, depth: number): void {
+function validate(schema: Schema, value: any, depth: number, path: string): void {
   if (depth > 12) throw invalid();
   if (schema.anyOf) {
-    if (!schema.anyOf.some((child: Schema) => { try { validate(child, value, depth + 1); return true; } catch { return false; } })) throw invalid();
+    if (!schema.anyOf.some((child: Schema) => { try { validate(child, value, depth + 1, path); return true; } catch { return false; } })) throw invalid();
     if (schema.type === undefined) return;
   }
   const types = Array.isArray(schema.type) ? schema.type : [schema.type];
@@ -54,27 +57,35 @@ function validate(schema: Schema, value: any, depth: number): void {
     (schema.minimum !== undefined && value < schema.minimum) || (schema.maximum !== undefined && value > schema.maximum))) throw invalid();
   if (actual === 'string') {
     // No implicit downloads, local paths, or outbound fetch targets in this reviewed slice.
-    if (value.length > 8000 || /(?:https?:\/\/|file:|\.{2}[\\/]|^\/|^[a-z]:\\)/i.test(value) ||
-      (schema.minLength !== undefined && [...value].length < schema.minLength) ||
+    if (value.length > CONNECTOR_MAX_STRING_UNITS) throw new ConnectorArgumentError({path,rule:'bounded'});
+    if (/(?:https?:\/\/|file:|\.{2}[\\/]|^\/|^[a-z]:\\)/i.test(value)) throw new ConnectorArgumentError({path,rule:'plain_text'});
+    if ((schema.minLength !== undefined && [...value].length < schema.minLength) ||
       (schema.maxLength !== undefined && [...value].length > schema.maxLength)) throw invalid();
   }
   if (actual === 'object') {
     if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) throw invalid();
     for (const required of schema.required ?? []) if (!Object.hasOwn(value, required)) throw invalid();
     for (const [key, child] of Object.entries(value)) {
-      if (forbiddenKey.test(key) || !Object.hasOwn(schema.properties, key)) throw invalid();
-      validate(schema.properties[key], child, depth + 1);
+      if (forbiddenKey.test(key) || !Object.hasOwn(schema.properties, key)) throw new ConnectorArgumentError({path,rule:'extra'});
+      validate(schema.properties[key], child, depth + 1, schemaFieldPath(path,key));
     }
   }
   if (actual === 'array') {
-    if (value.length > 100 || (schema.minItems !== undefined && value.length < schema.minItems) ||
+    if (value.length > CONNECTOR_MAX_ARRAY_ITEMS) throw new ConnectorArgumentError({path,rule:'maxItems',bound:Math.min(CONNECTOR_MAX_ARRAY_ITEMS,schema.maxItems ?? CONNECTOR_MAX_ARRAY_ITEMS)});
+    if ((schema.minItems !== undefined && value.length < schema.minItems) ||
       (schema.maxItems !== undefined && value.length > schema.maxItems)) throw invalid();
-    for (const item of value) validate(schema.items, item, depth + 1);
+    for (let i=0;i<value.length;i++) validate(schema.items, value[i], depth + 1, `${path}[${i}]`);
   }
 }
 
 export function validateConnectorInput(schema: unknown, input: unknown): asserts input is Record<string, unknown> {
   assertSupportedSchema(schema);
-  if (!input || typeof input !== 'object' || Array.isArray(input) || JSON.stringify(input).length > 32000) throw invalid();
-  validate(schema, input, 0);
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ConnectorArgumentError({path:'arguments',rule:'json_object'});
+  if (JSON.stringify(input).length > 32000) throw new ConnectorArgumentError({path:'arguments',rule:'bounded'});
+  try { validate(schema, input, 0, 'arguments'); }
+  catch (error) {
+    // The connector validator remains authoritative, including restrictions not expressible in JSON Schema.
+    if (error instanceof ConnectorArgumentError || !(error instanceof ConnectorError) || error.code !== 'INVALID_TOOL_ARGUMENTS') throw error;
+    throw new ConnectorArgumentError(findToolArgumentIssue(schema,input) ?? {path:'arguments',rule:'contract'});
+  }
 }

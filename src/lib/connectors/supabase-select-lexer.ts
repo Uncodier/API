@@ -1,9 +1,4 @@
-import { ConnectorError } from './types';
-
-export function invalid(message = 'Use a single SELECT on a listed analytics source. Platform scope requires an aggregate.'): never {
-  // Do not reflect caller SQL, data, bind values, or physical schema details in diagnostics.
-  throw new ConnectorError('INVALID_TOOL_ARGUMENTS', message, 400);
-}
+import { invalid } from './supabase-select-diagnostics';
 
 export type TokenKind = 'word' | 'identifier' | 'string' | 'number' | 'parameter' | 'symbol' | 'eof';
 export type Token = { kind: TokenKind; value: string };

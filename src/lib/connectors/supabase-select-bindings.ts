@@ -1,4 +1,4 @@
-import { invalid } from './supabase-select-lexer';
+import { invalid } from './supabase-select-diagnostics';
 import type { Literal } from './supabase-select-parser';
 import type { AnalyticsResultType } from './supabase-select-types';
 
@@ -7,7 +7,7 @@ const money = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const integer = /^-?(?:0|[1-9]\d*)$/;
 const date = /^(\d{4})-(\d{2})-(\d{2})$/;
 const instant = /^(\d{4}-\d{2}-\d{2})[T ](?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d)$/;
-const badValue = () => invalid('Match each comparison to its column type. Supply exact decimals and large integers as strings, ISO dates, and timestamps with timezone.');
+const badValue = () => invalid('value');
 
 function validDate(s: string) {
   const m = date.exec(s);
@@ -48,7 +48,7 @@ export class Bindings {
     this.values = [...prefix];
     if (args === undefined) this.args = [];
     else if (Array.isArray(args) && args.length <= 16) this.args = args;
-    else invalid('Supply at most sixteen scalar parameters as an array, or omit parameters.');
+    else invalid('parameters');
   }
   bind(s: string, type: AnalyticsResultType) { return typed(`$${this.values.push(s)}`, type); }
   private value(literal: Literal, type: AnalyticsResultType): string {
@@ -56,7 +56,7 @@ export class Bindings {
     if (literal.kind === 'parameter') {
       const n = Number(literal.value);
       if (n < 1 || n > this.args.length || !Object.hasOwn(this.args, n - 1) ||
-          (this.used.has(n) && this.used.get(n) !== type)) invalid('Supply one correctly typed value for every $n, numbered consecutively from $1.');
+          (this.used.has(n) && this.used.get(n) !== type)) invalid('bind');
       this.used.set(n, type);
       value = this.args[n - 1]; // Never index the trusted parameter prefix with a caller placeholder.
       if (type === 'boolean' && typeof value === 'boolean') value = String(value);
@@ -74,10 +74,10 @@ export class Bindings {
   }
   limit(literal?: Literal) {
     const n = literal ? Number(this.value(literal, 'integer')) : 25;
-    if (!Number.isInteger(n) || n < 1 || n > 25) invalid('Use a LIMIT from 1 to 25.');
+    if (!Number.isInteger(n) || n < 1 || n > 25) invalid('limit');
     return n;
   }
   finish() {
-    if (this.used.size !== this.args.length) invalid('Every supplied parameter must be used, numbered consecutively from $1.');
+    if (this.used.size !== this.args.length) invalid('unusedBind');
   }
 }

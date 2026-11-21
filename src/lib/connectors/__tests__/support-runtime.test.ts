@@ -121,6 +121,18 @@ test.each(['pre-dispatch','response'])('scope change at %s withholds read', asyn
   expect(await call(d)).toEqual(unavailable); expect(sent).toBe(when === 'response');
 });
 
+test('member describe and call agree on narrower provider limits; public visitors get no schema diagnostics',async()=>{
+  scope=member;
+  jest.mocked(describeConnectorTool).mockResolvedValue({...descriptor,inputSchema:{...schema,
+    properties:{...schema.properties,max_results:{type:'integer',enum:[1,3]}}}});
+  const d=await describe(privateName);
+  expect(d.parameters.properties.max_results).toEqual({type:'integer',minimum:1,maximum:3,enum:[1,3]});
+  expect(d.parameters.required).toContain('max_results');expect(d.read_limit).not.toHaveProperty('default');
+  expect(await call(d,{})).toEqual(unavailable); expect(await call(d,{max_results:2})).toEqual(unavailable);
+  expect(executeConnectorTool).not.toHaveBeenCalled();expect(requestProposal).not.toHaveBeenCalled();
+  scope=anonymous; expect(await describe()).toEqual(unavailable); // fixed publication input cannot override the provider's limit
+});
+
 test('bound tool evaluator describes and calls the real anonymous gateway; lost assignment prevents dispatch', async () => {
   const command = { id: randomUUID(), site_id: siteId, agent_id: agentId };
   const invoke = async (args: object) => (await executeTools([{

@@ -1,7 +1,9 @@
-import { invalid, simpleName, tokenize, type Token } from './supabase-select-lexer';
+import { simpleName, tokenize, type Token } from './supabase-select-lexer';
+import { invalid } from './supabase-select-diagnostics';
 
 export type Aggregate = 'count' | 'count_distinct' | 'sum' | 'avg' | 'min' | 'max';
-export type Expr = { fn: Aggregate | null; path: string[] };
+export type Expr = { fn: Aggregate | 'month' | null; path: string[] };
+type ClauseKey = Expr | { position: number };
 export type Literal = { kind: 'string' | 'number' | 'boolean' | 'parameter' | 'date' | 'timestamptz'; value: string };
 export type Predicate = { kind: 'comparison'; path: string[]; op: string; rhs: Literal }
   | { kind: 'null'; path: string[]; negated: boolean }
@@ -11,8 +13,8 @@ export interface Select {
   relation: string[];
   alias?: string;
   where?: Predicate;
-  groups: string[][];
-  orders: { expr: Expr; direction: 'ASC' | 'DESC' }[];
+  groups: ClauseKey[];
+  orders: { key: ClauseKey; direction: 'ASC' | 'DESC' }[];
   limit?: Literal;
 }
 
@@ -39,7 +41,7 @@ class Parser {
     return (t.kind === 'identifier' || (t.kind === 'word' && !terminals.has(t.value))) && simpleName(t.value);
   }
   private name() {
-    if (!this.isName()) invalid('Use simple column and source names from the analytics list.');
+    if (!this.isName()) invalid('name');
     return this.tokens[this.at++].value;
   }
   private path(max: number) {
@@ -54,11 +56,17 @@ class Parser {
   private expression(): Expr {
     const t = this.peek();
     const next = this.tokens[this.at + 1];
-    if (t.kind !== 'word' || !['sum', 'avg', 'min', 'max', 'count'].includes(t.value) || next?.kind !== 'symbol' || next.value !== '(') {
+    if (t.kind !== 'word' || next?.kind !== 'symbol' || next.value !== '(') {
       return { fn: null, path: this.path(3) };
     }
-    this.at++;
-    if (!this.symbol('(')) invalid();
+    this.at += 2;
+    if (t.value === 'date_trunc') {
+      if (!this.take('string', 'month') || !this.symbol(',')) invalid('month');
+      const path = this.path(3);
+      if (!this.symbol(')')) invalid('month');
+      return { fn: 'month', path };
+    }
+    if (!['sum', 'avg', 'min', 'max', 'count'].includes(t.value)) invalid();
     let fn = t.value as Aggregate;
     let path: string[] = [];
     if (!(fn === 'count' && this.symbol('*'))) {
@@ -67,6 +75,14 @@ class Parser {
     }
     if (!this.symbol(')')) invalid();
     return { fn, path };
+  }
+  private clauseKey(width: number): ClauseKey {
+    const t = this.peek();
+    if (t.kind !== 'number' && t.kind !== 'parameter') return this.expression();
+    // Resolve positions against the validated projection, never as free-standing SQL numbers.
+    if (t.kind !== 'number' || !/^[1-5]$/.test(t.value) || Number(t.value) > width) invalid('ordinal');
+    this.at++;
+    return { position: Number(t.value) };
   }
   private literal(): Literal {
     const t = this.tokens[this.at++];
@@ -78,7 +94,7 @@ class Parser {
         if (value.kind === 'string') return { kind: t.value, value: value.value };
       }
     }
-    invalid('Compare a listed column to a typed scalar literal or a supplied $n parameter.');
+    invalid('comparison');
   }
   private atom(depth: number): Predicate {
     if (this.symbol('(')) {
@@ -111,7 +127,7 @@ class Parser {
   private list<T>(item: () => T) {
     const items = [item()];
     while (this.symbol(',')) {
-      if (items.length === 5) invalid('Use at most five projections, groups, or sort keys.');
+      if (items.length === 5) invalid('width');
       items.push(item());
     }
     return items;
@@ -127,12 +143,13 @@ class Parser {
     this.expect('from');
     const relation = this.path(2), alias = this.alias();
     const where = this.word('where') ? this.disjunction(0) : undefined;
-    const groups = this.by('group', () => this.path(3));
+    const key = () => this.clauseKey(projections.length);
+    const groups = this.by('group', key);
     const orders = this.by('order', () => {
-      const expr = this.expression();
-      if (this.word('desc')) return { expr, direction: 'DESC' as const };
+      const orderKey = key();
+      if (this.word('desc')) return { key: orderKey, direction: 'DESC' as const };
       this.word('asc');
-      return { expr, direction: 'ASC' as const };
+      return { key: orderKey, direction: 'ASC' as const };
     });
     const limit = this.word('limit') ? this.literal() : undefined;
     this.symbol(';');

@@ -71,7 +71,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
           ],
           description: 'Backlog operation to perform.',
         },
-        requirement_id: { type: 'string', description: 'Requirement UUID (required).' },
+        requirement_id: { type: 'string', description: defaultRequirementId ? 'Defaults to the requirement bound by the host.' : 'Required requirement UUID.' },
         item_id: { type: 'string', description: 'Backlog item UUID. Required for get, start, downgrade, log_assumption, and set_status. Provide it on upsert to update existing work instead of duplicating it.' },
         list_status: {
           type: 'string', enum: [...BACKLOG_LIST_STATUSES],
@@ -180,7 +180,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         reason: { type: 'string', description: 'Optional reason for set_status.' },
         assumption: { type: 'string', description: 'Assumption text for log_assumption.' },
       },
-      required: ['action', 'requirement_id'],
+      required: defaultRequirementId ? ['action'] : ['action', 'requirement_id'],
     },
     execute: async (args: Partial<BacklogCoreParams> & { action: BacklogAction }) => {
       const requirement_id = args.requirement_id || defaultRequirementId;

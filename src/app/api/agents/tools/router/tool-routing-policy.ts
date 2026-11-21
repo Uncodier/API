@@ -1,13 +1,10 @@
 import type { RoutedTool } from './assistantProtocol';
 
+/** Host-owned execution schema when the published provider schema omits supported wire forms. */
+export const NATIVE_ARGUMENT_SCHEMA = Symbol.for('makinari.native-argument-schema');
+
 export function injectThoughtProcess(tool: RoutedTool): RoutedTool {
-  if (!tool || !tool.parameters || !tool.parameters.properties) return tool;
-  
-  const currentRequired = tool.parameters.required || [];
-  const newRequired = currentRequired.includes('thought_process') 
-    ? currentRequired 
-    : [...currentRequired, 'thought_process'];
-    
+  if (!tool.parameters?.properties || Object.hasOwn(tool.parameters.properties, 'thought_process')) return tool;
   return {
     ...tool,
     parameters: {
@@ -16,11 +13,10 @@ export function injectThoughtProcess(tool: RoutedTool): RoutedTool {
         ...tool.parameters.properties,
         thought_process: {
           type: 'string',
-          description: 'Required. Explain step-by-step why you are calling this tool and what you expect to achieve based on your current objective.'
-        }
+          description: 'Optional: a brief public purpose for the call. Omit if unnecessary; do not include private reasoning.',
+        },
       },
-      required: newRequired
-    }
+    },
   };
 }
 

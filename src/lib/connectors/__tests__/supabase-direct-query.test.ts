@@ -70,6 +70,27 @@ it('does not request or dispatch SQL for an ungranted platform scope, and does n
   expect(mockRpc.mock.calls.map(([n])=>n)).toEqual(['connector_analytics_result_ready']);expect(f.dispatches()).toBe(0);expect(f.stores).toEqual([]);
 });
 
+it('explains monthly SQL validation locally, then checks the original platform grant on a corrected request',async()=>{
+  const f=setup(false);
+  const query="SELECT date_trunc('month',sale_date) AS period,currency,COUNT(DISTINCT site_id) AS sites,COUNT(*) AS sales,SUM(amount) AS gross_amount FROM analytics.paid_sales WHERE sale_date >= '2026-01-01' AND sale_date < '2026-10-01' GROUP BY 1,2 ORDER BY 1,2 LIMIT 25";
+  for (const [invalid, hint] of [
+    [query.replace("'month'",`'${f.key}'`),"date_trunc('month', column)"],
+    [query.replace('GROUP BY 1,2','GROUP BY 1,6'),'SELECT-list position'],
+  ]) {
+    const err=await f.call({scope:'platform',query:invalid}).catch(e=>e);
+    expect(err).toMatchObject({code:'INVALID_TOOL_ARGUMENTS',executed:false});
+    const result=failureForAgent(err);
+    expect(result).toMatchObject({automatic_retry:false,recovery:{action:'fix_arguments',message:expect.stringContaining(hint)}});
+    expect(JSON.stringify(result)).not.toContain(f.key);expect(result.error).not.toContain('gross_amount');
+  }
+  expect(mockRpc).not.toHaveBeenCalled();
+  const denial=await f.call({scope:'platform',query}).catch(e=>e);
+  expect(failureForAgent(denial)).toMatchObject({code:'ANALYTICS_SCOPE_DENIED',executed:false,recovery:{action:'ask_manager'}});
+  expect(mockRpc.mock.calls.map(([n])=>n)).toEqual(['connector_analytics_result_ready']);
+  expect(mockRpc.mock.calls[0][1]).toMatchObject({p_data_scope:'platform',p_source:'paid_sales'});
+  expect(f.dispatches()).toBe(0);expect(f.stores).toHaveLength(0);
+});
+
 it('does not trust the connector ref, a matching URL, or an old description when a fresh admission has no project proof',async()=>{
   const f=setup();const d=await f.runtime.describe(f.name);
   const unresolved={...f.bound,localProjectRef:undefined};jest.mocked(resolveConnectorAction).mockResolvedValue(unresolved);

@@ -330,8 +330,9 @@ it.each([
 it('keeps read tools direct during restricted repair and refreshes the actual tool manifest', async () => {
   fixture();
   const ctx = context();
+  const write = jest.fn();
   const all = routeTools([...createHarnessDiagnosticTools(ctx),
-    { name: 'sandbox_write_file', description: 'Test-only write tool', parameters: { type: 'object' }, execute: jest.fn() }]);
+    { name: 'sandbox_write_file', description: 'Test-only write tool', parameters: { type: 'object' }, execute: write }]);
   expect(all.every(tool => tool.parameters.type === 'object')).toBe(true);
   expect(all.find(tool => tool.name === 'harness_decide')?.parameters.properties.decision.enum)
     .toEqual(['approve_backlog', 'adapt_backlog']);
@@ -345,7 +346,7 @@ it('keeps read tools direct during restricted repair and refreshes the actual to
   expect(result.runtime.exposed_tools).not.toContain('harness_decide');
   expect(result.runtime).toMatchObject({ kind: 'evidence_collection', sandbox_tools_exposed: false,
     exposed_tools: ['harness_events', 'harness_inspect', 'harness_reference', 'harness_source'] });
-  expect(all.find(tool => tool.name === 'sandbox_write_file')!.execute).not.toHaveBeenCalled();
+  expect(write).not.toHaveBeenCalled();
 });
 
 it.each(['http:', 'https:'])('redacts nested secrets and each URL credential before email redaction (%s)', protocol => {

@@ -6,6 +6,10 @@ import ts from 'typescript';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { NextRequest } from 'next/server';
+import * as argumentContract from '@/lib/tools/argument-contract';
+import * as routingPolicy from '@/app/api/agents/tools/router/tool-routing-policy';
+import * as searchContext from '@/app/api/agents/tools/router/search-context';
+import * as connectorResolver from '@/lib/connectors/tool-resolver';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 
 const siteId = randomUUID();
@@ -46,6 +50,7 @@ function catalog() {
   dependencies['@/app/api/agents/tools/instance_history/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/instance_history/assistantProtocol.ts', {
       'zod-to-json-schema': { zodToJsonSchema },
+      '../router/tool-routing-policy': routingPolicy,
       '@/lib/services/robot-instance/instance-history-reader': reader,
     });
   dependencies['@/lib/services/tool-execution-context'] = { readToolExecutionContext: () => undefined };
@@ -55,7 +60,10 @@ function catalog() {
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
       './tool-categories': loadRuntimeModule('src/app/api/agents/tools/router/tool-categories.ts', {}),
-      './tool-routing-policy': loadRuntimeModule('src/app/api/agents/tools/router/tool-routing-policy.ts', {}),
+      './tool-routing-policy': routingPolicy,
+      './search-context': searchContext,
+      '@/lib/connectors/tool-resolver': connectorResolver,
+      '@/lib/tools/argument-contract': argumentContract,
       '@/lib/services/embeddings-service': {},
       '../catalog_commerce/batch-admin-tool': { bindCatalogBatchActor: (tool: unknown) => tool },
       './screen-access': {

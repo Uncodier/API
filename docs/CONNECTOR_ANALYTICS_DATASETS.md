@@ -21,6 +21,17 @@ SELECT currency, SUM(amount) AS amount, COUNT(DISTINCT site_id) AS participating
 FROM analytics.paid_sales WHERE sale_date >= $1 GROUP BY currency ORDER BY currency
 ```
 
+For a monthly breakdown, `date_trunc('month', column)` on a listed `date` or `timestamptz` returns the month-start date. Dates use the source calendar; timestamps use UTC, independent of the session timezone. Use half-open bounds in the same date basis as the question. For a different reporting timezone, use independently bounded intervals with explicit offsets instead of labeling a UTC month as local. The function is not a general SQL function interface. `GROUP BY` and `ORDER BY` also accept select-list positions starting at 1; a group position must refer to a dimension, not an aggregate.
+
+```sql
+SELECT date_trunc('month', sale_date) AS period, currency,
+       COUNT(DISTINCT site_id) AS sites, COUNT(*) AS sales, SUM(amount) AS gross_amount
+FROM analytics.paid_sales WHERE sale_date >= $1 AND sale_date < $2
+GROUP BY 1,2 ORDER BY 1,2 LIMIT 25
+```
+
+This counts participating sites **per month and currency**, not unique sites over the full period. Do not add distinct counts across buckets or treat a truncated 25-row page as a complete breakdown. A local compiler rejection dispatches nothing; correct the indicated clause, keeping the original connection and scope. A platform denial is not a query syntax error.
+
 ## Workspace and platform access
 
 - `scope: "workspace"` is the default. The site comes from the server-owned connector and private owner/instance binding; there is no model-provided site, user, project, relation or tenant predicate. Each trusted SQL source applies a bound workspace predicate, including every joined tenant edge; no model filter is relied upon. Workspace scope admits bounded non-ID fact projections, not arbitrary rows or customer columns. Platform scope is aggregate-only, excludes unattributed rows and preserves same-tenant join keys.
