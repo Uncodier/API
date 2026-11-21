@@ -4,7 +4,7 @@ import { ConnectorError } from '../types';
 import { secret } from './composio-fixtures';
 
 it.each([
-  ['PROVIDER_AUTH_FAILED','ask_manager'], ['APP_AUTH_REJECTED','verify_connection'], ['CONNECTOR_SCOPE_MISSING','request_scope'],
+  ['CATALOG_AUTHORIZATION_UNAVAILABLE','retry_later'], ['PROVIDER_AUTH_FAILED','ask_manager'], ['APP_AUTH_REJECTED','verify_connection'], ['CONNECTOR_SCOPE_MISSING','request_scope'],
   ['CONNECTOR_SCOPE_UNSUPPORTED','alternate_route'], ['APP_RESOURCE_DENIED','ask_user'], ['ACCESS_DENIED','ask_manager'],
   ['PROVIDER_RATE_LIMITED','retry_later'], ['APP_RATE_LIMITED','retry_later'], ['CONNECTOR_SCHEMA_CHANGED','describe_again'],
   ['CONNECTOR_OUTCOME_UNKNOWN','reconcile'], ['CONNECTOR_RESULT_UNSUPPORTED','alternate_route'], ['STALE_CURSOR','restart_search'],

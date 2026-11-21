@@ -10,6 +10,9 @@ import { loadToolScreenAccess } from '@/app/api/agents/tools/router/screen-acces
 import type { ConnectorContextResolver } from './host-context';
 import { catalogDefinition, catalogGrant, catalogInstance, catalogScreens, instanceCatalogPage } from './instance-catalog-discovery';
 
+import { analyticsRelease } from './analytics-release';
+import { directQueryMode } from './supabase-direct-query';
+import { SUPABASE_CATALOG_SLUG } from './supabase-report-contract';
 import { privateResultBinding, checkPrivateDestination, deliverPrivateResult } from './private-result-delivery';
 
 export type ConnectorFilters = { query?: string; catalog_query?: string; domain?: string; category?: string; connector_id?: string; cursor?: string };
@@ -148,22 +151,27 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
           }
         }
         const destination = context.host === 'assistant' ? privateResultBinding(context, authorized, tool.slug, dynamic) : null;
+        const requestedScope = dynamic && tool.slug === SUPABASE_CATALOG_SLUG ? directQueryMode(args) : null;
+        const project = authorized.connector.supabase_project_ref;
+        if (requestedScope && (!destination || !project)) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED','Direct SQL requires a private project-bound instance.',403);
+        const analytics = requestedScope && destination && project ? analyticsRelease(destination,project,requestedScope) : undefined;
         const result = await executeConnectorTool({ credential, connector: authorized.connector, provider: authorized.provider,
-          ...(dynamic && { catalogRead: true }),
+          ...(dynamic && { catalogRead: true }), ...(analytics && { authorizeSelect: analytics.permit }),
           toolSlug: tool.slug, input: args, allowedTools: [tool.slug], toolkitVersion: envelope.version,
           schemaHash: envelope.schema_hash, requiredScopes: tool.requiredScopes, beforeDispatch: async () => {
             const current = await authorize(name);
             if (actor(current.context) !== actor(context) || binding(current.authorized) !== binding(authorized)) {
               throw new ConnectorError('ACCESS_CHANGED', 'Connector authority changed before dispatch.', 409);
             }
-            if (destination) await checkPrivateDestination(destination);
+            if (analytics) await analytics.confirm();
+            else if (destination) await checkPrivateDestination(destination);
             dispatched = true;
           } });
         const after = await authorize(name);
         if (actor(after.context) !== actor(context) || binding(after.authorized) !== binding(authorized)) {
           throw new ConnectorError('ACCESS_CHANGED', 'Connector result is no longer available.', 403);
         }
-        if (destination) return await deliverPrivateResult(destination, result, credential.apiKey, envelope.version, envelope.schema_hash);
+        if (destination) return await deliverPrivateResult(destination, result, credential.apiKey, envelope.version, envelope.schema_hash, await analytics?.confirm());
         return { success: true, name, result, receipt: { connector_id: authorized.connector.id,
           tool: tool.slug, version: envelope.version, effect: 'read', status: 'completed' } };
       } catch (error) {

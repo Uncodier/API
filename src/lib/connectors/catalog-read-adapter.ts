@@ -5,6 +5,10 @@ import { assertOrdinaryCatalogAccount, ordinaryCatalogResource, publishedArgumen
 import { catalogListSchema, catalogListOutput, publishedListSchema } from './catalog-read-schema';
 import { projectCatalogList, projectPublishedList, resultUnsupported } from './catalog-read-result';
 import { publishedList, sameSet } from './catalog-read-published';
+import { directQueryMode, projectAnalyticsResult } from './supabase-direct-query';
+import { getSupabaseAnalyticsDataset } from './supabase-analytics-sources';
+import { compileAnalyticsSelect } from './supabase-select-compiler';
+import type { CompiledAnalyticsSelect } from './supabase-select-types';
 import { verifyAccountIdentity } from './composio-accounts';
 import { getToolkit } from './composio-catalog';
 import { createComposioClient, type ComposioClient, validateJson } from './composio-transport';
@@ -27,9 +31,23 @@ async function planRead(input: ConnectorDescriptionInput, tool: CatalogReadMetad
     const { SUPABASE_CATALOG_SLUG, describeSupabaseCatalogRead, supabaseCatalogArguments, projectSupabaseCatalogResult } = await import('./supabase-report-profile');
     if (tool.slug !== SUPABASE_CATALOG_SLUG) unsupportedAction();
     const plan = await describeSupabaseCatalogRead(connector, tool);
-    return { ...plan, description: 'Read a bounded report from a published view in the bound project.',
-      prepare: (args: Args) => supabaseCatalogArguments(connector, tool, args),
-      project: (data: unknown, args: Args) => projectSupabaseCatalogResult(data, connector, args, input.credential.apiKey) };
+    // State belongs to exactly one prepared call; never cached or reused across requests.
+    let compiled: CompiledAnalyticsSelect | undefined;
+    return { ...plan, description: Object.hasOwn(plan.modelSchema,'anyOf')
+      ? 'Use query to calculate requested figures directly. Use {} only when asked to list existing reports. Results are private.'
+      : 'Read a bounded published report. Direct SELECT requires a verified analytics dataset for this project.',
+      prepare: async (args: Args) => {
+        const scope = directQueryMode(args);
+        if (scope === null) return supabaseCatalogArguments(connector, tool, args);
+        if (!input.authorizeSelect) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED','A verified private SQL destination is required.',403);
+        const dataset = getSupabaseAnalyticsDataset(connector,scope);
+        compiled = compileAnalyticsSelect(args.query,args.parameters,dataset);
+        const ref = connector.supabase_project_ref!;
+        await input.authorizeSelect({scope, source:compiled.source, projectRef:ref});
+        return { ref, query:compiled.query, parameters:compiled.parameters };
+      },
+      project: (data: unknown, args: Args) => compiled ? projectAnalyticsResult(data,compiled,input.credential.apiKey)
+        : projectSupabaseCatalogResult(data, connector, args, input.credential.apiKey) };
   }
   const profile = publishedList(connector.toolkit_slug, tool.slug);
   if (profile) {

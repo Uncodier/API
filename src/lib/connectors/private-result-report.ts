@@ -1,5 +1,6 @@
 import { resultUnsupported } from './catalog-read-result';
 import { reportViewId, SUPABASE_CATALOG_SLUG } from './supabase-report-contract';
+import type { AnalyticsAuthority } from './supabase-analytics-authorization';
 import { TABLE_TOOL } from './supabase-table-policy';
 
 const MAX_ROWS = 100;
@@ -16,7 +17,7 @@ const bounded = 'This is a bounded page, not a total or a complete result set.';
 
 /** Never store an arbitrary provider document, diagnostics, nested records, attachment URLs,
  * message bodies, paging tokens or raw envelopes, even in the private destination. */
-export function privateReport(tool: string, catalog: boolean, result: unknown, key: string): Report {
+export function privateReport(tool: string, catalog: boolean, result: unknown, key: string, analytics?: AnalyticsAuthority): Report {
   const env = object(result);
   if (env.successful !== true || !key) resultUnsupported();
   const data = object(env.data);
@@ -30,7 +31,26 @@ export function privateReport(tool: string, catalog: boolean, result: unknown, k
     return { title, columns, rows, note: values.length > MAX_ROWS ? `Only the first ${MAX_ROWS} rows are shown. ${note}` : note };
   }
   let report: Report;
-  if (catalog && tool === SUPABASE_CATALOG_SLUG) {
+  if (analytics) {
+    if (!catalog || tool!==SUPABASE_CATALOG_SLUG || !['workspace','platform'].includes(analytics.scope) ||
+      data.kind!=='analytics' || typeof data.has_more!=='boolean' || !Array.isArray(data.columns) || !data.columns.length || data.columns.length>5 ||
+      !data.columns.every(c=>typeof c==='string' && /^[a-z][a-z0-9_]{0,47}$/.test(c) && !Object.hasOwn(Object.prototype,c)) ||
+      new Set(data.columns).size!==data.columns.length || !Array.isArray(data.rows) || data.rows.length>25) resultUnsupported();
+    const columns:string[]=data.columns;
+    const rows=data.rows.map(r=>{
+      if (!Array.isArray(r) || r.length!==columns.length || r.some(v=>v!==null && (typeof v!=='string' || Buffer.byteLength(v)>200 || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(v)))) resultUnsupported();
+      return r.map(v=>v===null ? 'NULL' : v as string);
+    });
+    const basis:Readonly<Record<string,string>> = {
+      paid_sales:'Currently completed sales with zero recorded balance; sale date and face value in major units, not a cash receipt date.',
+      tender_awards:'Approved awards at winning quotation values. Dates are award creation timestamps; net and tax amounts are in minor units.',
+      approved_orders:'Approved purchase orders, not cash payments. Dates are order creation timestamps; net and tax amounts are in minor units.',
+    };
+    const semantics = Object.hasOwn(basis,analytics.source) ? basis[analytics.source] : 'Uses the facts and units configured by the source operator.';
+    report={title: analytics.scope==='platform' ? 'All-account analytics query' : 'Workspace analytics query',columns,rows,
+      note: `Source: ${analytics.source}. ${semantics} ` + (data.has_more ? 'More rows matched than the requested row limit. This is not a complete breakdown.' : 'Results for the requested filters and scope; NULL is not zero.')};
+  } else if (catalog && tool === SUPABASE_CATALOG_SLUG) {
+    if (data.kind==='analytics') resultUnsupported(); // SQL output always uses its dedicated private authorization.
     if (data.status === 'not_available') {
       report = { title: 'Published report unavailable', columns: [], rows: [], note: 'Ask the project database administrator to verify the published report and its reporting-role permissions. This does not mean there are zero sales or accounts.' };
     } else if (Array.isArray(data.views) && data.views.length <= 25 && data.views.every(reportViewId)) {

@@ -127,6 +127,9 @@ function catalogActorCheck(context: ConnectorContext, requested: boolean): Catal
     const { data, error } = await supabaseAdmin.rpc('connector_catalog_read_actor', {
       p_site_id: context.siteId, p_user_id: context.userId, p_instance_id: context.instanceId, p_agent_id: context.agentId,
     }).abortSignal(deadline());
+    // A real actor denial is a boolean false. A privilege failure executing this
+    // server-only predicate is an infrastructure error, not a missing user or OAuth grant.
+    if (error?.code === '42501') throw new ConnectorError('CATALOG_AUTHORIZATION_UNAVAILABLE', 'Connector authorization could not be evaluated.', 503);
     if (error || typeof data !== 'boolean') connectorDatabaseError(error);
     return data === true;
   })();

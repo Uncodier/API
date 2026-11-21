@@ -44,6 +44,16 @@ export function agentRecovery(code: string): Advice {
       return advice('alternate_route', 'The read did not return a verified result. Do not infer missing access, an empty dataset, or a zero total. Ask for a limited export or a manual check.', manual);
     case 'CONNECTOR_OUTCOME_UNKNOWN':
       return advice('reconcile', 'Tell the user no result was confirmed. Verify the outcome in the original system before repeating this operation or attempting it another way.');
+    case 'ANALYTICS_WORKSPACE_ONLY':
+      return advice('ask_user', 'This external dataset is authorized only for the workspace. Ask whether a clearly labeled workspace report is useful or request an authorized all-account export. Do not substitute scopes silently.',manual);
+    case 'ANALYTICS_WORKSPACE_DENIED':
+      return advice('ask_manager', 'Ask the workspace manager to verify this source and the current actor, agent and connector-use permissions. Procurement sources require unrestricted owner or admin access. No new provider token or platform grant is required for workspace scope.',manual);
+    case 'ANALYTICS_SCOPE_DENIED':
+      return advice('ask_manager', 'The requested source or all-account scope has not been authorized for this actor and connection. Ask the platform operator to verify the exact analytics grant and access to the requested source (procurement also requires a workspace manager). Do not reconnect or substitute workspace totals.',manual);
+    case 'SUPABASE_DATASET_UNAVAILABLE': case 'ANALYTICS_SOURCE_UNVERIFIED':
+      return advice('alternate_route', 'This project or analytics source could not be verified for direct reads. Ask the project operator to configure its dataset and reporting-role permissions. Do not infer a zero total.',manual);
+    case 'CATALOG_AUTHORIZATION_UNAVAILABLE':
+      return advice('retry_later', 'Makinari could not verify connector access. Do not reconnect or change workspace permissions; contact Makinari support if this persists.', manual);
     case 'PROVIDER_TIMEOUT': case 'PROVIDER_UNAVAILABLE': case 'STORAGE_UNAVAILABLE': case 'HOST_IDENTITY_UNAVAILABLE': case 'TOOL_SCREEN_ACCESS_UNAVAILABLE':
       return advice('retry_later', 'A verification service is unavailable. This does not establish missing permissions. Offer to retry later.', manual);
     case 'TOOL_UNREVIEWED': case 'SCHEMA_UNSUPPORTED': case 'SCOPES_UNSUPPORTED': case 'CONNECTOR_SCOPE_UNSUPPORTED': case 'CONNECTOR_UNSAFE_ARGUMENT':

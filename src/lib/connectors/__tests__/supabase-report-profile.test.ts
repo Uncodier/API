@@ -6,7 +6,8 @@ import { projectSupabaseCatalogResult, SUPABASE_CATALOG_SLUG } from '../supabase
 import { conversationReviewSlugs, getReviewedTool } from '../reviewed-tools';
 import { accountFixture, connectorFixture, providerFixture, toolkitFixture, toolFixture, secret, jsonResponse } from './composio-fixtures';
 
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {} }));
+// A bound external project without a mapped analytics dataset retains the published-view profile.
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {}, getSupabaseServiceRoleUrl: ()=>'https://other.example.test' }));
 jest.mock('../access', () => ({}));
 const http = jest.fn();
 const original = { fetch: global.fetch, origin: process.env.CONNECTORS_WEB_ORIGIN, bindings: process.env.CONNECTOR_PROVIDER_BINDINGS };

@@ -1,6 +1,8 @@
 import { unsupportedScopes, type CatalogReadMetadata } from './catalog-read-metadata';
 import type { ComposioAccount } from './composio-accounts';
 import { assertReportContract, reportBinding, reportModelSchema, REPORT_SCOPE } from './supabase-report-contract';
+import { analyticsDatasetFingerprint } from './supabase-analytics-sources';
+import { directQueryFields } from './supabase-direct-query';
 import { reportArguments } from './supabase-report-query';
 import { ConnectorError, type Connector } from './types';
 
@@ -10,7 +12,10 @@ export { projectSupabaseCatalogResult } from './supabase-report-result';
 export function describeSupabaseCatalogRead(connector: Connector, tool: CatalogReadMetadata) {
   const binding = reportBinding(connector);
   assertReportContract(tool);
-  return { modelSchema: reportModelSchema(), binding };
+  const published = reportModelSchema(), direct = directQueryFields(connector);
+  if (!Object.hasOwn(direct, 'query')) return {modelSchema:published, binding};
+  return { modelSchema: { anyOf:[published,{ type:'object',additionalProperties:false,properties:direct,required:['query'] }] },
+    binding: { ...binding, analytics: analyticsDatasetFingerprint(connector) } };
 }
 
 export function supabaseCatalogArguments(connector: Connector, tool: CatalogReadMetadata, args: Record<string, unknown>) {

@@ -11,7 +11,7 @@ import { ConnectorError, type AuthorizedConnector, type ConnectorContext } from 
 
 const PAGE_SIZE = 5;
 const REPORT = 'SUPABASE_RUN_READ_ONLY_QUERY';
-const reportDescription = 'List or read reports deliberately published to this workspace in the bound project. No arbitrary SQL or other workspaces.';
+const reportDescription = 'Calculate figures with a direct read-only SELECT on authorized analytics sources, or list published reports. Describe this tool to see queryable sources and scopes.';
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 24);
 const stale = () => new ConnectorError('STALE_CURSOR', 'Connector inventory changed. Restart the search without its cursor.', 409);
 
@@ -38,7 +38,7 @@ export function catalogDefinition(slug: string, toolkit: string) {
 const providerTerms = /\b(?:labels|calendars|companies|contacts|customers|deals|projects|issues|reports|tables|tickets|tasks|orders|messages|events|folders)\b/g;
 function publicQuery(toolkit: string, text: string) {
   if (toolkit === 'supabase' && (text.trim().toUpperCase() === REPORT ||
-      /\b(reports?|reportes?|informes?|reporting|aggregates?|agregados?)\b/i.test(text))) return REPORT;
+      /\b(reports?|reportes?|informes?|reporting|aggregates?|agregados?|analytics|sql|select|kpis?|ventas|licitaciones|compras|sales|tenders)\b/i.test(text))) return REPORT;
   return text.toLowerCase().match(providerTerms)?.[0];
 }
 function localMatch(toolkit: string, item: Awaited<ReturnType<typeof listToolkitToolMetadata>>['items'][number], query?: string) {

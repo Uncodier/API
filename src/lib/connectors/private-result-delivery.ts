@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ConnectorError, type AuthorizedConnector, type ConnectorContext } from './types';
+import type { AnalyticsAuthority } from './supabase-analytics-authorization';
 import { privateReport } from './private-result-report';
 
 const denied = () => new ConnectorError('ACCESS_DENIED', 'This private destination requires a verified instance owner and current connector use.', 403);
@@ -26,13 +27,16 @@ export async function checkPrivateDestination(binding: Binding) {
   if (response.error || typeof response.data !== 'boolean') throw unavailable();
   if (!response.data) throw denied();
 }
-export async function deliverPrivateResult(binding: Binding, result: unknown, key: string, version: string, hash: string) {
-  const report = privateReport(binding.p_tool, binding.p_catalog, result, key);
+export async function deliverPrivateResult(binding: Binding, result: unknown, key: string, version: string, hash: string, analytics?: AnalyticsAuthority) {
+  const report = privateReport(binding.p_tool, binding.p_catalog, result, key, analytics);
   // Neither a DB diagnostic nor the projected report may reach the host. The service
   // role cannot read reports back; only the owner's authenticated RPC can.
   let response;
   try {
-    response = await supabaseAdmin.rpc('store_connector_private_result', { ...binding, p_version: version, p_schema_hash: hash, p_report: report }).abortSignal(AbortSignal.timeout(5000));
+    const args = { ...binding, p_version: version, p_schema_hash: hash, p_report: report };
+    const store = analytics ? supabaseAdmin.rpc('store_connector_analytics_result', { ...args, p_project_ref:analytics.projectRef,
+      p_data_scope:analytics.scope, p_grant_id:analytics.grantId, p_source:analytics.source }) : supabaseAdmin.rpc('store_connector_private_result', args);
+    response = await store.abortSignal(AbortSignal.timeout(5000));
   } catch { throw unconfirmed(); }
   const { data, error } = response;
   if (error?.code === '42501') throw new ConnectorError('ACCESS_CHANGED', 'Private delivery is no longer authorized.', 403);

@@ -422,3 +422,13 @@ it('retains reviewed discovery on selected mixed accounts; the specific catalogu
   await expect(resolveConnectorAction(chosen,connectorId,'GMAIL_LIST_LABELS',true,true)).rejects.toMatchObject({code:'ACCESS_DENIED'});
   await expect(resolveConnectorAction(chosen,connectorId,'GMAIL_FETCH_EMAILS',true,true)).resolves.toMatchObject({requestOnly:true});
 });
+
+
+it('keeps a server-side actor RPC privilege error separate from a real actor denial', async () => {
+  catalogPolicy(); const prior = rpc.getMockImplementation()!;
+  const selected = { ...boundInstance, connectorIdHint: connectorId };
+  rpc.mockImplementation((name, ...args) => name === 'connector_catalog_read_actor' ? query(null, {code:'42501'}) : prior(name,...args));
+  await expect(listUsableConnectors(selected,false,true)).rejects.toMatchObject({code:'CATALOG_AUTHORIZATION_UNAVAILABLE',status:503});
+  rpc.mockImplementation((name, ...args) => name === 'connector_catalog_read_actor' ? query(false) : prior(name,...args));
+  await expect(resolveConnectorAction(selected,connectorId,custom,false,true)).rejects.toMatchObject({code:'ACCESS_DENIED',status:403});
+});

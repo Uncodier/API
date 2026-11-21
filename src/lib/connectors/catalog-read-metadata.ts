@@ -11,6 +11,8 @@ export type ConnectorDescriptionInput = {
   provider?: ConnectorProvider; toolSlug: string; toolkitVersion?: string;
   /** Set only by the private instance host after resolving effective policy. */
   catalogRead?: boolean;
+  /** Internal runtime callback: never read from provider metadata or model arguments. */
+  authorizeSelect?: import('./supabase-direct-query').AnalyticsPermit;
 };
 export type ConnectorToolDescription = {
   slug: string; toolkitSlug: string; toolkitVersion: string; inputSchema: Record<string, unknown>;
