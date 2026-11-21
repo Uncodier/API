@@ -6,7 +6,7 @@ import { verifyAccountIdentity } from './composio-accounts';
 import { createComposioClient } from './composio-transport';
 import { providerId, providerValue } from './composio-validation';
 import { ensureSupabaseTokenConfig } from './managed-oauth';
-import { prepareConnectorTokenProvider } from './provider-binding';
+import { prepareConnectorTokenProvider, readTokenProviderBinding } from './provider-binding';
 import { ConnectorError } from './types';
 
 export const supabaseTokenInput = z.object({
@@ -62,7 +62,8 @@ export async function connectSupabaseToken(input: z.infer<typeof supabaseTokenIn
     if (saved.error) connectorDatabaseError(saved.error);
     await verifyAccountIdentity(client, { accountId: created.id, userId: provider.provider_user_id, toolkitSlug: slug, authConfigId: config });
     await requireConnectorSiteAccess(site, actor, true);
-    if ((await loadConnectorCredential(site)).revision !== credential.revision) throw new Error('Credential revision changed');
+    if ((await loadConnectorCredential(site)).revision !== credential.revision ||
+      (await readTokenProviderBinding(site, credential.revision)).projectId !== provider.project_id) throw new Error('Provider binding changed');
     const claim = await supabaseAdmin.from('site_connector_auth_attempts').update({ status: 'completing' })
       .eq('id', id).eq('status', 'pending').select('id').abortSignal(signal()).single();
     if (claim.error) connectorDatabaseError(claim.error);

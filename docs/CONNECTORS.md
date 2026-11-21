@@ -33,6 +33,12 @@ and [access model](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/C
   (legacy `COMPOSIO_PROJECT_API_KEY`) only when the BYOK row is absent. Platform
   connections additionally require `COMPOSIO_PROJECT_ID` and the trusted callback
   origin/verifier. The site UUID remains the provider user; never global `default`.
+  BYOK project and callback verification now uses an exact, operator-managed private database
+  row per site and encrypted credential revision, across toolkits (no runtime environment list).
+  Apply `20261121031200_connector_provider_attestations.sql` and explicitly import only vetted
+  tuples; follow **Provider setup prerequisites** in the shared implementation guide before
+  switching readers. Migration commit gates previously saved BYOK receipts immediately. A
+  registry withdrawal blocks subsequent account use; it never reconnects or changes grants.
 - Legacy apps/integrations catalogue routes now return the new scoped safe DTOs,
   not the former `{ success, data }` response. External callers must authenticate
   with a verified user bearer and use the documented site query.

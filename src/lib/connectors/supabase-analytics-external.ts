@@ -3,7 +3,7 @@ import { baseGuard } from './supabase-analytics-guards';
 import { z } from 'zod';
 import type { AnalyticsColumnType, AnalyticsDataset, AnalyticsSource } from './supabase-select-types';
 
-// Server deployment policy only. No caller input, SQL fragments, paths, connection strings or views.
+// Operator policy only. No caller input, SQL fragments, paths, connection strings or views.
 // An operator must verify the external tenant key stores Makinari site UUIDs and each published
 // field is an appropriate analytical fact. Restrict categorical strings to pre-reviewed labels.
 const name = z.string().min(1).max(48).regex(/^[a-z][a-z0-9_]*$/).refine(v =>
@@ -15,21 +15,17 @@ const columns = z.array(z.union([field.extend({ type: primitive }).strict(),
   field.extend({ type: z.literal('text'), values: z.array(token).min(1).max(32) }).strict()])).min(1).max(12);
 const definition = z.object({ name, schema: name.refine(v => v.startsWith('makinari_facts_')), table: name,
   siteColumn: name, columns, money:z.object({currency:name, measures:z.array(name).min(1).max(12)}).strict().optional() }).strict();
-const policies = z.array(z.object({ projectRef: z.string().length(20).regex(/^[a-z]{20}$/), siteId: z.string().uuid(),
-  sources: z.array(definition).min(1).max(8) }).strict()).max(64);
+const policy = z.object({ projectRef: z.string().length(20).regex(/^[a-z]{20}$/), siteId: z.string().uuid(),
+  sources: z.array(definition).min(1).max(8) }).strict();
 const namesUnique = (a: string[]) => new Set(a).size === a.length;
 
-export function externalDataset(ref: string, site: string): AnalyticsDataset | null {
-  const json = process.env.CONNECTOR_ANALYTICS_EXTERNAL_DATASETS;
-  if (!json || Buffer.byteLength(json) > 65_536) return null;
-  let value: unknown;
-  try { value = JSON.parse(json); } catch { return null; }
-  const parsed = policies.safeParse(value);
-  if (!parsed.success) return null;
-  const matches = parsed.data.filter(p => p.projectRef === ref && p.siteId === site);
-  if (matches.length !== 1 || !namesUnique(matches[0].sources.map(s => s.name))) return null;
+/** Compile one trusted registry definition. Never search other workspaces or read deployment configuration. */
+export function externalDataset(ref: string, site: string, mapping: unknown): AnalyticsDataset | null {
+  const parsed = policy.safeParse(mapping);
+  if (!parsed.success || parsed.data.projectRef !== ref || parsed.data.siteId !== site ||
+    Buffer.byteLength(JSON.stringify(parsed.data.sources)) > 65_536 || !namesUnique(parsed.data.sources.map(s => s.name))) return null;
   const sources: Record<string, AnalyticsSource> = Object.create(null);
-  for (const d of matches[0].sources) {
+  for (const d of parsed.data.sources) {
     if (NATIVE_SOURCE_NAMES.has(d.name)) return null; // Never borrow native semantics or document labels for external facts.
     if (!namesUnique(['site_id', ...d.columns.map(c => c.name)]) || !namesUnique([d.siteColumn, ...d.columns.map(c => c.column)])) return null;
     if (d.money) {

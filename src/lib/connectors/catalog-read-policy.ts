@@ -36,12 +36,21 @@ function hasHazardousAnnotation(value: unknown): boolean {
     : hasHazardousAnnotation(v));
 }
 
+// A naming convention is a discovery hint only. GET/FETCH can qualify as a bounded
+// collection read only under the same independent schema, scope and account checks as LIST.
+function collectionResource(toolkit: string, slug: string): string | undefined {
+  if (infrastructure.test(toolkit)) return;
+  const prefix = `${toolkit.toUpperCase()}_`;
+  const match = slug.startsWith(prefix) && /^(?:LIST|GET|FETCH)_(?:ALL_)?([A-Z]+)$/.exec(slug.slice(prefix.length));
+  if (!match) return;
+  const resource = match[1].toLowerCase();
+  return noun(resource) ? resource : undefined;
+}
+
 export function ordinaryCatalogResource(tool: CatalogReadMetadata) {
-  const prefix = `${tool.toolkit.slug.toUpperCase()}_LIST_`;
-  if (!tool.slug.startsWith(prefix) || infrastructure.test(tool.toolkit.slug) || hazardousOperation.test(tool.description) ||
+  const resource = collectionResource(tool.toolkit.slug, tool.slug);
+  if (!resource || hazardousOperation.test(tool.description) ||
     hasHazardousAnnotation(tool.input_parameters) || hasHazardousAnnotation(tool.output_parameters)) unsupportedAction();
-  const resource = tool.slug.slice(prefix.length).toLowerCase();
-  if (!noun(resource)) unsupportedAction();
   if (tool.scopes.length === 0 || !tool.scopes.every(scope => scopeResource(scope, tool.toolkit.slug) === resource)) unsupportedScopes();
   return resource;
 }

@@ -1,28 +1,29 @@
+import { attestedProject } from './byok-rpc-fixture';
 import publishedContract from './fixtures/supabase-report-20261116_00.json';
 import { randomUUID } from 'node:crypto';
 import { describeConnectorTool, executeConnectorTool } from '../composio-sessions';
+import { loadExternalDataset } from '../supabase-analytics-registry';
 import { assertReportContract, reportBinding, reportRequest } from '../supabase-report-contract';
 import { projectSupabaseCatalogResult, SUPABASE_CATALOG_SLUG } from '../supabase-report-profile';
 import { conversationReviewSlugs, getReviewedTool } from '../reviewed-tools';
 import { accountFixture, connectorFixture, providerFixture, toolkitFixture, toolFixture, secret, jsonResponse } from './composio-fixtures';
 
 // A bound external project without a mapped analytics dataset retains the published-view profile.
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {}, getSupabaseServiceRoleUrl: ()=>'https://other.example.test' }));
+const mockProofRpc = jest.fn();
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (...args:unknown[]) => mockProofRpc(...args) } }));
+jest.mock('../supabase-analytics-registry', () => ({loadExternalDataset: jest.fn(async () => null)}));
 jest.mock('../access', () => ({}));
 const http = jest.fn();
-const original = { fetch: global.fetch, origin: process.env.CONNECTORS_WEB_ORIGIN, bindings: process.env.CONNECTOR_PROVIDER_BINDINGS };
+const original = { fetch: global.fetch, origin: process.env.CONNECTORS_WEB_ORIGIN };
 beforeEach(() => { http.mockReset(); global.fetch = http; process.env.CONNECTORS_WEB_ORIGIN = 'https://app.example.test'; });
 afterEach(() => {
   global.fetch = original.fetch;
-  for (const [k, v] of [['CONNECTOR_PROVIDER_BINDINGS', original.bindings], ['CONNECTORS_WEB_ORIGIN', original.origin]] as const) {
-    if (v === undefined) delete process.env[k]; else process.env[k] = v;
-  }
+  if (original.origin === undefined) delete process.env.CONNECTORS_WEB_ORIGIN; else process.env.CONNECTORS_WEB_ORIGIN = original.origin;
 });
 function fixture() {
   const site_id = randomUUID(); const revision = secret(); const ref = 'a'.repeat(20);
   const provider = { ...providerFixture(), site_id, provider_user_id: site_id, credential_revision: revision };
-  process.env.CONNECTOR_PROVIDER_BINDINGS = JSON.stringify([{ site_id, project_id: provider.project_id, credential_revision: revision,
-    oauth_verifier_url: 'https://app.example.test/connectors/callback' }]);
+  mockProofRpc.mockImplementation(attestedProject({ ...provider }));
   const slug = SUPABASE_CATALOG_SLUG;
   const tool = { ...toolFixture(), slug, toolkit: { slug: 'supabase' }, version: '20261116_00', scopes: ['database_read'],
     tags: ['important', 'readOnlyHint', 'openWorldHint', 'Database'], input_parameters: { type: 'object', required: ['query', 'ref'], properties: {
@@ -32,7 +33,7 @@ function fixture() {
   const toolkit = { ...toolkitFixture(), slug: 'supabase', name: 'Supabase' };
   const account = { ...accountFixture(), toolkit: tool.toolkit, user_id: site_id, state: { authScheme: 'API_KEY', val: { full: 'https://api.supabase.com' } } };
   const connector = { ...connectorFixture(), site_id, toolkit_slug: 'supabase', supabase_project_ref: ref, granted_scopes: [] };
-  const input = { credential: { apiKey: secret(), revision }, connector, provider, toolSlug: slug, catalogRead: true };
+  const input = { localProjectRef: 'b'.repeat(20), credential: { apiKey: secret(), revision }, connector, provider, toolSlug: slug, catalogRead: true };
   const frame = (view: string | null, rows: unknown) => [{ report_schema: reportBinding(connector).schema, report_view: view, report_rows: rows }];
   const queue = (...values: unknown[]) => values.forEach(v => http.mockResolvedValueOnce(jsonResponse(v)));
   return { input, tool, toolkit, account, frame, queue };
@@ -48,6 +49,8 @@ const noPost = () => expect(http.mock.calls.filter(c => c[1]?.method === 'POST')
 test('describes the model projection only and executes exactly one credential-bound, parameterized native operation', async () => {
   const { descriptor, call, tool, toolkit, account, queue, frame } = await pinned();
   expect(descriptor.description).not.toBe(tool.description);
+  expect(descriptor.description).toContain('No direct analytics sources are registered');
+  expect(descriptor.description).toContain('not to answer a data question');
   expect(Object.keys((descriptor.inputSchema as {properties: object}).properties)).toEqual(['view', 'after', 'limit']);
   expect(JSON.stringify(descriptor)).not.toContain(reportBinding(call.connector).schema);
   const opaque = secret();
@@ -73,7 +76,7 @@ test('a pinned description never works for a different project binding, auth typ
   }
   http.mockReset(); queue(tool, toolkit, account);
   await expect(executeConnectorTool({ ...call, requiredScopes: ['database_write'] })).rejects.toMatchObject({ effectStarted: false }); noPost();
-  http.mockReset(); queue(tool, toolkit);
+  http.mockReset(); queue(tool, toolkit, account);
   await expect(executeConnectorTool({ ...call, connector: { ...call.connector, supabase_project_ref: 'b'.repeat(20) } }))
     .rejects.toMatchObject({ code: 'CONNECTOR_SCHEMA_CHANGED', effectStarted: false }); noPost();
   http.mockReset();
@@ -93,6 +96,13 @@ test('no SQL, project, foreign relation or unbound lookup can reach dispatch, in
     await expect(executeConnectorTool({ ...call, toolSlug: slug, allowedTools: [slug] })).rejects.toMatchObject({ effectStarted: false }); noPost();
   }
   expect(call.beforeDispatch).not.toHaveBeenCalled();
+});
+
+test('does not look up external facts for an unverified live account',async()=>{
+  const lookup = jest.mocked(loadExternalDataset); lookup.mockClear();
+  const f=fixture();f.queue(f.tool,f.toolkit,{...f.account,user_id:randomUUID()});
+  await expect(describeConnectorTool(f.input)).rejects.toMatchObject({code:'CONNECTOR_ACCOUNT_MISMATCH'});
+  expect(lookup).not.toHaveBeenCalled();noPost();
 });
 
 test('rejects drift in local provider contract, defaults, aliases, tags and scope', () => {

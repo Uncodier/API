@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { connectorDatabaseError, loadConnectorCredential } from './access';
+import { connectorDatabaseError } from './access';
 import { verifyAccountIdentity } from './composio-accounts';
-import { manageable, providerClient, revisionBodySchema } from './connection-service';
+import { manageable, providerClient, requireCurrentProviderProof, revisionBodySchema } from './connection-service';
 import { ConnectorError } from './types';
 
 const ref = z.string().length(20).regex(/^[a-z]{20}$/);
@@ -50,12 +50,7 @@ export async function bindSupabaseProject(actor: string, id: string, body: unkno
   const account = await verifyAccountIdentity(client, { accountId: connector.provider_account_id, userId: provider.provider_user_id,
     toolkitSlug: 'supabase', authConfigId: connector.auth_config_id });
   if (!account.hostedSupabasePat) unproven('account');
-  const checkCredential = async () => {
-    if ((await loadConnectorCredential(site)).revision !== provider.credential_revision) {
-      throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'The connector credential changed during verification.', 409);
-    }
-  };
-  await current(); await checkCredential();
+  await current(); await requireCurrentProviderProof(connector, provider);
   // Fixed, authenticated project metadata GET. No proxy, secrets, SQL, listing or account selection fallback.
   const result = await client.request(`/tools/execute/${slug}`, { method: 'POST', body: {
     connected_account_id: account.id, user_id: provider.provider_user_id, version, arguments: { ref: project },
@@ -66,7 +61,7 @@ export async function bindSupabaseProject(actor: string, id: string, body: unkno
   }) });
   if (!z.object({ successful: z.literal(true), error: z.null() }).safeParse(result).success) unproven('read');
   if (!proof.safeParse(result).success) unproven('identity');
-  await checkCredential();
+  await requireCurrentProviderProof(connector, provider);
   const { data, error } = await supabaseAdmin.rpc('connector_bind_supabase_project', {
     p_site_id: site, p_connector_id: id, p_actor_id: actor, p_expected_revision: revision,
     p_project_ref: project, p_credential_revision: provider.credential_revision,

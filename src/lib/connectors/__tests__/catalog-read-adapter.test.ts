@@ -1,3 +1,4 @@
+import { attestedProject } from './byok-rpc-fixture';
 import companies from './fixtures/HUBSPOT_LIST_COMPANIES-20261116_01.json';
 import deals from './fixtures/HUBSPOT_LIST_DEALS-20261116_01.json';
 import calendars from './fixtures/GOOGLECALENDAR_LIST_CALENDARS-20261116_00.json';
@@ -6,22 +7,20 @@ import { describeConnectorTool, executeConnectorTool } from '../composio-session
 import { ConnectorError } from '../types';
 import { accountFixture, connectorFixture, providerFixture, toolkitFixture, toolFixture, secret, jsonResponse } from './composio-fixtures';
 
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {} }));
+const mockProofRpc = jest.fn();
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (...args:unknown[]) => mockProofRpc(...args) } }));
 jest.mock('../access', () => ({}));
-const original = { fetch: global.fetch, binding: process.env.CONNECTOR_PROVIDER_BINDINGS, origin: process.env.CONNECTORS_WEB_ORIGIN };
+const original = { fetch: global.fetch, origin: process.env.CONNECTORS_WEB_ORIGIN };
 const http = jest.fn();
 beforeEach(() => { http.mockReset(); global.fetch = http; process.env.CONNECTORS_WEB_ORIGIN = 'https://app.example.test'; });
 afterEach(() => {
   global.fetch = original.fetch;
-  for (const [key, val] of [['CONNECTOR_PROVIDER_BINDINGS', original.binding], ['CONNECTORS_WEB_ORIGIN', original.origin]] as const) {
-    if (val === undefined) delete process.env[key]; else process.env[key] = val;
-  }
+  if (original.origin === undefined) delete process.env.CONNECTORS_WEB_ORIGIN; else process.env.CONNECTORS_WEB_ORIGIN = original.origin;
 });
 function fixture(toolkit = 'planning', resource = 'deliverables') {
   const site_id = randomUUID(); const revision = secret();
   const provider = { ...providerFixture(), site_id, provider_user_id: site_id, credential_revision: revision };
-  process.env.CONNECTOR_PROVIDER_BINDINGS = JSON.stringify([{ site_id, credential_revision: revision, project_id: provider.project_id,
-    oauth_verifier_url: 'https://app.example.test/connectors/callback' }]);
+  mockProofRpc.mockImplementation(attestedProject({ ...provider }));
   const scope = resource + ':read'; const slug = `${toolkit.toUpperCase()}_LIST_${resource.toUpperCase()}`;
   const tool = { ...toolFixture(), slug, toolkit: { slug: toolkit }, tags: ['readOnlyHint'], description: `Lists ${resource}.`, scopes: [scope],
     input_parameters: { type: 'object', properties: { limit: { type: 'integer', maximum: 100, default: 100 }, page: { type: 'integer' } } },
@@ -41,6 +40,21 @@ async function pinned(f = fixture()) {
     allowedTools: [f.tool.slug], requiredScopes: [], beforeDispatch: jest.fn(async () => undefined) } };
 }
 const noPost = () => expect(http.mock.calls.some(([, options]) => options.method === 'POST')).toBe(false);
+
+it.each(['LIST_ALL','GET','FETCH_ALL'])('recognizes a %s collection only under the same bounded native read contract',async verb=>{
+  const f=fixture('warehouse','pallets'); f.tool.slug=`WAREHOUSE_${verb}_PALLETS`; f.input.toolSlug=f.tool.slug;
+  Object.assign(f.tool.input_parameters.properties,{offset:{type:'integer'}});
+  const {call,queue,tool,api,account}=await pinned(f);
+  queue(tool,api,account,{successful:true,error:null,data:{items:[{id:1}]}});
+  await expect(executeConnectorTool(call)).resolves.toMatchObject({successful:true,data:{items:[{id:1}]}});
+  http.mockReset(); queue(tool,api,account);
+  await expect(executeConnectorTool({...call,input:{limit:3,offset:40000}})).rejects.toMatchObject({executed:false}); noPost();
+});
+
+it.each(['GET_ALL_CREDENTIALS','FETCH_USER','GET_ALL','REPLACE_PALLETS','FETCH_PALLETS_AND_EXPORT'])('does not infer read authority from %s',async suffix=>{
+  const f=fixture('warehouse','pallets'); f.tool.slug=`WAREHOUSE_${suffix}`; f.input.toolSlug=f.tool.slug; f.queue(f.tool);
+  await expect(describeConnectorTool(f.input)).rejects.toMatchObject({code:'TOOL_UNREVIEWED'}); noPost();
+});
 
 it.each([['planning', 'deliverables'], ['warehouse', 'pallets']])('projects and executes a new native %s list contract without registering a slug or resource', async (kit, resource) => {
   const { tool, call, queue, account, api, description } = await pinned(fixture(kit, resource));
@@ -120,8 +134,7 @@ it.each(['hash', 'version', 'description', 'schema', 'callback', 'allowlist', 'c
     if (kind === 'project') call.connector.provider_project_id = 'other';
     if (kind === 'owner') call.provider.provider_user_id = randomUUID();
     if (kind === 'attestation') {
-      const [row] = JSON.parse(process.env.CONNECTOR_PROVIDER_BINDINGS!); row.project_id = 'other';
-      process.env.CONNECTOR_PROVIDER_BINDINGS = JSON.stringify([row]);
+      mockProofRpc.mockImplementation(attestedProject({ ...call.provider, project_id: 'other' }));
     }
     queue(tool, api, account);
     await expect(executeConnectorTool(call)).rejects.toMatchObject({ executed: false, effectStarted: false }); noPost();

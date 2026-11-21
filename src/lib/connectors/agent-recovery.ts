@@ -18,9 +18,11 @@ export function agentRecovery(code: string): Advice {
       return advice('request_scope', 'Ask the connection owner to verify the required permission and reauthorize in Connectors if it is missing. Never ask for credentials in chat.', manual);
     case 'AUTH_REQUIRED': case 'APP_AUTH_REJECTED': case 'CONNECTOR_NOT_ACTIVE': case 'CONNECTOR_NOT_READY':
       return advice('verify_connection', 'Ask the owner to check that the selected connection is active and reconnect it in Connectors if needed.', manual);
-    case 'CONNECTOR_PROJECT_UNBOUND': case 'CONNECTOR_ACCOUNT_MISMATCH': case 'PROVIDER_PROJECT_CHANGED': case 'PROVIDER_REVALIDATION_REQUIRED': case 'STALE_CREDENTIAL':
+    case 'CONNECTOR_PROJECT_UNBOUND': case 'CONNECTOR_ACCOUNT_MISMATCH': case 'STALE_CREDENTIAL':
       return advice('verify_connection', 'Ask a manager to verify the exact connected account or project in Connectors. Do not substitute another account.', manual);
-    case 'CREDENTIAL_UNAVAILABLE': case 'PROVIDER_AUTH_FAILED': case 'PROVIDER_SETUP_REQUIRED': case 'COMPOSIO_PROJECT_SETUP_REQUIRED':
+    case 'PROVIDER_SETUP_REQUIRED': case 'PROVIDER_PROJECT_CHANGED': case 'PROVIDER_REVALIDATION_REQUIRED': case 'COMPOSIO_PROJECT_SETUP_REQUIRED':
+      return advice('ask_manager', 'Ask the platform operator to verify the Composio project, current credential binding and callback configuration used by this workspace. This is not a permission request to the connected app. Do not reconnect it or ask for credentials.', manual);
+    case 'NOT_CONFIGURED': case 'CREDENTIAL_UNAVAILABLE': case 'PROVIDER_AUTH_FAILED':
       return advice('ask_manager', 'Ask a manager to verify the workspace Composio configuration. This is not proof the connected app token expired.', manual);
     case 'APP_RESOURCE_DENIED': case 'PROVIDER_FORBIDDEN':
       return advice('ask_user', 'Ask the owner to verify access to this specific resource and operation. Do not mark every action on the connection as denied.', manual);

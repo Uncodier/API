@@ -1,8 +1,11 @@
+import { attestedProject, byokRpc, byokOrigin } from './byok-rpc-fixture';
 import { createHash, randomBytes } from 'node:crypto';
 import { authorizeConnectorExecution, resolveManagerAction, resolveConnectorAction, getVisibleConnector, listUsableConnectors, listVisibleConnectors, requireConnectorSiteAccess } from '../access';
 import type { ConnectorAccessMode } from '../types';
 import { createConnectorRuntime } from '../runtime';
 import { describeConnectorTool, executeConnectorTool } from '../composio-sessions';
+import { withCatalogActorEvidence } from '@/lib/database/hosted-project-identity';
+jest.mock('@/lib/database/hosted-project-identity', () => ({ withCatalogActorEvidence:jest.fn() }));
 
 const rpc = jest.fn();
 const from = jest.fn();
@@ -18,6 +21,10 @@ const userId = '22222222-2222-4222-8222-222222222222';
 const agentId = '33333333-3333-4333-8333-333333333333';
 const connectorId = '44444444-4444-4444-8444-444444444444';
 const ciphertext = randomBytes(48).toString('hex');
+const byok = { site_id: siteId, credential_revision: createHash('sha256').update(ciphertext).digest('hex'), project_id: 'test_project' };
+const originalOrigin = process.env.CONNECTORS_WEB_ORIGIN;
+beforeAll(() => { process.env.CONNECTORS_WEB_ORIGIN = byokOrigin; });
+afterAll(() => { if (originalOrigin === undefined) delete process.env.CONNECTORS_WEB_ORIGIN; else process.env.CONNECTORS_WEB_ORIGIN = originalOrigin; });
 let tableData: Record<string, unknown>;
 let connector: Record<string, unknown> & { id: string; access_mode?: ConnectorAccessMode };
 
@@ -29,16 +36,17 @@ function query(data: unknown, error: unknown = null, count = Array.isArray(data)
 
 beforeEach(() => {
   jest.clearAllMocks();
-  connector = { id: connectorId, site_id: siteId, provider_id: siteId, toolkit_slug: 'gmail', provider_status: 'ACTIVE', enabled: true, revocation_pending: false };
+  connector = { id: connectorId, site_id: siteId, provider_id: siteId, provider_project_id: byok.project_id, toolkit_slug: 'gmail', provider_status: 'ACTIVE', enabled: true, revocation_pending: false };
   rpc.mockImplementation((name, args) => name === 'connector_list_visible'
     ? query(args.p_connector_id == null ? [connector] : args.p_connector_id === connectorId ? connector : null)
+    : name === byokRpc ? attestedProject(byok)(name,args)
     : name === 'connector_private_result_ready' ? query(true) : name === 'store_connector_private_result' ? query(connectorId) : query([{ can_view: true, can_manage: true }]));
   tableData = {
     connector_members: { user_id: userId, can_view: true, can_use: true, expires_at: null },
     connector_agents: { agent_id: agentId, enabled: true, expires_at: null },
     agents: { id: agentId },
     connector_policies: { allowed_tools: ['GMAIL_FETCH_EMAILS'], allowed_hosts: ['assistant'], require_approval: false },
-    site_connector_providers: { id: siteId, site_id: siteId, status: 'active', credential_revision: createHash('sha256').update(ciphertext).digest('hex') },
+    site_connector_providers: { ...byok, id: siteId, status: 'active' },
     site_secrets: { encrypted_value: ciphertext },
   };
   from.mockImplementation(table => query(tableData[table]));
@@ -92,6 +100,19 @@ it('returns the bound connector, policy and provider after all checks', async ()
     connector: { id: connectorId }, policy: { allowed_tools: ['GMAIL_FETCH_EMAILS'] }, provider: { id: siteId },
   });
   expect(rpc).toHaveBeenCalledWith('connector_site_access', { p_site_id: siteId, p_user_id: userId });
+});
+
+it('withholds already-reviewed and manager actions after BYOK proof withdrawal or project change', async () => {
+  const slug = 'GMAIL_FETCH_EMAILS';
+  const run = () => authorizeConnectorExecution(context, connectorId, slug);
+  await expect(run()).resolves.toHaveProperty('connector.id', connectorId);
+  const original = rpc.getMockImplementation()!;
+  for (const [proof,code] of [[null,'PROVIDER_SETUP_REQUIRED'],['other_project','PROVIDER_REVALIDATION_REQUIRED']]) {
+    rpc.mockImplementation((name,...args) => name === byokRpc ? query(proof) : original(name,...args));
+    await expect(run()).rejects.toMatchObject({code});
+    await expect(resolveManagerAction(siteId,userId,connectorId,slug)).rejects.toMatchObject({code});
+  }
+  expect(executeConnectorTool).not.toHaveBeenCalled();
 });
 
 it('a shared platform key never supplies another site account or grants', async () => {
@@ -303,11 +324,22 @@ it('manager execution requires current own use and original host policy, not a g
 
 const boundInstance = { ...context, instanceId: siteId, catalogUserSession: true as const };
 const custom = 'MAIL_LIST_LABELS';
+
+it('uses the project from the successful actor RPC only for exact analytics authorization; search and other tools do not probe it', async () => {
+  const proof=jest.mocked(withCatalogActorEvidence); proof.mockImplementation(async run=>({allowed:await run(), localProjectRef:'b'.repeat(20)}));
+  catalogPolicy();connector.toolkit_slug='supabase';connector.supabase_project_ref='a'.repeat(20);
+  await listUsableConnectors(boundInstance,false,true);expect(proof).not.toHaveBeenCalled();
+  const admitted=await resolveConnectorAction(boundInstance,connectorId,'SUPABASE_RUN_READ_ONLY_QUERY',false,true);
+  expect(proof).toHaveBeenCalledTimes(1);expect(admitted.localProjectRef).toBe('b'.repeat(20));
+  expect(admitted.connector.supabase_project_ref).toBe('a'.repeat(20));
+  proof.mockResolvedValueOnce({allowed:false,localProjectRef:'b'.repeat(20)});
+  await expect(resolveConnectorAction(boundInstance,connectorId,'SUPABASE_RUN_READ_ONLY_QUERY',false,true)).rejects.toMatchObject({code:'ACCESS_DENIED'});
+});
 function catalogPolicy(mode: 'all' | 'selected' = 'all', allowed: string[] = [], consent: unknown = true) {
   connector.toolkit_slug = 'mail'; connector.verified_at = '2026-11-10T00:00:00Z';
   tableData.connector_policies = { tool_access_mode: mode, catalog_reads: consent, allowed_tools: allowed, allowed_hosts: ['assistant'], require_approval: true };
   rpc.mockImplementation((name, args) => name === 'connector_list_visible' ? query(args.p_connector_id == null ? [connector] : connector)
-    : name === 'connector_catalog_read_actor' ? query(true) : query([{ can_view:true }]));
+    : name === byokRpc ? attestedProject(byok)(name,args) : name === 'connector_catalog_read_actor' ? query(true) : query([{ can_view:true }]));
 }
 
 it.each(['all','selected'] as const)('requires independent instance, actor, policy and path opt-ins in %s mode', async mode => {

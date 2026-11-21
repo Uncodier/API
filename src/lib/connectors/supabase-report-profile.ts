@@ -1,7 +1,7 @@
 import { unsupportedScopes, type CatalogReadMetadata } from './catalog-read-metadata';
 import type { ComposioAccount } from './composio-accounts';
 import { assertReportContract, reportBinding, reportModelSchema, REPORT_SCOPE } from './supabase-report-contract';
-import { analyticsDatasetFingerprint } from './supabase-analytics-sources';
+import { analyticsDatasetFingerprint, resolveAnalyticsCapability } from './supabase-analytics-sources';
 import { directQueryFields } from './supabase-direct-query';
 import { reportArguments } from './supabase-report-query';
 import { ConnectorError, type Connector } from './types';
@@ -9,13 +9,23 @@ import { ConnectorError, type Connector } from './types';
 export { SUPABASE_CATALOG_SLUG } from './supabase-report-contract';
 export { projectSupabaseCatalogResult } from './supabase-report-result';
 
-export function describeSupabaseCatalogRead(connector: Connector, tool: CatalogReadMetadata) {
+const publishedOnly = 'Use view/after/limit only for an explicitly requested published report or inventory, not to answer a data question.';
+
+export async function describeSupabaseCatalogRead(connector: Connector, tool: CatalogReadMetadata, localRef?: string) {
   const binding = reportBinding(connector);
   assertReportContract(tool);
-  const published = reportModelSchema(), direct = directQueryFields(connector);
-  if (!Object.hasOwn(direct, 'query')) return {modelSchema:published, binding};
-  return { modelSchema: { anyOf:[published,{ type:'object',additionalProperties:false,properties:direct,required:['query'] }] },
-    binding: { ...binding, analytics: analyticsDatasetFingerprint(connector) } };
+  const published = reportModelSchema();
+  const capability = await resolveAnalyticsCapability(connector, localRef);
+  if (capability.status !== 'ready') {
+    const reason = capability.status === 'unmapped' ? 'No direct analytics sources are registered for this workspace and project.'
+      : capability.status === 'unverified' ? 'Makinari could not verify the identity of its own database.'
+      : 'Makinari could not verify the analytics source registry.';
+    return { modelSchema: published, binding, capability, description: `${reason} ${publishedOnly} Do not ask the user to reconnect. For a data question, explain the limitation and ask the platform operator to check setup.` };
+  }
+  const direct = directQueryFields(capability.dataset);
+  return { modelSchema: { anyOf: [published, { type:'object', additionalProperties:false, properties:direct, required:['query'] }] },
+    binding: { ...binding, analytics: analyticsDatasetFingerprint(capability.dataset) }, capability,
+    description: `Use query to calculate requested figures directly from the listed sources. ${publishedOnly} Results are private.` };
 }
 
 export function supabaseCatalogArguments(connector: Connector, tool: CatalogReadMetadata, args: Record<string, unknown>) {

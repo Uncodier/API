@@ -7,6 +7,8 @@ import { REVIEWED_CONNECTOR_TOOLS } from './reviewed-tools';
 import { publishedList, sameSet } from './catalog-read-published';
 
 export type ConnectorDescriptionInput = {
+  /** Internal evidence from the authorization RPC; never copied from the request or provider descriptor. */
+  localProjectRef?: string;
   credential: { apiKey: string; revision?: string }; connector: Connector;
   provider?: ConnectorProvider; toolSlug: string; toolkitVersion?: string;
   /** Set only by the private instance host after resolving effective policy. */
@@ -54,7 +56,7 @@ export async function verifyCatalogBinding({ connector, provider, credential, to
     throw new ConnectorError('CONNECTOR_NOT_READY', 'Verify the active private account and provider project binding before using this action.', 409);
   }
   const { readProviderBinding, readTokenProviderBinding } = await import('./provider-binding');
-  const { projectId } = (connector.toolkit_slug === 'supabase' ? readTokenProviderBinding : readProviderBinding)(connector.site_id, credential.revision);
+  const { projectId } = await (connector.toolkit_slug === 'supabase' ? readTokenProviderBinding : readProviderBinding)(connector.site_id, credential.revision);
   if (projectId !== provider.project_id || (credential.revision.startsWith('platform:') &&
     credential.revision !== `platform:${createHash('sha256').update(credential.apiKey).digest('hex')}`)) {
     throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'Revalidate the credential for this connector project.', 409);

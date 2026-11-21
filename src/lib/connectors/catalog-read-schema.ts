@@ -17,7 +17,7 @@ export function catalogListSchema(raw: Record<string, unknown>) {
     || Object.keys(raw).some(k => !['type', 'properties', 'required', 'additionalProperties', ...annotations].includes(k))) unsupportedSchema();
   const keys = Object.keys(raw.properties);
   const [limit] = keys.filter(k => limitFields.includes(k));
-  if (keys.length > 2 || keys.filter(k => limitFields.includes(k)).length !== 1 ||
+  if (keys.filter(k => limitFields.includes(k)).length !== 1 ||
     keys.some(k => k !== limit && !pageFields.includes(k))) unsupportedSchema();
   const required = raw.required === undefined ? [] : raw.required;
   if (!Array.isArray(required) || new Set(required).size !== required.length || required.some(k => !keys.includes(k))) unsupportedSchema();

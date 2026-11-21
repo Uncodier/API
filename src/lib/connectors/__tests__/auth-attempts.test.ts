@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { finishConnectorAuth, startConnectorAuth } from '../auth-attempts';
+import { attestedProject, byokRpc, byokOrigin } from './byok-rpc-fixture';
 
 const rpc = jest.fn();
+const proofRpc = jest.fn();
 const from = jest.fn();
 const complete = jest.fn();
 const verify = jest.fn();
@@ -9,14 +11,14 @@ const link = jest.fn();
 const prepare = jest.fn();
 const credential = jest.fn();
 const provider = jest.fn();
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (...args: unknown[]) => rpc(...args), from: (...args: unknown[]) => from(...args) } }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (name: string, ...args: unknown[]) => name === byokRpc ? proofRpc(name, ...args) : rpc(name, ...args), from: (...args: unknown[]) => from(...args) } }));
 jest.mock('../access', () => ({
   requireConnectorSiteAccess: jest.fn(),
   loadConnectorCredential: (...args: unknown[]) => credential(...args),
   getConnectorProvider: (...args: unknown[]) => provider(...args),
   connectorDatabaseError: () => { throw new Error('Storage unavailable'); },
 }));
-jest.mock('../provider-binding', () => ({ prepareConnectorProvider: (...args: unknown[]) => prepare(...args), readProviderBinding: () => ({ projectId: 'proj_test' }) }));
+jest.mock('../provider-binding', () => ({ ...jest.requireActual('../provider-binding'), prepareConnectorProvider: (...args: unknown[]) => prepare(...args) }));
 jest.mock('../composio-transport', () => ({ createComposioClient: () => ({}) }));
 jest.mock('../composio-accounts', () => ({ createAuthLink: (...args: unknown[]) => link(...args), completeAuth: (...args: unknown[]) => complete(...args), verifyAccountIdentity: (...args: unknown[]) => verify(...args) }));
 jest.mock('../composio-catalog', () => ({ listAuthConfigs: async () => ({ items: [{ id: 'ac_test', authScheme: 'OAUTH2', status: 'ENABLED' }] }) }));
@@ -39,7 +41,11 @@ function result(data: unknown, error: unknown = null) {
   return chain;
 }
 
+const oldOrigin = process.env.CONNECTORS_WEB_ORIGIN;
+beforeAll(() => { process.env.CONNECTORS_WEB_ORIGIN = byokOrigin; });
+afterAll(() => { if (oldOrigin === undefined) delete process.env.CONNECTORS_WEB_ORIGIN; else process.env.CONNECTORS_WEB_ORIGIN = oldOrigin; });
 beforeEach(() => {
+  proofRpc.mockReset().mockImplementation(attestedProject({site_id: siteId, project_id: 'proj_test', credential_revision: revision}));
   jest.clearAllMocks(); updates = []; claimSucceeds = true;
   attempt = { id: attemptId, site_id: siteId, provider_id: siteId, user_id: userId,
     toolkit_slug: 'gmail', auth_config_id: 'ac_test', provider_account_id: 'ca_test',
@@ -96,4 +102,17 @@ it('only dispatches completion after winning the local claim and checks provider
   await expect(finishConnectorAuth(input)).resolves.toMatchObject({ connector_id: siteId });
   expect(verify).toHaveBeenCalledWith(expect.anything(), { accountId: 'ca_test', userId: siteId, toolkitSlug: 'gmail', authConfigId: 'ac_test' });
   expect(rpc).toHaveBeenCalledWith('connector_finalize_auth', expect.objectContaining({ p_actor_id: userId, p_nonce_hash: attempt.nonce_hash }));
+});
+
+it.each(['before callback', 'after provider completion'])('does not finalize or replay OAuth after proof withdrawal %s', async stage => {
+  const missing = { abortSignal: async () => ({data:null, error:null}) };
+  if (stage === 'before callback') proofRpc.mockReturnValue(missing);
+  else complete.mockImplementationOnce(async () => {
+    proofRpc.mockReturnValue(missing); return { accountId: 'ca_test', toolkitSlug: 'gmail' };
+  });
+  await expect(finishConnectorAuth(input)).rejects.toMatchObject({code:'PROVIDER_SETUP_REQUIRED'});
+  expect(complete).toHaveBeenCalledTimes(stage === 'before callback' ? 0 : 1);
+  if (stage === 'before callback') expect(updates).toEqual([]);
+  else expect(updates).toContainEqual({status:'outcome_unknown'});
+  expect(rpc).not.toHaveBeenCalled();
 });

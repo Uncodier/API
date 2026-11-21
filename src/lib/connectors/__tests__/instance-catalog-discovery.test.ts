@@ -44,11 +44,14 @@ it('invalidates a continuation on policy change, page contents changing, or losi
 });
 
 it('filters exact selected actions; an empty page can continue. No fallback to ones that were not selected', async () => {
-  const target = account(); target.policy.tool_access_mode = 'selected'; target.policy.allowed_tools = ['X_LIST_CONTACTS_CHOSEN'];
-  list.mockResolvedValueOnce(result(rows,'more')).mockResolvedValueOnce(result([row('X_LIST_CONTACTS_CHOSEN'), row('X_NOT_SELECTED')]));
+  const target = account(); target.policy.tool_access_mode = 'selected'; target.policy.allowed_tools = [
+    ...Array.from({length:12},(_,i)=>`X_LIST_ASSETS_${i}`), 'X_LIST_CONTACTS_CHOSEN'];
+  const selected = jest.mocked(listSelectedCatalogMetadata);
+  selected.mockImplementation(async (_client, _kit, ids) => ({ items: ids.map(slug=>row(slug)), missing:false }));
   const first = await instanceCatalogPage(context, {catalog_query:'contacts'}, [], [target], screens); expect(first.tools).toEqual([]);
   const second = await instanceCatalogPage(context, { catalog_query:'contacts', cursor: first.next_cursor! }, [], [target], screens);
   expect(second.tools.map(r => r.name)).toEqual([`connector:${target.connector.id}:X_LIST_CONTACTS_CHOSEN`]);
+  expect(list).not.toHaveBeenCalled();expect(selected.mock.calls.flatMap(args=>args[2]).sort()).toEqual([...target.policy.allowed_tools].sort());
 });
 
 it('does not resolve a credential when disabled, request-only, restricted, unbound or outside Robots', async () => {
@@ -84,6 +87,19 @@ it('uses exact selected batches during browse and reports removed selections wit
   expect(page.tools.map(t=>t.name)).toEqual([`connector:${target.connector.id}:X_LIST_PALLETS`]);
   expect(page.partial_error).toBe('CATALOG_SELECTION_CHANGED'); expect(list).not.toHaveBeenCalled();
   expect(listSelectedCatalogMetadata).toHaveBeenCalledWith(expect.anything(),'x',['X_LIST_OLD','X_LIST_PALLETS']);
+});
+
+it('matches a natural-language search locally within selected actions across connector accounts',async()=>{
+  for (const kit of ['fulfillment','calendar']) {
+    const target=account();target.connector.toolkit_slug=kit;
+    const ids=[`${kit.toUpperCase()}_LIST_EVENTS`,`${kit.toUpperCase()}_LIST_TASKS`];
+    Object.assign(target.policy,{tool_access_mode:'selected',allowed_tools:ids});
+    jest.mocked(listSelectedCatalogMetadata).mockResolvedValue({items:ids.map(slug=>row(slug)),missing:false});
+    const page=await instanceCatalogPage(context,{query:'Which tasks are assigned to this customer?'},[],[target],screens);
+    expect(page.tools.map(t=>t.name)).toEqual([`connector:${target.connector.id}:${ids[1]}`]);
+    expect(listSelectedCatalogMetadata).toHaveBeenLastCalledWith(expect.anything(),kit,ids);
+  }
+  expect(list).not.toHaveBeenCalled();
 });
 
 it('never forwards private natural language, arbitrary catalog_query, or unverified slug-shaped text as a provider search term',async()=>{

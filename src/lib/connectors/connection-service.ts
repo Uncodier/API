@@ -72,9 +72,21 @@ export async function manageable(siteId: string, userId: string, id: string, rev
   return connector;
 }
 
+function connectionBinding(connector: Connector, revision: string) {
+  return (connector.toolkit_slug === 'supabase' ? readTokenProviderBinding : readProviderBinding)(connector.site_id, revision);
+}
+
+/** Recheck at state-change/dispatch boundaries, after longer external account reads. */
+export async function requireCurrentProviderProof(connector: Connector, provider: ConnectorProvider) {
+  const { revision } = await loadConnectorCredential(connector.site_id);
+  if (revision !== provider.credential_revision || (await connectionBinding(connector, revision)).projectId !== provider.project_id) {
+    throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'The provider binding changed. Verify its project before continuing.', 409);
+  }
+}
+
 export async function providerClient(connector: Connector) {
   const credential = await loadConnectorCredential(connector.site_id);
-  const binding = (connector.toolkit_slug === 'supabase' ? readTokenProviderBinding : readProviderBinding)(connector.site_id, credential.revision);
+  const binding = await connectionBinding(connector, credential.revision);
   const provider = await getConnectorProvider(connector.site_id, connector.provider_id);
   if (!provider || provider.id !== connector.provider_id || provider.site_id !== connector.site_id
     || provider.status !== 'active' || provider.credential_revision !== credential.revision
@@ -132,10 +144,8 @@ export async function syncConnector(siteId: string, userId: string, id: string, 
   const connector = await manageable(siteId, userId, id, revision);
   const { client, provider } = await providerClient(connector);
   const account = await exactAccount(client, provider, connector);
-  // Recheck credential revision after I/O. Sync never creates/adopts accounts or reenables one.
-  if ((await loadConnectorCredential(siteId)).revision !== provider.credential_revision) {
-    throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'The provider credential changed during synchronization.', 409);
-  }
+  // Recheck the credential revision and attested project after I/O. Sync never creates/adopts accounts or reenables one.
+  await requireCurrentProviderProof(connector, provider);
   const status = (account.authConfigDisabled || account.disabled) && account.status === 'ACTIVE' ? 'DISABLED' : account.status;
   const updated = await setProviderState(connector, userId, {
     status, pending: status === 'REVOKED' ? false : connector.revocation_pending,
@@ -160,9 +170,7 @@ export async function disconnectConnector(siteId: string, userId: string, id: st
   if (current.revision !== disabled.revision || !current.revocation_pending) {
     throw new ConnectorError('REVISION_CONFLICT', 'Connector state changed before provider revocation. Synchronize before continuing.', 409);
   }
-  if ((await loadConnectorCredential(siteId)).revision !== provider.credential_revision) {
-    throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'The provider credential changed before revocation.', 409);
-  }
+  await requireCurrentProviderProof(connector, provider);
   let completionBase = disabled;
   if (account.status !== 'REVOKED') {
     // Claim durably only immediately before dispatch. Preflight failures remain

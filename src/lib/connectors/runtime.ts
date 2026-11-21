@@ -20,7 +20,7 @@ export type ConnectorCandidate = {
   name: string; description: string; category: string; domains: string[];
   connector_id: string; toolkit: string; availability: 'describe_required' | 'manual_only'; request_only?: true;
 };
-const binding = (value: AuthorizedConnector) => JSON.stringify([value.connector, value.provider, value.policy, value.requestOnly]);
+const binding = (value: AuthorizedConnector) => JSON.stringify([value.connector, value.provider, value.policy, value.requestOnly, value.localProjectRef]);
 const actor = (context: ConnectorContext) => JSON.stringify(context);
 
 /** Descriptions carry version/hash across turns, never authority or cached grants. */
@@ -83,7 +83,7 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
         throw new ConnectorError('STALE_CREDENTIAL', 'Refresh the provider credential binding.', 409);
       }
       const descriptor = await describeConnectorTool({ credential, connector: authorized.connector,
-        provider: authorized.provider, ...(dynamic && { catalogRead: true }), toolSlug: tool.slug });
+        provider: authorized.provider, ...(dynamic && { catalogRead: true, localProjectRef: authorized.localProjectRef }), toolSlug: tool.slug });
       if (descriptor.slug !== tool.slug || descriptor.toolkitSlug !== tool.toolkit || !descriptor.toolkitVersion || !descriptor.schemaHash) {
         throw new ConnectorError('SCHEMA_CHANGED', 'The connector tool identity could not be verified.', 409);
       }
@@ -102,7 +102,7 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
             version: { type: 'string', const: descriptor.toolkitVersion },
             schema_hash: { type: 'string', const: descriptor.schemaHash }, arguments: modelSchema,
           } }, effect: 'read', require_approval: authorized.requestOnly === true,
-        expected_use: 'tools call args must contain version, schema_hash, and arguments from this description. These references survive turns but never grant access.' };
+        expected_use: 'tools call args must contain version, schema_hash and arguments from this description. Use the operation only if its documented inputs and scope answer the request. Do not substitute a list of names, a sample, or a different account for the requested data. Explain missing capabilities instead. A descriptor is not an access grant.' };
     },
 
     async call(name: string, input: unknown) {
@@ -156,7 +156,7 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
         if (requestedScope && (!destination || !project)) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED','Direct SQL requires a private project-bound instance.',403);
         const analytics = requestedScope && destination && project ? analyticsRelease(destination,project,requestedScope) : undefined;
         const result = await executeConnectorTool({ credential, connector: authorized.connector, provider: authorized.provider,
-          ...(dynamic && { catalogRead: true }), ...(analytics && { authorizeSelect: analytics.permit }),
+          ...(dynamic && { catalogRead: true, localProjectRef: authorized.localProjectRef }), ...(analytics && { authorizeSelect: analytics.permit }),
           toolSlug: tool.slug, input: args, allowedTools: [tool.slug], toolkitVersion: envelope.version,
           schemaHash: envelope.schema_hash, requiredScopes: tool.requiredScopes, beforeDispatch: async () => {
             const current = await authorize(name);

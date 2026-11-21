@@ -25,8 +25,8 @@ it('uses platform credentials only when the site BYOK row is absent', async () =
   const credential = await loadConnectorCredential(siteId);
   expect(credential).toEqual({ apiKey: globalKey, source: 'platform', revision: `platform:${createHash('sha256').update(globalKey).digest('hex')}` });
   expect(decrypt).not.toHaveBeenCalled();
-  expect(readProviderBinding(siteId, credential.revision)).toEqual({ projectId: 'platform_project', callbackUrl: 'https://app.example.test/connectors/callback' });
-  expect(readProviderBinding(otherSite, credential.revision).projectId).toBe('platform_project');
+  await expect(readProviderBinding(siteId, credential.revision)).resolves.toEqual({ projectId: 'platform_project', callbackUrl: 'https://app.example.test/connectors/callback' });
+  await expect(readProviderBinding(otherSite, credential.revision)).resolves.toMatchObject({ projectId: 'platform_project' });
 });
 
 it('gives a site BYOK precedence over a global key', async () => {
@@ -54,7 +54,7 @@ it('supports the legacy global env name and fails closed if neither exists', asy
 it('rejects stale platform key revision and missing project binding for OAuth', async () => {
   const credential = await loadConnectorCredential(siteId);
   process.env.COMPOSIO_API_KEY = randomBytes(32).toString('hex');
-  expect(() => readProviderBinding(siteId, credential.revision)).toThrow('changed');
+  await expect(readProviderBinding(siteId, credential.revision)).rejects.toThrow('changed');
   delete process.env.COMPOSIO_PROJECT_ID;
-  expect(() => readProviderBinding(siteId, credential.revision)).toThrow('not configured');
+  await expect(readProviderBinding(siteId, credential.revision)).rejects.toThrow('not configured');
 });

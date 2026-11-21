@@ -1,3 +1,4 @@
+import { attestedProject, byokRpc } from './byok-rpc-fixture';
 import { randomUUID } from 'node:crypto';
 import { toolsRouterTool } from '@/app/api/agents/tools/router/assistantProtocol';
 import { connectorGateway } from '../tool-resolver';
@@ -13,12 +14,10 @@ jest.mock('@/app/api/agents/tools/router/screen-access', () => ({ ...jest.requir
 jest.mock('@/lib/services/embeddings-service', () => ({ EmbeddingsService:{generateEmbeddings:jest.fn(async () => {throw new Error('offline');})} }));
 jest.mock('@/app/api/agents/tools/catalog_commerce/batch-admin-tool', () => ({bindCatalogBatchActor: (tool:unknown)=>tool}));
 
-const old = {binding:process.env.CONNECTOR_PROVIDER_BINDINGS, origin:process.env.CONNECTORS_WEB_ORIGIN};
+const old = {origin:process.env.CONNECTORS_WEB_ORIGIN};
 afterEach(()=>{
   jest.restoreAllMocks(); jest.clearAllMocks();
-  for (const [setting,value] of [['CONNECTOR_PROVIDER_BINDINGS',old.binding],['CONNECTORS_WEB_ORIGIN',old.origin]] as const) {
-    if (value===undefined) delete process.env[setting]; else process.env[setting]=value;
-  }
+  if (old.origin===undefined) delete process.env.CONNECTORS_WEB_ORIGIN; else process.env.CONNECTORS_WEB_ORIGIN=old.origin;
 });
 
 // Network boundary only: real catalog parser, gateway, resolver, descriptor, adapter and failure recovery.
@@ -30,7 +29,6 @@ it('finds a new action, handles an app resource denial and can still satisfy a s
   const bound: AuthorizedConnector={connector:{...connectorFixture(),id:connectorId,site_id:siteId,toolkit_slug:toolkit},provider,
     policy:{catalog_reads:true,tool_access_mode:'selected',allowed_tools:[slug],allowed_hosts:['assistant'],require_approval:false}};
   process.env.CONNECTORS_WEB_ORIGIN='https://app.example.test';
-  process.env.CONNECTOR_PROVIDER_BINDINGS=JSON.stringify([{site_id:siteId,credential_revision:revision,project_id:provider.project_id,oauth_verifier_url:'https://app.example.test/connectors/callback'}]);
   jest.mocked(listUsableConnectors).mockResolvedValue([bound]); jest.mocked(resolveConnectorAction).mockResolvedValue(bound);
   jest.mocked(loadConnectorCredential).mockResolvedValue({apiKey,revision,source:'byok'});
   const tool={...toolFixture(),slug,name:'List pallets',toolkit:{slug:toolkit},description:'Lists pallets.',scopes:[scope],tags:['readOnlyHint'],
@@ -41,11 +39,12 @@ it('finds a new action, handles an app resource denial and can still satisfy a s
   const native={name:'leads',description:'Native leads',parameters:{type:'object'},execute:jest.fn()};
   const router=toolsRouterTool([native,connectorGateway(async()=>ctx)],ctx);
   let dispatches=0; const receiptId=randomUUID(); const privateRow=73605391;
-  mockRpc.mockImplementation(name=>({abortSignal:async()=>({ data: name==='connector_private_result_ready'?true:receiptId })}));
+  mockRpc.mockImplementation((name,args)=>name===byokRpc ? attestedProject(provider)(name,args)
+    : ({abortSignal:async()=>({ data: name==='connector_private_result_ready'?true:receiptId })}));
   jest.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
     const u=new URL(String(url)); if(u.origin!=='https://backend.composio.dev') throw new Error('Unexpected network target');
     const route=u.pathname.replace('/api/v3.1','');
-    if(route==='/tools') { expect(u.searchParams.has('query')).toBe(false); return jsonResponse({items:[tool],next_cursor:null,total_items:1}); }
+    if(route==='/tools') { expect(u.searchParams.has('query')).toBe(false); expect(u.searchParams.get('tool_slugs')).toBe(slug); return jsonResponse({items:[tool],next_cursor:null,total_items:1}); }
     if(route===`/tools/${slug}`) return jsonResponse(tool);
     if(route===`/toolkits/${toolkit}`) return jsonResponse(api);
     if(route===`/connected_accounts/${account.id}`) return jsonResponse(account);

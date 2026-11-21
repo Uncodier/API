@@ -6,7 +6,7 @@ import { catalogListSchema, catalogListOutput, publishedListSchema } from './cat
 import { projectCatalogList, projectPublishedList, resultUnsupported } from './catalog-read-result';
 import { publishedList, sameSet } from './catalog-read-published';
 import { directQueryMode, projectAnalyticsResult } from './supabase-direct-query';
-import { getSupabaseAnalyticsDataset } from './supabase-analytics-sources';
+import { analyticsDatasetFingerprint, resolveAnalyticsCapability, scopedDataset } from './supabase-analytics-sources';
 import { compileAnalyticsSelect } from './supabase-select-compiler';
 import type { CompiledAnalyticsSelect } from './supabase-select-types';
 import { verifyAccountIdentity } from './composio-accounts';
@@ -30,17 +30,25 @@ async function planRead(input: ConnectorDescriptionInput, tool: CatalogReadMetad
   if (connector.toolkit_slug === 'supabase') {
     const { SUPABASE_CATALOG_SLUG, describeSupabaseCatalogRead, supabaseCatalogArguments, projectSupabaseCatalogResult } = await import('./supabase-report-profile');
     if (tool.slug !== SUPABASE_CATALOG_SLUG) unsupportedAction();
-    const plan = await describeSupabaseCatalogRead(connector, tool);
+    const plan = await describeSupabaseCatalogRead(connector, tool, input.localProjectRef);
     // State belongs to exactly one prepared call; never cached or reused across requests.
     let compiled: CompiledAnalyticsSelect | undefined;
-    return { ...plan, description: Object.hasOwn(plan.modelSchema,'anyOf')
-      ? 'Use query to calculate requested figures directly. Use {} only when asked to list existing reports. Results are private.'
-      : 'Read a bounded published report. Direct SELECT requires a verified analytics dataset for this project.',
+    return { modelSchema: plan.modelSchema, binding: plan.binding, description: plan.description,
+      confirmDataset: async () => {
+        if (!compiled || plan.capability.status !== 'ready' || plan.capability.dataset.kind !== 'external' || !('analytics' in plan.binding)) return;
+        const fresh = await resolveAnalyticsCapability(connector, input.localProjectRef);
+        if (fresh.status === 'unverified' || fresh.status === 'unavailable') {
+          throw new ConnectorError('CATALOG_AUTHORIZATION_UNAVAILABLE', 'The current analytics source could not be verified.', 503);
+        }
+        if (fresh.status !== 'ready' || analyticsDatasetFingerprint(fresh.dataset) !== plan.binding.analytics) {
+          throw new ConnectorError('ACCESS_CHANGED', 'The analytics source changed before query dispatch or private delivery.', 403);
+        }
+      },
       prepare: async (args: Args) => {
         const scope = directQueryMode(args);
         if (scope === null) return supabaseCatalogArguments(connector, tool, args);
         if (!input.authorizeSelect) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED','A verified private SQL destination is required.',403);
-        const dataset = getSupabaseAnalyticsDataset(connector,scope);
+        const dataset = scopedDataset(plan.capability,scope);
         compiled = compileAnalyticsSelect(args.query,args.parameters,dataset);
         const ref = connector.supabase_project_ref!;
         await input.authorizeSelect({scope, source:compiled.source, projectRef:ref});
@@ -73,23 +81,27 @@ async function planRead(input: ConnectorDescriptionInput, tool: CatalogReadMetad
 async function prepareRead(client: ComposioClient, input: ConnectorDescriptionInput, requiredScopes: readonly string[], expectedHash?: string) {
   const provider = await verifyCatalogBinding(input);
   const tool = await readCatalogMetadata(client, input);
-  const plan = await planRead(input, tool);
-  assertSupportedSchema(plan.modelSchema);
   const { connector } = input;
+  const isSupabase = connector.toolkit_slug === 'supabase';
+  // Ordinary contracts are pure; reject unsupported shapes before further metadata calls.
+  // For Supabase, don't look up any analytics sources until the live account is verified.
+  const ordinary = isSupabase ? undefined : await planRead(input, tool);
   // Catalogue slug alone does not imply native API (custom/MCP/disabled toolkits never qualify).
   const toolkit = await getToolkit(client, connector.toolkit_slug);
   if (toolkit.enabled === false || toolkit.toolkit_type !== 'api') unsupportedAction();
+  const account = await verifyAccountIdentity(client, { accountId: connector.provider_account_id, userId: provider.provider_user_id,
+    toolkitSlug: connector.toolkit_slug, authConfigId: connector.auth_config_id });
+  if (account.accountType !== 'PRIVATE') throw new ConnectorError('CONNECTOR_ACCOUNT_MISMATCH', 'An explicitly private connected account is required.', 409);
+  if (isSupabase) (await import('./supabase-report-profile')).assertSupabaseCatalogAccount(connector, account, requiredScopes);
+  else assertOrdinaryCatalogAccount(account, tool, requiredScopes);
+  const plan = ordinary ?? await planRead(input, tool);
+  assertSupportedSchema(plan.modelSchema);
   // Hash the provider document independently: nested plan/authority data cannot alter its identity.
   const contractHash = hashConnectorSchema(tool);
   const schemaHash = hashConnectorSchema({ mode: 'catalog-read-v1', contractHash, model: plan.modelSchema, binding: plan.binding,
     connector: connector.id, site: connector.site_id, project: provider.project_id, account: connector.provider_account_id,
     authConfig: connector.auth_config_id, revision: provider.credential_revision, providerId: provider.id });
   if (expectedHash && schemaHash !== expectedHash) changed();
-  const account = await verifyAccountIdentity(client, { accountId: connector.provider_account_id, userId: provider.provider_user_id,
-    toolkitSlug: connector.toolkit_slug, authConfigId: connector.auth_config_id });
-  if (account.accountType !== 'PRIVATE') throw new ConnectorError('CONNECTOR_ACCOUNT_MISMATCH', 'An explicitly private connected account is required.', 409);
-  if (connector.toolkit_slug === 'supabase') (await import('./supabase-report-profile')).assertSupabaseCatalogAccount(connector, account, requiredScopes);
-  else assertOrdinaryCatalogAccount(account, tool, requiredScopes);
   // Neither provider annotations, SQL templates, provider schema, nor config bindings go to the model.
   const descriptor: ConnectorToolDescription = { slug: tool.slug, toolkitSlug: tool.toolkit.slug, toolkitVersion: tool.version,
     description: plan.description, inputSchema: plan.modelSchema, catalogModelSchema: plan.modelSchema, scopeRequirements: null, scopes: tool.scopes, schemaHash };
@@ -120,6 +132,7 @@ export async function executeCatalogRead(raw: ConnectorExecutionInput): Promise<
     const dispatchArgs = await plan.prepare(args);
     validateJson(dispatchArgs);
     const body = { connected_account_id: accountId, user_id: providerUserId, version: descriptor.toolkitVersion, arguments: dispatchArgs };
+    await plan.confirmDataset?.();
     await beforeDispatch();
     dispatched = true;
     const response = await client.request(`/tools/execute/${descriptor.slug}`, { method: 'POST', body });
@@ -127,6 +140,7 @@ export async function executeCatalogRead(raw: ConnectorExecutionInput): Promise<
     const envelope = providerValue(z.object({ successful: z.literal(true), error: z.null(), data: z.unknown() }), response, true);
     if (!Object.hasOwn(envelope, 'data')) resultUnsupported();
     const data = await plan.project(envelope.data, args);
+    await plan.confirmDataset?.();
     try { validateJson(data); } catch { resultUnsupported(); }
     const serialized = JSON.stringify(data);
     if (Buffer.byteLength(serialized) > 16_384 || serialized.includes(input.credential.apiKey)) resultUnsupported();

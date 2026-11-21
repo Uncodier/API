@@ -1,7 +1,7 @@
-import { analyticsSourceHelp, getSupabaseAnalyticsDataset, type AnalyticsScope } from './supabase-analytics-sources';
+import { analyticsSourceHelp, type BoundDataset, type AnalyticsScope } from './supabase-analytics-sources';
 import { type AnalyticsResultType, type CompiledAnalyticsSelect } from './supabase-select-types';
 import { resultUnsupported } from './catalog-read-result';
-import { ConnectorError, type Connector } from './types';
+import { ConnectorError } from './types';
 
 export type AnalyticsReport = { kind:'analytics'; columns:string[]; rows:(string|null)[][]; has_more:boolean };
 export type AnalyticsPermit = (request: { source:string; scope:AnalyticsScope; projectRef:string }) => Promise<void>;
@@ -21,10 +21,9 @@ export function directQueryMode(args:Record<string,unknown>): AnalyticsScope | n
 }
 
 /** The agent gets logical columns but neither physical table bindings nor bearer material. */
-export function directQueryFields(connector:Connector) {
-  const help=analyticsSourceHelp(connector);
-  if (help===null) return {};
-  const scopes = getSupabaseAnalyticsDataset(connector).kind === 'native' ? ['workspace','platform'] : ['workspace'];
+export function directQueryFields(dataset: BoundDataset) {
+  const help = analyticsSourceHelp(dataset);
+  const scopes = dataset.kind === 'native' ? ['workspace','platform'] : ['workspace'];
   return {
     query:{type:'string',minLength:1,maxLength:4096,description:'For a data question send a single SQL SELECT on one of these sources (prefix analytics.). No published report is required. Supports filters, aggregates, groups, ordering and LIMIT up to 25. Workspace can also project listed nonidentifying fields. Platform queries must aggregate. For money aggregates, group and report the currency or filter to one currency; explain the date basis. '+help},
     parameters:{type:'array',maxItems:16,items:{anyOf:[{type:'string',maxLength:200},{type:'number'},{type:'boolean'}]},

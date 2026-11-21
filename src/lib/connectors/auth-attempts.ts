@@ -87,7 +87,7 @@ export async function finishConnectorAuth(input: { siteId: string; userId: strin
   }
   const credential = await loadConnectorCredential(input.siteId);
   const provider = await getConnectorProvider(input.siteId, attempt.provider_id);
-  const binding = readProviderBinding(input.siteId, credential.revision);
+  const binding = await readProviderBinding(input.siteId, credential.revision);
   if (!provider || provider.status !== 'active' || provider.project_id !== binding.projectId ||
     provider.credential_revision !== credential.revision || attempt.credential_revision !== credential.revision) {
     throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'Provider configuration changed during authentication.', 409);
@@ -107,8 +107,9 @@ export async function finishConnectorAuth(input: { siteId: string; userId: strin
       toolkitSlug: attempt.toolkit_slug, authConfigId: attempt.auth_config_id,
     });
     await requireConnectorSiteAccess(input.siteId, input.userId, true);
-    if ((await loadConnectorCredential(input.siteId)).revision !== credential.revision) {
-      throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'The credential changed while authentication was being verified.', 409);
+    if ((await loadConnectorCredential(input.siteId)).revision !== credential.revision ||
+      (await readProviderBinding(input.siteId, credential.revision)).projectId !== provider.project_id) {
+      throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'The provider binding changed while authentication was being verified.', 409);
     }
     const finalized = await supabaseAdmin.rpc('connector_finalize_auth', {
       p_attempt_id: attempt.id, p_actor_id: input.userId, p_nonce_hash: attempt.nonce_hash,

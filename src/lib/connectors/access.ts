@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { withCatalogActorEvidence } from '@/lib/database/hosted-project-identity';
+import { SUPABASE_CATALOG_SLUG } from './supabase-report-contract';
 import { createHash } from 'node:crypto';
 import { decryptToken } from '@/lib/utils/token-decryption';
 import {
@@ -116,14 +118,13 @@ function catalogSlug(slug: string) {
     && !REVIEWED_CONNECTOR_TOOLS.some(tool => tool.slug === slug);
 }
 
-type CatalogActorCheck = () => Promise<boolean>;
+type CatalogActorCheck = () => Promise<{ allowed: boolean; localProjectRef: string | null }>;
 
 // Only the instance path requests this extra authority. Share the actor lookup
 // within one listing, never between requests or execution rechecks.
-function catalogActorCheck(context: ConnectorContext, requested: boolean): CatalogActorCheck | undefined {
+function catalogActorCheck(context: ConnectorContext, requested: boolean, proveProject = false): CatalogActorCheck | undefined {
   if (!requested || context.catalogUserSession !== true || context.host !== 'assistant' || !uuid.safeParse(context.instanceId).success || !uuid.safeParse(context.agentId).success) return;
-  let check: Promise<boolean> | undefined;
-  return () => check ??= (async () => {
+  const read = async () => {
     const { data, error } = await supabaseAdmin.rpc('connector_catalog_read_actor', {
       p_site_id: context.siteId, p_user_id: context.userId, p_instance_id: context.instanceId, p_agent_id: context.agentId,
     }).abortSignal(deadline());
@@ -132,7 +133,9 @@ function catalogActorCheck(context: ConnectorContext, requested: boolean): Catal
     if (error?.code === '42501') throw new ConnectorError('CATALOG_AUTHORIZATION_UNAVAILABLE', 'Connector authorization could not be evaluated.', 503);
     if (error || typeof data !== 'boolean') connectorDatabaseError(error);
     return data === true;
-  })();
+  };
+  let check: ReturnType<CatalogActorCheck> | undefined;
+  return () => check ??= proveProject ? withCatalogActorEvidence(read) : read().then(allowed => ({ allowed, localProjectRef: null }));
 }
 
 async function assertUse(context: ConnectorContext, connector: Connector, allowRequest: boolean, check?: CatalogActorCheck, action?: string): Promise<AuthorizedConnector> {
@@ -191,8 +194,9 @@ async function resolveAccountPolicy(connector: Connector, host: string, check?: 
   // Never expose this setting for a guessed/unselected account or for an ineligible
   // principal. For discovery on mixed accounts keep returning the reviewed tools.
   const askForOptIn = selected && policy.catalog_reads === false && (action !== undefined || !reviewed);
-  const catalogEligible = !!(check && (policy.catalog_reads === true || askForOptIn) && hostAllowed && catalogScope
-    && connector.verified_at && !connector.revocation_dispatched && await check());
+  const actorCheck = check && (policy.catalog_reads === true || askForOptIn) && hostAllowed && catalogScope
+    && connector.verified_at && !connector.revocation_dispatched ? await check() : null;
+  const catalogEligible = actorCheck?.allowed === true;
   if (!hostAllowed || (!catalogEligible && !reviewed)) {
     throw new ConnectorError('ACCESS_DENIED', 'No tool policy permits this connector operation.', 403);
   }
@@ -201,10 +205,18 @@ async function resolveAccountPolicy(connector: Connector, host: string, check?: 
   if (!provider || provider.status !== 'active' || provider.credential_revision !== credential.revision) {
     throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'Verify the provider configuration after changing its credential.', 409);
   }
+  if (credential.source === 'byok') {
+    const { readByokProviderBinding } = await import('./provider-attestations');
+    const proof = await readByokProviderBinding(connector.site_id, credential.revision);
+    if (proof.projectId !== provider.project_id || proof.projectId !== connector.provider_project_id) {
+      throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'Verify the existing provider project before using this connector.', 409);
+    }
+  }
   if (catalogEligible && askForOptIn) {
     throw new ConnectorError('CATALOG_OPT_IN_REQUIRED', 'Ask a workspace manager to enable catalogue reads for the selected connection.', 403);
   }
-  return { connector, provider, policy: { ...policy, catalog_reads: catalogEligible && policy.catalog_reads === true } };
+  return { connector, provider, ...(catalogEligible && actorCheck?.localProjectRef && { localProjectRef: actorCheck.localProjectRef }),
+    policy: { ...policy, catalog_reads: catalogEligible && policy.catalog_reads === true } };
 }
 
 export async function listUsableConnectors(context: ConnectorContext, allowRequest = false, catalogReads = false): Promise<AuthorizedConnector[]> {
@@ -224,7 +236,8 @@ export async function listUsableConnectors(context: ConnectorContext, allowReque
 }
 
 export async function resolveConnectorAction(context: ConnectorContext, connectorId: string, toolSlug: string, allowRequest = false, catalogReads = false): Promise<AuthorizedConnector> {
-  const access = await resolveAccount(context, connectorId, allowRequest, catalogActorCheck(context, catalogReads && catalogSlug(toolSlug)), toolSlug);
+  const access = await resolveAccount(context, connectorId, allowRequest,
+    catalogActorCheck(context, catalogReads && catalogSlug(toolSlug), toolSlug === SUPABASE_CATALOG_SLUG), toolSlug);
   const catalogCandidate = !access.requestOnly && access.policy.catalog_reads === true && catalogSlug(toolSlug)
     && (access.policy.tool_access_mode === 'all' || access.policy.allowed_tools.includes(toolSlug));
   if (!catalogCandidate && !policyReviewedTools(access.connector, access.policy).some(tool => tool.slug === toolSlug)) {

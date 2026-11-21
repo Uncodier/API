@@ -9,7 +9,7 @@ jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {
   rpc: (...args: unknown[]) => rpc(...args),
 } }));
 jest.mock('../access', () => ({ requireConnectorSiteAccess: jest.fn(), loadConnectorCredential: async () => ({ revision: 'revision' }) }));
-jest.mock('../provider-binding', () => ({ prepareConnectorTokenProvider: (...args: unknown[]) => prepare(...args) }));
+jest.mock('../provider-binding', () => ({ readTokenProviderBinding: async () => ({ projectId: 'project' }), prepareConnectorTokenProvider: (...args: unknown[]) => prepare(...args) }));
 jest.mock('../composio-transport', () => ({ ...jest.requireActual('../composio-transport'), createComposioClient: () => ({ request }) }));
 jest.mock('../managed-oauth', () => ({ ensureSupabaseTokenConfig: (...args: unknown[]) => ensure(...args) }));
 jest.mock('../composio-accounts', () => ({ verifyAccountIdentity: (...args: unknown[]) => verify(...args) }));

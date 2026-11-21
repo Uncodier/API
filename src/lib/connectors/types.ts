@@ -84,6 +84,8 @@ export type ConnectorPolicy = {
 };
 
 export type AuthorizedConnector = {
+  /** Server-only project identity proven by this actor's successful authorization RPC. Never a grant. */
+  localProjectRef?: string;
   /** Set only by request-capable resolution; never an execution grant. */
   requestOnly?: true;
   connector: Connector;

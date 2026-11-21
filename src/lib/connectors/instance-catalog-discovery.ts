@@ -66,11 +66,11 @@ function catalogRow(target: AuthorizedConnector, item: Awaited<ReturnType<typeof
 async function accountPage(client: ReturnType<typeof createComposioClient>, target: AuthorizedConnector, page: number, query?: string) {
   const kit = target.connector.toolkit_slug;
   const { tool_access_mode, allowed_tools } = target.policy;
-  if (tool_access_mode !== 'selected' || (query && !allowed_tools.includes(query))) {
+  if (tool_access_mode !== 'selected') {
     return { ...await listToolkitToolMetadata(client, kit, catalogPageCursor(page, TOOL_CATALOG_LIMIT), query), missing: false };
   }
   // Do not scan the entire toolkit to locate one saved ID. Composio's tool_slugs filter is bounded to 12 here.
-  const selected = [...new Set(query ? [query] : allowed_tools)].filter(slug => !slug.startsWith('COMPOSIO_') && !REVIEWED_CONNECTOR_TOOLS.some(t => t.slug === slug)).sort();
+  const selected = [...new Set(query && allowed_tools.includes(query) ? [query] : allowed_tools)].filter(slug => !slug.startsWith('COMPOSIO_') && !REVIEWED_CONNECTOR_TOOLS.some(t => t.slug === slug)).sort();
   const batch = selected.slice((page - 1) * 12, page * 12);
   const result = batch.length ? await listSelectedCatalogMetadata(client, kit, batch) : { items: [], missing: false };
   return { ...result, next_cursor: selected.length > page * 12 };
@@ -103,12 +103,14 @@ export async function instanceCatalogPage(context: ConnectorContext, filters: Co
     try {
       const credential = await loadConnectorCredential(context.siteId);
       if (credential.revision !== target.provider.credential_revision) throw new ConnectorError('STALE_CREDENTIAL', 'Connection verification changed.', 409);
-      const result = await accountPage(createComposioClient(credential.apiKey), target, page, publicQuery(target.connector.toolkit_slug, filters.catalog_query || filters.query || ''));
+      const term = publicQuery(target.connector.toolkit_slug, filters.catalog_query || filters.query || '');
+      const result = await accountPage(createComposioClient(credential.apiKey), target, page, term);
       if (result.missing) partialError = 'CATALOG_SELECTION_CHANGED';
       const current = digest(result.items.map(i => [i.slug, i.action_types]));
       if (offset && (fingerprint !== current || offset >= result.items.length)) throw stale();
+      const match = filters.catalog_query ?? (target.policy.tool_access_mode === 'selected' ? term : undefined);
       for (; offset < result.items.length && tools.length < PAGE_SIZE; offset++) {
-        if (!localMatch(target.connector.toolkit_slug, result.items[offset], filters.catalog_query)) continue;
+        if (!localMatch(target.connector.toolkit_slug, result.items[offset], match)) continue;
         const row = catalogRow(target, result.items[offset]);
         if (row) tools.push(row);
       }
