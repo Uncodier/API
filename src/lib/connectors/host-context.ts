@@ -6,7 +6,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** agentId is selected with the actual server-built prompt, not instance metadata. */
 export function assistantConnectorContext(scope: {
   siteId: string; userId?: string; instanceId: string; host: 'assistant' | 'workflow';
-  agentId?: string; requestId?: string; sourceDigest?: string; connectorIdHint?: string;
+  agentId?: string; requestId?: string; sourceDigest?: string; connectorIdHint?: string; catalogUserSession?: true;
 }): ConnectorContextResolver {
   const { siteId, userId, instanceId, host, agentId, requestId } = scope;
   return async () => {
@@ -30,7 +30,7 @@ export function assistantConnectorContext(scope: {
       .abortSignal(AbortSignal.timeout(5000)).maybeSingle();
     if (agent.error) throw new ConnectorError('HOST_IDENTITY_UNAVAILABLE', 'Connector agent identity could not be verified.', 503);
     if (!agent.data) throw new ConnectorError('AGENT_REQUIRED', 'The prompt agent is no longer active.', 403);
-    return { siteId, userId, instanceId, host, agentId, ...(requestId ? { requestId, ...(scope.sourceDigest && { sourceDigest: scope.sourceDigest }) } : {}),
+    return { siteId, userId, instanceId, host, agentId, ...(scope.catalogUserSession === true && { catalogUserSession: true as const }), ...(requestId ? { requestId, ...(scope.sourceDigest && { sourceDigest: scope.sourceDigest }) } : {}),
       ...(scope.connectorIdHint !== undefined ? { connectorIdHint: scope.connectorIdHint } : {}) };
   };
 }

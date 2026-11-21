@@ -1,3 +1,4 @@
+import { LEGACY_DEFAULT_AGENT_FILTER } from "@/lib/services/agents/legacy-default-filter";
 import crypto from "crypto";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { decryptToken } from "@/lib/utils/token-decryption";
@@ -44,6 +45,7 @@ async function loadCustomerSupportAgent(siteId: string): Promise<CustomerSupport
     .select("id, name, description, prompt, backstory, status, tools, activities, configuration")
     .eq("site_id", siteId)
     .eq("role", CUSTOMER_SUPPORT_ROLE)
+    .or(LEGACY_DEFAULT_AGENT_FILTER)
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();

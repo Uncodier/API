@@ -31,6 +31,7 @@ jest.mock("@/lib/database/supabase-server", () => ({
       const query = {
         select: () => query,
         eq: () => query,
+        or: () => query,
         order: () => query,
         limit: () => query,
         maybeSingle: mockMaybeSingle,

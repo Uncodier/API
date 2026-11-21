@@ -46,6 +46,17 @@ describe('Composio bound account lifecycle adapter', () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it('uses the user-filtered list only for owner proof, not for stronger account facts', async () => {
+    const raw = { ...accountFixture(), user_id:undefined, toolkit:{slug:'supabase'}, experimental:undefined,
+      state:{authScheme:'API_KEY',val:{full:'https://foreign.example.test'}} };
+    const list = { ...raw,experimental:{account_type:'PRIVATE'},state:{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}} };
+    const target={...expected,toolkitSlug:'supabase'};
+    request.mockResolvedValueOnce(raw).mockResolvedValueOnce({items:[list]});
+    expect(await verifyAccountIdentity(client,target)).toMatchObject({hostedSupabasePat:false,accountType:undefined,scopesKnown:false});
+    request.mockResolvedValueOnce(raw).mockResolvedValueOnce({items:[{...list,state:{val:{scope:'read'}}}]});
+    await expect(verifyAccountIdentity(client,target)).rejects.toMatchObject({code:'CONNECTOR_ACCOUNT_MISMATCH'});
+  });
+
   it('does not infer ownership from a project-wide account when owner proof is missing', async () => {
     const { user_id: _, ...raw } = accountFixture();
     request.mockResolvedValueOnce(raw).mockResolvedValueOnce({ items: [], next_cursor: null });

@@ -115,3 +115,38 @@ describe('Composio request-local transport', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+describe('Documented direct execution REST error envelope', () => {
+  const originalFetch = global.fetch; const http = jest.fn();
+  beforeEach(() => { http.mockReset(); global.fetch = http; });
+  afterEach(() => { global.fetch = originalFetch; });
+  const execute = '/tools/execute/HUBSPOT_LIST_COMPANIES';
+  const match = () => ({code:1812,slug:'ActionExecute_ConnectedAccountEntityIdMismatch',status:400,message:secret(),suggested_fix:secret(),request_id:secret()});
+  it('uses the documented code+slug and transport status for exact execute only, never prose or retry', async () => {
+    const error=match();const key=secret();const client=createComposioClient(key);
+    for (const [path,status,body,code] of [
+      [execute,400,{error},'CONNECTOR_ACCOUNT_MISMATCH'],[execute,400,{error:{...error,status:403}},'PROVIDER_REJECTED'],
+      [execute,400,{error:{...error,code:0}},'PROVIDER_REJECTED'],[execute,400,{error:{...error,slug:'unknown'}},'PROVIDER_REJECTED'],
+      [execute,400,{error:{...error,message:'x'.repeat(4200)}},'PROVIDER_REJECTED'], [execute,400,{successful:true,error},'PROVIDER_REJECTED'],
+      ['/connected_accounts/link',400,{error},'PROVIDER_REJECTED'],[execute,401,{error},'PROVIDER_AUTH_FAILED'],
+    ] as const) {
+      http.mockReset(); http.mockResolvedValueOnce(jsonResponse(body,status));
+      const failure=await client.request(path,{method:'POST',body:{}}).catch(v=>v);
+      expect(failure).toMatchObject({code}); expect(failure).not.toHaveProperty('executed');expect(failure).not.toHaveProperty('effectStarted');
+      for (const token of [key,error.message,error.suggested_fix,error.request_id]) expect(JSON.stringify(failure)).not.toContain(token);
+      expect(http).toHaveBeenCalledTimes(1);
+    }
+  });
+  it('cancels an optional stalled error body, uses the known HTTP failure and does not wait for hanging cleanup',async () => {
+    const cancel=jest.fn(() => new Promise<void>(()=>{}));
+    http.mockResolvedValueOnce(new Response(new ReadableStream({cancel}),{status:400,headers:{'content-type':'application/json'}}));
+    await expect(createComposioClient(secret()).request(execute,{method:'POST'})).rejects.toMatchObject({code:'PROVIDER_REJECTED'});
+    expect(cancel).toHaveBeenCalledTimes(1);expect(http).toHaveBeenCalledTimes(1);
+  });
+  it('cancels oversized non-2xx metadata using streamed bytes without trusting Content-Length', async () => {
+    const cancel=jest.fn();http.mockResolvedValueOnce(new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array(4500));}, cancel}),{
+      status:400,headers:{'content-type':'application/json','content-length':'2'},
+    }));
+    await expect(createComposioClient(secret()).request(execute,{method:'POST'})).rejects.toMatchObject({code:'PROVIDER_REJECTED'});
+    expect(cancel).toHaveBeenCalledTimes(1);expect(http).toHaveBeenCalledTimes(1);
+  });
+});

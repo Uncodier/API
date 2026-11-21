@@ -1,3 +1,4 @@
+import { LEGACY_DEFAULT_AGENT_FILTER } from "@/lib/services/agents/legacy-default-filter";
 import { channelRequestReceipt, channelRequestTool } from '@/lib/connectors/channel-request';
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
       .select("id, site_id, configuration")
       .eq("site_id", siteId)
       .eq("role", "Customer Support")
+      .or(LEGACY_DEFAULT_AGENT_FILTER)
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();

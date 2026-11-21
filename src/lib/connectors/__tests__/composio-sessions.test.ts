@@ -174,14 +174,13 @@ describe('Composio explicit version-pinned REST execution', () => {
     expect(() => validateConnectorArguments({ max_results: 5, query: 'in:inbox' })).not.toThrow();
   });
 
-  it('passes a successful private instance envelope without interpreting the tool-specific payload', async () => {
+  it('never returns provider diagnostics or raw envelopes for an interactive call', async () => {
     const input = await prepared(); const token = secret();
-    const envelope = { successful: true, error: null, version: 'v1', log_id: 'log_one',
-      data: [{ unknown_collection: [null, 'item'] }], logs: [{ message: 'completed', index: 1 }] };
     fetchMock.mockResolvedValueOnce(jsonResponse(toolFixture())).mockResolvedValueOnce(jsonResponse(accountFixture()))
-      .mockResolvedValueOnce(jsonResponse({ ...envelope, logs: [{ ...envelope.logs[0], access_token: token, echo: input.credential.apiKey }] }));
-    const result = await executeConnectorTool({ ...input, instanceResponse: true });
-    expect(result).toEqual({ ...envelope, logs: [{ ...envelope.logs[0], echo: '[redacted]' }] });
+      .mockResolvedValueOnce(jsonResponse({ successful: true, error: null, data: { messages: [] },
+        logs: [{ message: token, echo: input.credential.apiKey }], unknown: token }));
+    const result = await executeConnectorTool(input);
+    expect(result).toEqual({ successful: true, data: { messages: [] }, logId: undefined });
     expect(JSON.stringify(result)).not.toContain(token);
     expect(JSON.stringify(result)).not.toContain(input.credential.apiKey);
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -200,19 +199,19 @@ describe('Composio explicit version-pinned REST execution', () => {
       .mockResolvedValueOnce(jsonResponse(accountFixture()))
       .mockResolvedValueOnce(jsonResponse({ successful: false, error: accessToken, data: {} }));
     const error = await executeConnectorTool(input).catch(value => value);
-    expect(error.code).toBe('CONNECTOR_OUTCOME_UNKNOWN');
+    expect(error.code).toBe('CONNECTOR_READ_FAILED');
     expect(error.effectStarted).not.toBe(false);
     expect(JSON.stringify(error)).not.toContain(accessToken);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it('never retries a timed-out external dispatch and preserves unknown effect state', async () => {
+  it('never retries a timed-out reviewed read or pretends that no dispatch occurred', async () => {
     const input = await prepared();
     fetchMock.mockResolvedValueOnce(jsonResponse(toolFixture()))
       .mockResolvedValueOnce(jsonResponse(accountFixture()))
       .mockRejectedValueOnce(new Error(secret()));
     const error = await executeConnectorTool(input).catch(value => value);
-    expect(error.code).toBe('CONNECTOR_OUTCOME_UNKNOWN');
+    expect(error.code).toBe('CONNECTOR_READ_FAILED');
     expect(error.effectStarted).not.toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });

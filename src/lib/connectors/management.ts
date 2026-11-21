@@ -23,7 +23,8 @@ export const accessPatchSchema = revision.extend({ members: z.array(member).max(
   .refine(value => value.members.length + value.agents.length > 0)
   .refine(value => new Set(value.members.map(row => row.user_id)).size === value.members.length)
   .refine(value => new Set(value.agents.map(row => row.agent_id)).size === value.agents.length);
-export const policyPatchSchema = revision.extend({
+const fullPolicy = revision.extend({
+  catalog_reads: z.boolean().optional(),
   support_publication: supportPublicationSchema.nullish(),
   tool_access_mode: z.enum(['all', 'selected']).default('selected'),
   allowed_tools: z.array(catalogToolId).max(100),
@@ -31,6 +32,8 @@ export const policyPatchSchema = revision.extend({
   require_approval: z.boolean(), enabled: z.boolean(),
 }).strict().refine(value => new Set(value.allowed_tools).size === value.allowed_tools.length
   && new Set(value.allowed_hosts).size === value.allowed_hosts.length);
+const catalogOptOut = revision.extend({ catalog_reads: z.literal(false) }).strict();
+export const policyPatchSchema = z.union([catalogOptOut, fullPolicy]);
 const resultSchema = z.object({ connector_id: uuid, revision: z.number().int().positive() });
 const optionSchema = z.object({ id: uuid, label: z.string().min(1).max(500) }).strict();
 const optionsSchema = z.object({ member_options: z.array(optionSchema).max(1000), agent_options: z.array(optionSchema).max(1000) }).strict();
@@ -71,6 +74,7 @@ export async function getConnectorAccess(siteId: string, userId: string, connect
       members: own ? [memberProjection(own)] : [], agents: [],
       // Effective human ceiling only. No other user's/agent's grants or selection options.
       policy: {
+        catalog_reads: allowed && !!connector.verified_at && !connector.revocation_dispatched && policy.allowed_hosts.includes('assistant') && policy.catalog_reads === true,
         tool_access_mode: allowed ? tool_access_mode : 'selected' as const,
         allowed_tools: allowed && tool_access_mode === 'selected' ? policy.allowed_tools : [],
         allowed_hosts: allowed ? policy.allowed_hosts : [], require_approval: policy.require_approval,
@@ -97,7 +101,7 @@ export async function getConnectorAccess(siteId: string, userId: string, connect
     connector_id: connectorId, revision: connector.revision, access_mode,
     members: (members.data as ConnectorMemberGrant[]).map(memberProjection),
     agents: (agents.data as ConnectorAgentGrant[]).map(agentProjection),
-    policy: { tool_access_mode, allowed_tools: policy.allowed_tools, allowed_hosts: policy.allowed_hosts,
+    policy: { tool_access_mode, catalog_reads: policy.catalog_reads === true, allowed_tools: policy.allowed_tools, allowed_hosts: policy.allowed_hosts,
       require_approval: policy.require_approval, support_publication: policy.support_publication ?? null },
     ...parsed.data, can_manage: true,
     reviewed_tools: compatibleReviewedTools(connector)
@@ -120,17 +124,21 @@ export async function updateConnectorPolicy(userId: string, connectorId: string,
   const body = policyPatchSchema.parse(input); uuid.parse(connectorId);
   await requireConnectorSiteAccess(body.site_id, userId, true);
   const connector = await getVisibleConnector(body.site_id, userId, connectorId);
-  if (body.support_publication && connector.toolkit_slug !== 'gmail') {
+  const scope = { p_site_id: body.site_id, p_connector_id: connectorId, p_actor_id: userId, p_expected_revision: body.expected_revision };
+  if (!('allowed_tools' in body)) return connectorMutation('connector_disable_catalog_reads', scope);
+  if (body.catalog_reads !== false && body.support_publication && connector.toolkit_slug !== 'gmail') {
     throw new ConnectorError('INVALID_PUBLICATION', 'Only Gmail supports published support titles.', 400);
   }
-  if (body.allowed_tools.length) {
+  // The full-body false overload compares every other field under the revision lock.
+  // Skipping the remote catalog check there can only turn this single flag off.
+  if (body.catalog_reads !== false && body.allowed_tools.length) {
     const { apiKey } = await loadConnectorCredential(body.site_id);
     await validateCatalogToolIds(createComposioClient(apiKey), connector.toolkit_slug, body.allowed_tools);
   }
   return connectorMutation('connector_update_policy', {
-    p_site_id: body.site_id, p_connector_id: connectorId, p_actor_id: userId,
-    p_expected_revision: body.expected_revision, p_tool_access_mode: body.tool_access_mode, p_allowed_tools: body.allowed_tools,
+    ...scope, p_tool_access_mode: body.tool_access_mode, p_allowed_tools: body.allowed_tools,
     p_allowed_hosts: body.allowed_hosts, p_require_approval: body.require_approval, p_enabled: body.enabled,
     p_support_publication: body.support_publication ?? null,
+    ...(body.catalog_reads === undefined ? {} : { p_catalog_reads: body.catalog_reads }),
   });
 }

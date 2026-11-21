@@ -61,6 +61,8 @@ describe('request middleware route classification', () => {
   });
 
   it('recognizes only explicitly supported webhook surfaces', () => {
+    expect(isWebhookPath('/api/agent/message')).toBe(true);
+    expect(isWebhookPath('/api/agent/message/status')).toBe(false);
     expect(isWebhookPath('/api/integrations/stripe/webhook')).toBe(true);
     expect(isWebhookPath('/api/integrations/agentmail/webhook/message-received')).toBe(true);
     expect(isWebhookPath('/api/integrations/zavu/voice-tools')).toBe(true);

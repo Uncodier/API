@@ -71,3 +71,19 @@ test('human pause while pending template approval is polled suppresses send perm
   await expect(deliverZavuTemplate(input)).rejects.toBeInstanceOf(AutomationSendSuppressed);
   expect(getZavuTemplate).toHaveBeenCalledTimes(1);
 });
+
+test.each(['creating', 'submitting', 'dispatching'])('a pinned template rechecks the reply binding after its %s claim', async stage => {
+  const input = { ...params, connectionId: 'connection', senderId: 'sender',
+    verifyBinding: async () => { if (row.custom_data.template_delivery?.state === stage) throw new Error('Reply binding changed'); } };
+  row.custom_data.response_format = 'audio';
+  if (stage !== 'creating') {
+    row.custom_data.template_delivery = { key: createHash('sha256').update(JSON.stringify(['Hello','recipient','sender','connection'])).digest('hex'),
+      state: stage === 'submitting' ? 'ready' : 'pending', name:'saved', started_at:new Date().toISOString(),
+      template_id:'template',language:'en',body:'Hello',submitted_sender_id:'sender' };
+    jest.mocked(getZavuTemplate).mockResolvedValue({id:'template',name:'saved',body:'Hello',language:'en',
+      status: stage === 'submitting' ? 'draft' : 'approved' } as any);
+  }
+  await expect(deliverZavuTemplate(input)).rejects.toThrow('Reply binding changed');
+  expect(sendZavuTemplate).not.toHaveBeenCalled();
+  expect(row.custom_data.template_delivery.state).toBe(stage);
+});

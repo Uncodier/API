@@ -24,10 +24,14 @@ beforeEach(() => {
 });
 
 it('projects real metadata, strips schemas/secrets, and treats review as distinct from execution', async () => {
-  request.mockResolvedValue({ items: [{ ...tool, input_parameters: { private: token } },
-    { ...tool, slug: 'GMAIL_SEND_EMAIL' }], next_cursor: 'next', total_items: 61 });
+  request.mockResolvedValue({ items: [{ ...tool, tags: ['readOnlyHint', token, 'readOnlyHint'], input_parameters: { private: token } },
+    { ...tool, slug: 'GMAIL_SEND_EMAIL', tags: ['createHint', 'updateHint', 'destructiveHint'] },
+    { ...tool, slug: 'GMAIL_UNKNOWN', tags: 'readOnlyHint' }], next_cursor: 'next', total_items: 61 });
   const result = await listToolkitTools({ request }, 'gmail');
-  expect(result).toMatchObject({ total: 61, next_cursor: 'next', items: [{ reviewed: true }, { reviewed: false }] });
+  expect(result).toMatchObject({ total: 61, next_cursor: 'next', items: [
+    { reviewed: true, action_types: ['read'] }, { reviewed: false, action_types: ['create', 'update', 'delete'] },
+    { reviewed: false, action_types: [] },
+  ] });
   expect(JSON.stringify(result)).not.toContain(token);
   expect(result.items[0]).not.toHaveProperty('input_parameters');
   expect(result.items[0]).not.toHaveProperty('can_execute');
@@ -35,11 +39,11 @@ it('projects real metadata, strips schemas/secrets, and treats review as distinc
 });
 
 it('scopes continuation and rejects foreign toolkits or repeated cursors', async () => {
-  await listToolkitTools({ request }, 'gmail', 'page-one');
+  await listToolkitTools({ request }, 'gmail', { cursor: 'page-one' });
   expect(request.mock.calls[0][0]).toContain('cursor=page-one');
   request.mockResolvedValueOnce({ items: [{ ...tool, toolkit: { slug: 'github' } }] });
   await expect(listToolkitTools({ request }, 'gmail')).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
-  await expect(listToolkitTools({ request }, 'gmail', 'next')).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
+  await expect(listToolkitTools({ request }, 'gmail', { cursor: 'next' })).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
 });
 
 it('checks actor/site authority before reading credentials or provider metadata', async () => {
@@ -88,4 +92,38 @@ it('searches the provider catalogue before pagination, scoped to the toolkit and
     expect((await GET(new Request(`${url}&q=${q}`, { headers }), context)).status).toBe(400);
   }
   expect(request).toHaveBeenCalledTimes(1);
+});
+
+it('combines a validated action and search before provider pagination', async () => {
+  request.mockResolvedValue({ items: [{ ...tool, tags: ['readOnlyHint'] }], total_items: 21 });
+  const context = { params: Promise.resolve({ slug: 'gmail' }) };
+  const headers = { authorization: `Bearer ${token}` };
+  const url = `https://api.example.test/api/connectors/catalog/gmail/tools?site_id=${site}&page=2&q=inbox`;
+  for (const action of ['readOnlyHint', 'all', 'read&action=update']) {
+    expect((await GET(new Request(`${url}&action=${action}`, { headers }), context)).status).toBe(400);
+  }
+  expect(request).not.toHaveBeenCalled();
+  const response = await GET(new Request(`${url}&action=read`, { headers }), context);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ items: [{ action_types: ['read'], reviewed: true }], total: 21, current_page: 2 });
+  expect(Object.fromEntries(new URLSearchParams(request.mock.calls[0][0].split('?')[1]))).toMatchObject({
+    tags: 'readOnlyHint', query: 'inbox', cursor: Buffer.from('2-20').toString('base64'),
+  });
+  await expect(listToolkitTools({ request }, 'gmail', { action: 'delete' })).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
+});
+
+it('paginates unclassified tools across provider pages, without relying on slugs or descriptions', async () => {
+  const batch = (offset: number, size: number) => Array.from({ length: size }, (_, i) => ({ ...tool, slug: `GMAIL_FETCH_${i + offset}`, tags: ['important'] }));
+  request.mockResolvedValueOnce({ items: [{ ...tool, tags: ['readOnlyHint'] }, ...batch(0, 19)], next_cursor: 'next' })
+    .mockResolvedValueOnce({ items: batch(19, 2) });
+  const result = await listToolkitTools({ request }, 'gmail', { action: 'unclassified', page: 2, q: 'fetch' });
+  expect(result).toMatchObject({ total: 21, current_page: 2, total_pages: 2, next_cursor: null, items: [{ slug: 'GMAIL_FETCH_20', action_types: [] }] });
+  expect(request).toHaveBeenCalledTimes(2);
+  for (const [url] of request.mock.calls) expect(url).toMatch(/query=fetch/);
+  expect(request.mock.calls[1][0]).toContain('cursor=next');
+  request.mockResolvedValueOnce({ items: [tool], next_cursor: 'another' })
+    .mockResolvedValueOnce({ items: [tool] });
+  await expect(listToolkitTools({ request }, 'gmail', { action: 'unclassified' })).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
+  request.mockResolvedValueOnce({ items: [tool], total_items: 21 });
+  await expect(listToolkitTools({ request }, 'gmail', { action: 'unclassified' })).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
 });

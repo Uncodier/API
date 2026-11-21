@@ -28,6 +28,8 @@ function normalizeAccount(data: z.infer<typeof accountSchema>) {
     id: data.id, toolkitSlug: data.toolkit.slug, authConfigId: data.auth_config.id,
     // Project-scoped PAT dispatch requires a positive live origin/scheme proof. Never return the state or URL.
     hostedSupabasePat: data.toolkit.slug === 'supabase' && data.state?.authScheme === 'API_KEY' && hosted,
+    // Unreported grants are unknown, not proof of either an empty grant or permission.
+    scopesKnown: rawScope != null, oauth2: data.state?.authScheme === 'OAUTH2',
     status: data.status, userId: data.user_id, scopes: [...new Set(scopes)], name: data.alias || undefined,
     authConfigDisabled: data.auth_config.is_disabled, disabled: data.is_disabled, accountType: data.experimental?.account_type,
   };
@@ -60,7 +62,7 @@ export async function verifyAccountIdentity(client: ComposioClient, expected: {
   accountId: string; userId: string; toolkitSlug: string; authConfigId: string;
 }): Promise<ComposioAccount> {
   inputValue(z.object({ accountId: providerId, userId: providerId, toolkitSlug, authConfigId: providerId }).strict(), expected);
-  let account = await getAccount(client, expected.accountId);
+  const account = await getAccount(client, expected.accountId);
   const matches = (item: ComposioAccount) => item.id === expected.accountId && item.toolkitSlug === expected.toolkitSlug
     && item.authConfigId === expected.authConfigId && item.accountType !== 'SHARED' && !item.authConfigDisabled && !item.disabled;
   if (!matches(account) || (account.userId !== undefined && account.userId !== expected.userId)) identityError();
@@ -70,7 +72,15 @@ export async function verifyAccountIdentity(client: ComposioClient, expected: {
     if (data.items.length !== 1 || data.next_cursor) identityError();
     const filtered = normalizeAccount(data.items[0]);
     if (!matches(filtered) || (filtered.userId !== undefined && filtered.userId !== expected.userId)) identityError();
-    account = filtered;
+    // The list proves ownership, not absence of grants. A reduced list DTO must not
+    // downgrade an explicitly reported scope list to unknown (or erase broader grants).
+    if (account.status !== 'ACTIVE') throw new ConnectorError('CONNECTOR_NOT_ACTIVE', 'The connected account is not active.', 409);
+    if (account.scopesKnown && filtered.scopesKnown && (account.scopes.length !== filtered.scopes.length ||
+      account.scopes.some(scope => !filtered.scopes.includes(scope)))) identityError();
+    // Ownership is the only fact this filtered list may supply. Never elevate the
+    // exact detail's account type, credential scheme, hosted origin or OAuth grant.
+    if (filtered.status !== 'ACTIVE') throw new ConnectorError('CONNECTOR_NOT_ACTIVE', 'The connected account is not active.', 409);
+    if (!account.scopesKnown && filtered.scopesKnown) identityError();
   }
   if (account.status !== 'ACTIVE') throw new ConnectorError('CONNECTOR_NOT_ACTIVE', 'The connected account is not active.', 409);
   return account;

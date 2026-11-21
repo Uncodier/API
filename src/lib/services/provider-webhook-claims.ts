@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import type { InboundClaimIdentity } from './zavu/inbound-claim';
 
 export type ProviderWebhookClaim =
-  | { state: 'claimed'; token: string; expiresAt: string }
+  | { state: 'claimed'; token: string; expiresAt: string; reconcileOnly?: boolean }
   | { state: 'busy' }
   | { state: 'completed' };
 
@@ -46,6 +47,23 @@ export async function claimProviderWebhookEvent(
     token,
     expiresAt: result.claim_expires_at,
   };
+}
+
+export async function claimZavuInboundWebhook(identity: InboundClaimIdentity): Promise<ProviderWebhookClaim | { state: 'reconcile' }> {
+  const token = randomUUID();
+  const { data, error } = await supabaseAdmin.rpc('claim_zavu_inbound_webhook', {
+    p_event_id: identity.eventId, p_fallback_message_id: identity.fallbackMessageId,
+    p_binding_hash: identity.bindingHash, p_claim_token: token,
+  });
+  // Missing RPC, transport timeout or invalid retry disposition must never
+  // downgrade to the generic RPC or permit a second workflow start.
+  if (error) throw new Error('Unable to claim bound Zavu inbound receipt');
+  const result = data as (ClaimRpcResult & { reconcile_only?: unknown }) | null;
+  if (result?.state === 'busy' || result?.state === 'completed' || result?.state === 'reconcile') return { state: result.state };
+  if (result?.state !== 'claimed' || typeof result.claim_expires_at !== 'string' || typeof result.reconcile_only !== 'boolean') {
+    throw new Error('Invalid bound Zavu inbound claim result');
+  }
+  return { state: 'claimed', token, expiresAt: result.claim_expires_at, reconcileOnly: result.reconcile_only };
 }
 
 export async function finishProviderWebhookEvent(

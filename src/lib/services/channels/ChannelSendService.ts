@@ -1,3 +1,4 @@
+import { pinnedReplyPayloadHash } from '@/lib/messaging/pinned-reply-payload';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { assertAutomationSendAllowed, AutomationSendSuppressed, automationSkippedResult } from './automation-send-guard';
 import { sendChannelMessage } from '@/lib/services/zavu/client';
@@ -15,6 +16,8 @@ import { getSiteLicensedResources, isLicensedChannelConnection, requireLicensedC
 import { validateOutboundMedia } from './outbound-media';
 import { requireSavedOutboundMedia } from './saved-outbound-media';
 import { dispatchNativeMedia } from './native-media-delivery';
+import { dispatchPinnedZavu } from './pinned-zavu-dispatch';
+import { requirePinnedZavuSender, sameZavuBinding, savedZavuReply, type ExpectedZavuTurn } from './saved-zavu-reply';
 
 export interface SendChannelMessageParams {
   site_id: string;
@@ -30,9 +33,12 @@ export interface SendChannelMessageParams {
   lead_id?: string;
   message_id?: string;
   response_format?: ResponseFormat;
+  expectedZavuTurn?: ExpectedZavuTurn;
 }
 
 export interface SendChannelMessageResult {
+  receiptHandled?: boolean;
+  accepted?: boolean;
   skipped?: boolean;
   reason?: string;
   delivered?: boolean;
@@ -40,6 +46,7 @@ export interface SendChannelMessageResult {
   messageId?: string;
   deliveryKind?: 'comment';
   provider?: 'zavu' | 'outstand';
+  providerStatus?: string;
   status?: number;
   error?: string;
   templateDelivery?: TemplateDeliveryResult;
@@ -76,20 +83,21 @@ export class ChannelSendService {
       validateResponseFormat(params.response_format, params.channel);
       const media = await validateOutboundMedia(params, params.channel);
       const message = params.message || '';
-      const savedMedia = await requireSavedOutboundMedia(params, params.channel, media);
-      const savedMediaConnection = savedMedia?.connection_id;
-      if (savedMediaConnection !== undefined && (typeof savedMediaConnection !== 'string' || !savedMediaConnection.trim())) {
-        throw Object.assign(new Error('Saved media connection is invalid'), { status: 400 });
-      }
       if (!params.site_id || !params.channel || !params.to || (!message.trim() && !media)) {
         throw Object.assign(new Error('site_id, channel, to, and message or media are required'), { status: 400 });
       }
 
       console.log(`[ChannelSendService] Sending ${params.channel} message to ${params.to} for site ${params.site_id}`);
-      await assertAutomationSendAllowed(params);
+      const scope = await assertAutomationSendAllowed(params, true);
+      const pinned = await savedZavuReply(scope, params);
+      const savedMedia = pinned && media ? scope?.message?.custom_data : await requireSavedOutboundMedia(params, params.channel, media);
+      const savedMediaConnection = savedMedia?.connection_id;
+      if (savedMediaConnection !== undefined && (typeof savedMediaConnection !== 'string' || !savedMediaConnection.trim())) {
+        throw Object.assign(new Error('Saved media connection is invalid'), { status: 400 });
+      }
 
       // Handle Outstand Comments channels
-      if (OUTSTAND_CHANNELS.includes(params.channel)) {
+      if (!pinned && OUTSTAND_CHANNELS.includes(params.channel)) {
         let instagramMayUseZavu = params.channel === 'instagram' && !params.message_id && !params.conversation_id;
         if (params.channel === 'instagram' && params.conversation_id) {
           const { data: conversation, error: conversationError } = await supabaseAdmin
@@ -148,8 +156,11 @@ export class ChannelSendService {
       // 1. Get site channels connections to find the zavu_sender_id for this channel type
       const siteSettings = await getSiteLicensedResources(params.site_id);
       const connections = siteSettings.channels.connections;
-      let selectedConnection: string | undefined = savedMediaConnection;
-      let selectedSender: string | undefined;
+      if (pinned && savedMediaConnection !== undefined && pinned.connectionId !== savedMediaConnection) {
+        throw Object.assign(new Error('Saved media and inbound connection disagree'), { status: 409 });
+      }
+      let selectedConnection: string | undefined = pinned?.connectionId ?? savedMediaConnection;
+      let selectedSender: string | undefined = pinned?.senderId;
       let templateStarted = false;
       if (params.response_format === 'audio' && params.message_id && params.conversation_id) {
         const { data: saved, error } = await supabaseAdmin.from('messages').select('custom_data')
@@ -161,26 +172,61 @@ export class ChannelSendService {
         const routing = await resolveAudioRouting({ siteId: params.site_id, conversationId: params.conversation_id,
           channel: params.channel, connectionId: id });
         if (routing.kind !== 'zavu') throw new AudioDeliveryError('Generic audio delivery requires a Zavu sender');
+        if (pinned && (routing.connectionId !== pinned.connectionId || routing.senderId !== pinned.senderId)) {
+          throw new AudioDeliveryError('Audio sender no longer matches the inbound connection');
+        }
         selectedConnection = routing.connectionId;
         selectedSender = routing.senderId;
       }
       // Preserve stored connection order for callers without an exact destination.
+      if (pinned && connections.filter(c => c.id === pinned.connectionId).length !== 1) {
+        throw Object.assign(new Error('Inbound connection is unavailable or ambiguous'), { status: 409 });
+      }
       const connection = connections.find(c => c.type === params.channel && c.zavu_sender_id
         && (selectedConnection === undefined || c.id === selectedConnection)
         && (selectedSender === undefined || c.zavu_sender_id === selectedSender)
         && isLicensedChannelConnection(params.channel, c));
 
       if (!connection?.zavu_sender_id) {
+        if (pinned) throw Object.assign(new Error('Original inbound sender is unavailable'), { status: 409 });
         throw new Error(`No sender configured for channel ${params.channel} on site ${params.site_id}`);
       }
 
       if (media) {
-        await requireLicensedChannel(params.site_id, params.channel, connection.id, connection.zavu_sender_id);
-        if (params.channel === 'whatsapp') {
+        const checkWindow = async () => {
+          if (params.channel !== 'whatsapp') return;
           const { WhatsAppTemplateService } = await import('@/lib/services/whatsapp/WhatsAppTemplateService');
-          const window = await WhatsAppTemplateService.checkResponseWindow(params.conversation_id || null, params.to, params.site_id);
+          const window = await WhatsAppTemplateService.checkResponseWindow(pinned?.conversationId || params.conversation_id || null, params.to, params.site_id);
           if (!window.withinWindow) throw Object.assign(new Error('Media requires an active WhatsApp response window'), { status: 400 });
+        };
+        if (pinned) {
+          const checkBinding = async (attemptId?: string) => {
+            await requirePinnedZavuSender(pinned);
+            await checkWindow();
+            const checked = await assertAutomationSendAllowed({ ...params, ownedChannelAttemptId: attemptId }, true);
+            const fresh = await savedZavuReply(checked, params);
+            const data = checked?.message?.custom_data;
+            const attempt = data?.native_media_delivery as { id?: unknown; state?: unknown; provider_message_id?: unknown; payload_hash?: unknown } | undefined;
+            if (!data || !sameZavuBinding(pinned, fresh) || (attemptId && (attempt?.id !== attemptId
+              || attempt.state !== 'attempting' || attempt.payload_hash !== pinnedReplyPayloadHash(message,data)
+              || data.status !== 'reconciliation_required'
+              || data.provider_message_id != null || attempt.provider_message_id != null))) {
+              throw Object.assign(new Error('Native media reply binding changed before dispatch'), { status: 409 });
+            }
+            return data;
+          };
+          // Never reselect an account after claiming. Only the owner can dispatch;
+          // a crash, incomplete response or lost CAS requires receipt reconciliation.
+          const original = await checkBinding();
+          return await dispatchPinnedZavu(pinned, message, original, async attemptId => {
+            await checkBinding(attemptId);
+            return await sendChannelMessage({ to: pinned.recipient, channel: pinned.channel, senderId: pinned.senderId,
+              idempotencyKey: `channel-reply:${pinned.siteId}:${pinned.messageId}`, metadata: { channel_reply_attempt: attemptId },
+              ...(message.trim() ? { text: message } : {}), messageType: media.messageType, content: media.content, subject: params.subject });
+          }, { field: 'native_media_delivery', mediaUrl: media.content.mediaUrl, messageType: media.messageType, mimeType: media.content.mimeType });
         }
+        await requireLicensedChannel(params.site_id, params.channel, connection.id, connection.zavu_sender_id);
+        await checkWindow();
         await assertAutomationSendAllowed(params);
         const result = await dispatchNativeMedia(params, 'zavu', () => sendChannelMessage({
           to: params.to, channel: params.channel, senderId: connection.zavu_sender_id,
@@ -192,6 +238,15 @@ export class ChannelSendService {
       }
 
       if (params.response_format === 'audio') {
+        const checkAudioBinding = async () => {
+          if (pinned) {
+            await requirePinnedZavuSender(pinned);
+            const current = await savedZavuReply(await assertAutomationSendAllowed(params, true), params);
+            if (!sameZavuBinding(pinned, current)) throw new AudioDeliveryError('Original audio reply binding changed');
+          } else {
+            await assertAutomationSendAllowed(params);
+          }
+        };
         const checkAudioWindow = async () => {
           if (params.channel !== 'whatsapp') return;
           const { WhatsAppTemplateService } = await import('@/lib/services/whatsapp/WhatsAppTemplateService');
@@ -204,7 +259,8 @@ export class ChannelSendService {
           if (templateStarted || !window.withinWindow) {
             const templateDelivery = await deliverZavuTemplate({ siteId: params.site_id, conversationId: params.conversation_id,
               messageId: params.message_id, text: message, recipient: params.to,
-              connectionId: connection.id, senderId: connection.zavu_sender_id });
+              connectionId: connection.id, senderId: connection.zavu_sender_id,
+              ...(pinned ? { verifyBinding: checkAudioBinding } : {}) });
             return { success: true, messageId: templateDelivery.messageId, templateDelivery };
           }
         }
@@ -215,7 +271,7 @@ export class ChannelSendService {
           dispatch: async ({ audioUrl, mimeType }) => {
             await requireLicensedChannel(params.site_id, params.channel, connection.id, connection.zavu_sender_id);
             await checkAudioWindow();
-            await assertAutomationSendAllowed(params);
+            await checkAudioBinding();
             const result = await sendChannelMessage({ to: params.to, channel: params.channel,
               senderId: connection.zavu_sender_id, messageType: 'audio', content: { mediaUrl: audioUrl, mimeType },
               idempotencyKey: `audio-delivery:${params.site_id}:${params.message_id}` });
@@ -226,65 +282,82 @@ export class ChannelSendService {
         return { success: true, messageId, provider: 'zavu' };
       }
 
-      // Check if we should send this long reply as audio
-      let finalMessage = message;
-      let audioUrlToAttach: string | undefined = undefined;
+      const dispatch = async (attemptId?: string) => {
+        // Check if we should send this long reply as audio
+        let finalMessage = message;
+        let audioUrlToAttach: string | undefined = undefined;
 
-      // Extract a storage URL for audio generated by the agent.
-      const extractedUrlRegex = /(https?:\/\/[^\s]+?\/storage\/v1\/object\/public\/[^\s]+?\.(?:wav|mp3|ogg))/i;
-      const urlMatch = params.response_format === 'text' ? null : finalMessage.match(extractedUrlRegex);
-      
-      if (urlMatch && urlMatch[1]) {
-        console.log(`[ChannelSendService] Detected an audio URL in the message`);
-        audioUrlToAttach = urlMatch[1];
-        finalMessage = finalMessage.replace(extractedUrlRegex, '').trim();
-        if (finalMessage.length < 25 || finalMessage.toLowerCase().includes('aquí está tu audio')) {
-           finalMessage = ''; 
+        // Extract a storage URL for audio generated by the agent.
+        const extractedUrlRegex = /(https?:\/\/[^\s]+?\/storage\/v1\/object\/public\/[^\s]+?\.(?:wav|mp3|ogg))/i;
+        const urlMatch = params.response_format === 'text' ? null : finalMessage.match(extractedUrlRegex);
+
+        if (urlMatch && urlMatch[1]) {
+          console.log(`[ChannelSendService] Detected an audio URL in the message`);
+          audioUrlToAttach = urlMatch[1];
+          finalMessage = finalMessage.replace(extractedUrlRegex, '').trim();
+          if (finalMessage.length < 25 || finalMessage.toLowerCase().includes('aquí está tu audio')) {
+             finalMessage = '';
+          }
         }
-      }
 
-      const audioReply = params.response_format === 'text' ? null : await tryPrepareLongReplyAudio({
-        siteId: params.site_id,
-        channel: params.channel,
-        text: finalMessage,
-        existingMediaUrls: audioUrlToAttach ? [audioUrlToAttach] : undefined
-      });
-      
-      const finalAudioUrl = audioReply?.audioUrl || audioUrlToAttach;
-      const finalMimeType = audioReply?.mimeType || (audioUrlToAttach?.endsWith('.wav') ? 'audio/wav' : 'audio/mpeg');
-
-      // Audio preparation may outlive the trial. Recheck the exact sender at dispatch.
-      await requireLicensedChannel(params.site_id, params.channel, connection.id, connection.zavu_sender_id);
-      await assertAutomationSendAllowed(params);
-
-      let result;
-      if (finalAudioUrl) {
-        result = await sendChannelMessage({
-          to: params.to,
+        const audioReply = params.response_format === 'text' ? null : await tryPrepareLongReplyAudio({
+          siteId: params.site_id,
           channel: params.channel,
-          senderId: connection.zavu_sender_id,
-          messageType: 'audio',
-          content: { mediaUrl: finalAudioUrl, mimeType: finalMimeType },
-          subject: params.subject
-        });
-        // Send audio only; a separate text follow-up is outside this adapter's scope.
-      } else {
-        result = await sendChannelMessage({
-          to: params.to,
           text: finalMessage,
-          channel: params.channel,
-          senderId: connection.zavu_sender_id,
-          subject: params.subject
+          existingMediaUrls: audioUrlToAttach ? [audioUrlToAttach] : undefined
         });
-      }
 
-      console.log(`[ChannelSendService] Message sent successfully. ID: ${result?.message?.id || 'unknown'}`);
+        const finalAudioUrl = audioReply?.audioUrl || audioUrlToAttach;
+        const finalMimeType = audioReply?.mimeType || (audioUrlToAttach?.endsWith('.wav') ? 'audio/wav' : 'audio/mpeg');
 
-      return {
-        success: true,
-        messageId: result?.message?.id,
-        provider: 'zavu',
+        // Audio preparation may outlive the trial. Recheck the exact sender at dispatch.
+        if (pinned) {
+          await requirePinnedZavuSender(pinned);
+          const checked = await assertAutomationSendAllowed({ ...params, ownedChannelAttemptId: attemptId }, true);
+          const fresh = await savedZavuReply(checked, params);
+          const attempt = checked?.message?.custom_data?.pinned_text_delivery as { id?: unknown; state?: unknown } | undefined;
+          if (!sameZavuBinding(pinned, fresh) || !attemptId || attempt?.id !== attemptId || attempt.state !== 'attempting'
+            || checked?.message?.custom_data?.status !== 'reconciliation_required'
+            || (checked.message.custom_data.pinned_text_delivery as {payload_hash?:unknown}).payload_hash !== pinnedReplyPayloadHash(message,checked.message.custom_data)
+            || checked.message.custom_data.provider_message_id) {
+            throw Object.assign(new Error('Channel reply binding changed before dispatch'), { status: 409 });
+          }
+        } else {
+          await requireLicensedChannel(params.site_id, params.channel, connection.id, connection.zavu_sender_id);
+          await assertAutomationSendAllowed(params);
+        }
+
+        let result;
+        const retryIdentity = attemptId ? { idempotencyKey: `channel-reply:${params.site_id}:${params.message_id}`, metadata: { channel_reply_attempt: attemptId } } : {};
+        if (finalAudioUrl) {
+          result = await sendChannelMessage({
+            ...retryIdentity,
+            to: params.to,
+            channel: params.channel,
+            senderId: connection.zavu_sender_id,
+            messageType: 'audio',
+            content: { mediaUrl: finalAudioUrl, mimeType: finalMimeType },
+            subject: params.subject
+          });
+          // Send audio only; a separate text follow-up is outside this adapter's scope.
+        } else {
+          result = await sendChannelMessage({
+            ...retryIdentity,
+            to: params.to,
+            text: finalMessage,
+            channel: params.channel,
+            senderId: connection.zavu_sender_id,
+            subject: params.subject
+          });
+        }
+        return result;
       };
+      if (pinned && scope?.message?.custom_data) {
+        return await dispatchPinnedZavu(pinned, message, scope.message.custom_data, dispatch);
+      }
+      if (pinned) throw Object.assign(new Error('Original reply metadata is unavailable'), { status: 409 });
+      const result = await dispatch();
+      return { success: true, messageId: result?.message?.id, provider: 'zavu' };
     } catch (error: any) {
       if (error instanceof AutomationSendSuppressed) {
         const { status: _status, ...skipped } = automationSkippedResult(error);

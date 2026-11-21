@@ -15,6 +15,8 @@ export type ConnectorContext = {
   sourceDigest?: string;
   /** A conversation selection can narrow authority, never supply it. */
   connectorIdHint?: string;
+  /** Admitted from a verified non-anonymous user session, never a site API key. */
+  catalogUserSession?: true;
   host: 'assistant' | 'workflow' | 'direct';
 };
 
@@ -71,6 +73,8 @@ export function connectorToolAccessMode(mode: unknown): ConnectorToolAccessMode 
 }
 
 export type ConnectorPolicy = {
+  /** Absent on legacy policies. Never inferred from all mode or selected IDs. */
+  catalog_reads?: boolean;
   support_publication?: import('./support-policy').SupportPublication | null;
   tool_access_mode?: ConnectorToolAccessMode;
   allowed_tools: string[];

@@ -148,6 +148,16 @@ describe('executePlanStep prompt wiring (all I/O mocked, no environment)', () =>
       run: () => runtime.executePlanStep(context, plan, step) };
   }
 
+  it.each([false, true])('removes interactive grants before the actual nested assistant turn (resuming=%s)', async resuming => {
+    const h = harness(resuming ? { result: { assistant_execution: { version: 1, state: 'exhausted', messages: [{ role: 'user', content: 'Continue the step' }] } } } : {});
+    Object.assign(h.context, { callerSource: 'interactive', catalogUserSession: true, leadBulkUserSession: true, connectorAgentId: 'pinned-agent', connectorIdHint: 'selected-account' });
+    await expect(h.run()).resolves.toMatchObject({ executionStatus: 'completed' });
+    const nested = h.processAssistantTurn.mock.calls[0][0];
+    expect(nested).toMatchObject({ callerSource: 'background', executionOptions: { plan_id: base.plan.id, step_id: base.step.id } });
+    for (const key of ['catalogUserSession', 'leadBulkUserSession', 'connectorAgentId', 'connectorIdHint', 'approvedImport']) expect(nested[key]).toBeUndefined();
+    expect(h.context).toMatchObject({ callerSource: 'interactive', catalogUserSession: true });
+  });
+
   it('passes assigned and user-selected skills, current identities, baseline and images to the turn', async () => {
     const h = harness({ skill: 'assigned-local', role: 'qa' }, [{ name: 'sandbox_read_file' }, { name: 'sandbox_push_checkpoint' }]);
     await expect(h.run()).resolves.toMatchObject({ executionStatus: 'completed', turns: 1 });

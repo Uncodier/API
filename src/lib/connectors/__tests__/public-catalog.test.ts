@@ -67,14 +67,27 @@ it('shows native detail and paginated tool text without schemas, review metadata
   expect((await response.json()).toolkit).toEqual(expect.objectContaining({ slug: 'gmail', domains: ['communication'] }));
 
   fetchMock.mockResolvedValueOnce(jsonResponse(toolkitFixture())).mockResolvedValueOnce(jsonResponse({
-    items: [{ ...toolFixture(), name: 'Fetch emails', input_parameters: { private: providerKey } }], next_cursor: 'opaque', total_items: 61,
+    items: [{ ...toolFixture(), name: 'Fetch emails', tags: ['readOnlyHint', providerKey], input_parameters: { private: providerKey } }], next_cursor: 'opaque', total_items: 61,
   }));
   const toolResponse = await tools(req('/gmail/tools?page=2'), context());
   const data = await toolResponse.json();
-  expect(data).toEqual({ items: [{ slug: 'GMAIL_FETCH_EMAILS', name: 'Fetch emails', description: 'Fetch authorized messages.' }],
+  expect(data).toEqual({ items: [{ slug: 'GMAIL_FETCH_EMAILS', name: 'Fetch emails', description: 'Fetch authorized messages.', action_types: ['read'] }],
     total: 61, current_page: 2, total_pages: 4, has_next: true });
   expect(JSON.stringify(data)).not.toContain(providerKey);
   expect(new URL(String(fetchMock.mock.calls[2][0])).searchParams.get('include_deprecated')).toBe('false');
+});
+
+it('accepts only known action types for tools and paginates the tag-filtered public catalogue', async () => {
+  expect((await tools(req('/gmail/tools?action=invalid'), context())).status).toBe(400);
+  expect((await detail(req('/gmail?action=read'), context())).status).toBe(400);
+  expect(fetchMock).not.toHaveBeenCalled();
+  fetchMock.mockResolvedValueOnce(jsonResponse(toolkitFixture())).mockResolvedValueOnce(jsonResponse({
+    items: [{ ...toolFixture(), name: 'Fetch emails', tags: ['readOnlyHint'] }], total_items: 22,
+  }));
+  const response = await tools(req('/gmail/tools?action=read&page=2'), context());
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ total: 22, current_page: 2, total_pages: 2, items: [{ action_types: ['read'] }] });
+  expect(new URL(String(fetchMock.mock.calls[1][0])).searchParams.get('tags')).toBe('readOnlyHint');
 });
 
 it('rejects malformed slugs, does not list custom tools, and hides provider errors', async () => {

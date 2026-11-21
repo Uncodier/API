@@ -1,3 +1,4 @@
+import { LEGACY_DEFAULT_AGENT_FILTER } from '@/lib/services/agents/legacy-default-filter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import {
@@ -101,6 +102,7 @@ async function findAgentForSite(
     .eq('site_id', siteId)
     .eq('status', 'active')
     .eq('role', 'Customer Support')
+    .or(LEGACY_DEFAULT_AGENT_FILTER)
     .limit(1)
     .maybeSingle();
   if (customerSupportAgent?.id) return customerSupportAgent.id;
@@ -111,6 +113,7 @@ async function findAgentForSite(
     .eq('site_id', siteId)
     .eq('status', 'active')
     .contains('configuration', { role: 'Customer Support' })
+    .or(LEGACY_DEFAULT_AGENT_FILTER)
     .limit(1)
     .maybeSingle();
   if (configRoleAgent?.id) return configRoleAgent.id;
@@ -120,6 +123,7 @@ async function findAgentForSite(
     .select('id')
     .eq('site_id', siteId)
     .eq('status', 'active')
+    .or(LEGACY_DEFAULT_AGENT_FILTER)
     .limit(1)
     .maybeSingle();
   return fallbackAgent?.id;
@@ -146,7 +150,7 @@ export async function findWhatsAppConfiguration(
 }> {
   try {
     const searchKeys = whatsappIdentifierSearchKeys(businessPhoneNumber);
-    const cacheKey = `twilio:whatsapp-config:${await sha256(JSON.stringify({
+    const cacheKey = `twilio:whatsapp-config:v2:${await sha256(JSON.stringify({
       businessPhoneNumber,
       accountSid: accountSid || null,
     }))}`;

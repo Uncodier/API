@@ -12,6 +12,7 @@ import { canAccessSite } from '@/lib/security/site-access';
 import { isSiteSkillManager } from '@/lib/services/site-skill-access';
 import { isNodeSpecificContext, NODE_CONTEXT_REQUIRES_NODE, NODE_CONTEXT_REQUIRES_NODE_MESSAGE } from './node-context-boundary';
 import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
+import { assistantInstanceAccess } from '@/lib/security/assistant-instance-access';
 import { resolveAssistantRequestMode } from './execution-mode';
 
 // ------------------------------------------------------------------------------------
@@ -117,6 +118,9 @@ export async function POST(request: NextRequest) {
     const selectionSiteId = providedSiteId || site_id_for_validation;
     if (!selectionSiteId) return NextResponse.json({ error: 'site_id is required' }, { status: 400 });
     const verifiedUserId = principal.userId;
+    const catalogUserSession = principal.userSession === true && !principal.internal && executionMode === 'direct' && !providedNodeId && expectedResults === 1;
+    const leadBulkUserSession = principal.userSession === true && !principal.internal && !providedNodeId && expectedResults === 1;
+    const leadBulkAdmission = leadBulkUserSession ? { lead_bulk_user_session: true } : {};
     const requestedImport = approvedCommunityImport(message);
     const trustedImportUserId = verifiedUserId && z.string().uuid().safeParse(verifiedUserId).success
       ? verifiedUserId : null;
@@ -189,7 +193,7 @@ export async function POST(request: NextRequest) {
         siteId: providedSiteId,
         userId,
         message,
-        details: { is_creation: true, request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId,
+        details: { ...leadBulkAdmission, is_creation: true, request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId,
           execution_mode: executionMode },
       }));
       failureContext.userMessageLogId = userAction.id;
@@ -209,7 +213,7 @@ export async function POST(request: NextRequest) {
         parsedBody.context,
         normalizedToolOverrides,
         { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode, executionRouting,
-          callerSource: principal.internal ? 'background' : 'interactive' }
+          callerSource: principal.internal ? 'background' : 'interactive', ...(catalogUserSession ? { catalogUserSession: true } : {}), ...(leadBulkUserSession ? { leadBulkUserSession: true } : {}) }
       ]);
 
       return assistantResponseStream(workflowRun, newInstance.id, userAction.id, { signal: request.signal });
@@ -228,13 +232,18 @@ export async function POST(request: NextRequest) {
     if (instanceError || !instance) {
       return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
     }
+    if ((providedSiteId && providedSiteId !== instance.site_id) || !site_id_for_validation || site_id_for_validation !== instance.site_id) {
+      return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
+    }
+    const rowAccess = await assistantInstanceAccess(request,principal,{ ...instance,id:providedInstanceId });
+    if (rowAccess !== 200) return NextResponse.json({ error: rowAccess === 503 ? 'Instance verification unavailable' : 'Instance unavailable' }, {status:rowAccess});
     if (instance.is_archived === true) {
       return NextResponse.json({ success: false,
         error: { code: 'INSTANCE_ARCHIVED', message: 'This instance is archived. Continue in the requirement’s active instance.' },
       }, { status: 409 });
     }
 
-    const site_id = providedSiteId || instance.site_id;
+    const site_id = instance.site_id;
     const user_id = principal.internal ? providedUserId || instance.user_id : principal.userId!;
     const connectorIdHint = parsedBody.connector_id_hint;
     if (connectorIdHint) {
@@ -257,7 +266,7 @@ export async function POST(request: NextRequest) {
       userId: user_id,
       message,
       skipDuplicateCheck: true,
-      details: { instance_status: instance.status || 'running', request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId,
+      details: { ...leadBulkAdmission, instance_status: instance.status || 'running', request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId,
         execution_mode: executionMode },
     }));
     failureContext.userMessageLogId = userAction.id;
@@ -281,7 +290,8 @@ export async function POST(request: NextRequest) {
       parsedBody.context,
       normalizedToolOverrides,
       { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode, executionRouting,
-          ...(connectorIdHint ? { connectorIdHint } : {}), callerSource: principal.internal ? 'background' : 'interactive' }
+        ...(connectorIdHint ? { connectorIdHint } : {}), callerSource: principal.internal ? 'background' : 'interactive',
+        ...(catalogUserSession ? { catalogUserSession: true } : {}), ...(leadBulkUserSession ? { leadBulkUserSession: true } : {}) }
     ]);
 
     return assistantResponseStream(workflowRun, providedInstanceId, userAction.id, { signal: request.signal });

@@ -36,7 +36,7 @@ export function getReviewedTool(slug: string, toolkit?: string): ReviewedConnect
   return tool;
 }
 
-const reference = /^connector:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):([A-Z][A-Z0-9_]{0,127})$/;
+const reference = /^connector:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):((?!COMPOSIO_)[A-Z0-9][A-Z0-9_]{0,149})$/;
 export function parseConnectorToolRef(name: string): { connectorId: string; toolSlug: string } {
   const match = reference.exec(name);
   if (!match) throw new ConnectorError('INVALID_TOOL_REFERENCE', 'Use the exact connector tool reference returned by tools search.', 400);

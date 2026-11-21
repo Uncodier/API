@@ -127,6 +127,38 @@ describe('assistant private execution context wiring', () => {
     expect(loadAccess).toHaveBeenCalledWith({ siteId, userId });
   });
 
+  it('routes native bulk leads only with an interactive host-owned action', async () => {
+    const userId = randomUUID();
+    const source = { siteId, userId, instanceId, actionId: randomUUID() };
+    const execute = jest.fn(async () => ({ success: true, affected_count: 0 }));
+    const leadBulkOperationsTool = jest.fn(() => ({
+      name: 'leads_bulk_operations', description: 'Bulk lead operations', parameters: { type: 'object', properties: {} }, execute,
+    }));
+    const factory = catalog(undefined, {
+      '@/app/api/agents/tools/leads_bulk_operations/assistantProtocol': { leadBulkOperationsTool },
+    });
+    const getRouter = async (host: 'assistant' | 'workflow', commandSource?: typeof source, userSession?: true) => {
+      const tools = await factory.getInstanceAssistantTools(siteId, userId, instanceId, [], undefined,
+        undefined, undefined, undefined, undefined, undefined, commandSource, undefined, host, undefined, undefined, undefined, userSession);
+      return tools.find(tool => tool.name === 'tools')!;
+    };
+    const describe = { action: 'describe', name: 'leads_bulk_operations' };
+    for (const [host, binding, userSession] of [['workflow', source, true], ['assistant', undefined, true],
+      ['assistant', { ...source, userId: randomUUID() }, true], ['assistant', source, undefined]] as const) {
+      await expect((await getRouter(host, binding, userSession)).execute(describe)).resolves.toMatchObject({ success: false });
+    }
+    const router = await getRouter('assistant', source, true);
+    await expect(router.execute({ action: 'list', category: 'crm' })).resolves.toMatchObject({
+      tools: expect.arrayContaining([expect.objectContaining({ name: describe.name, category: 'crm' })]),
+    });
+    await expect(router.execute(describe)).resolves.toMatchObject({ success: true });
+    await expect(router.execute({ action: 'call', name: describe.name, args: '{"action":"assign_to_me"}' }))
+      .resolves.toMatchObject({ success: true, result: { affected_count: 0 } });
+    expect(leadBulkOperationsTool).toHaveBeenCalledTimes(1);
+    expect(leadBulkOperationsTool).toHaveBeenCalledWith(source);
+    expect(execute).toHaveBeenCalledWith({ action: 'assign_to_me' });
+  });
+
   it('blocks competing interactive requirement execution while preserving reads and standalone plans', async () => {
     const utils = catalog(), userId = randomUUID(), actionId = randomUUID();
     const execute = jest.fn(async () => ({ success: true }));

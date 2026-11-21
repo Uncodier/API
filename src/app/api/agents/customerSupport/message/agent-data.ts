@@ -1,3 +1,4 @@
+import { LEGACY_DEFAULT_AGENT_FILTER } from '@/lib/services/agents/legacy-default-filter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 // Función para validar UUIDs
 export function isValidUUID(uuid: string): boolean {
@@ -16,7 +17,6 @@ async function findActiveAgentByRole(siteId: string, role: string): Promise<{age
     
     console.log(`🔍 Buscando agente activo con role "${role}" para el sitio: ${siteId}`);
     
-    // Solo buscamos por site_id, role y status
     const { data, error } = await supabaseAdmin
       .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('agents')
@@ -24,6 +24,7 @@ async function findActiveAgentByRole(siteId: string, role: string): Promise<{age
       .eq('site_id', siteId)
       .eq('role', role)
       .eq('status', 'active')
+      .or(LEGACY_DEFAULT_AGENT_FILTER)
       .order('created_at', { ascending: false })
       .limit(1);
     

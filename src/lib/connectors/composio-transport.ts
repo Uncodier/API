@@ -1,4 +1,5 @@
 import { ConnectorError } from './types';
+import { executionRequestFailure } from './provider-outcome';
 
 const BASE_URL = 'https://backend.composio.dev/api/v3.1';
 export const COMPOSIO_TIMEOUT_MS = 10_000;
@@ -11,7 +12,7 @@ export type ComposioClient = {
 
 // Deliberately excludes proxies, files, bulk calls, meta tools and org APIs.
 const ROUTES: Array<{ method: Method; path: RegExp; query: string[] }> = [
-  { method: 'GET', path: /^\/tools$/, query: ['toolkit_slug', 'limit', 'cursor', 'include_deprecated', 'query', 'tool_slugs'] },
+  { method: 'GET', path: /^\/tools$/, query: ['toolkit_slug', 'limit', 'cursor', 'include_deprecated', 'query', 'tool_slugs', 'tags'] },
   { method: 'GET', path: /^\/toolkits$/, query: ['search', 'category', 'cursor', 'limit', 'type', 'sort_by'] },
   { method: 'GET', path: /^\/toolkits\/[a-z0-9_-]{1,100}$/, query: [] },
   { method: 'GET', path: /^\/auth_configs$/, query: ['toolkit_slug', 'show_disabled', 'limit', 'cursor'] },
@@ -78,13 +79,16 @@ export function validateJson(value: unknown, maxDepth = 20): void {
   visit(value, 0);
 }
 
-async function readJson(response: Response, write: boolean): Promise<unknown> {
+async function readJson(response: Response, write: boolean, maxBytes = COMPOSIO_MAX_RESPONSE_BYTES, signal?: AbortSignal): Promise<unknown> {
   const type = response.headers.get('content-type') || '';
   if (!/^application\/(?:[a-z0-9.-]+\+)?json(?:\s*;|$)/i.test(type)) invalidProviderResponse(write);
   const length = response.headers.get('content-length');
-  if (length && (!/^\d+$/.test(length) || Number(length) > COMPOSIO_MAX_RESPONSE_BYTES)) invalidProviderResponse(write);
+  if (length && (!/^\d+$/.test(length) || Number(length) > maxBytes)) invalidProviderResponse(write);
   if (!response.body) invalidProviderResponse(write);
   const reader = response.body.getReader();
+  const cancel = () => { void reader.cancel().catch(() => undefined); };
+  signal?.addEventListener('abort', cancel, { once: true });
+  if (signal?.aborted) cancel();
   const chunks: Uint8Array[] = [];
   let bytes = 0;
   try {
@@ -92,18 +96,19 @@ async function readJson(response: Response, write: boolean): Promise<unknown> {
       const { value, done } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > COMPOSIO_MAX_RESPONSE_BYTES) invalidProviderResponse(write);
-      chunks.push(value);
+      if (bytes > maxBytes) invalidProviderResponse(write);
+      if (value.byteLength) chunks.push(value);
     }
     const text = Buffer.concat(chunks, bytes).toString('utf8');
     try { return JSON.parse(text); } catch { invalidProviderResponse(write); }
   } finally {
     // Cancellation is deliberately not awaited; a broken upstream must not hang cleanup.
-    void reader.cancel().catch(() => undefined);
+    signal?.removeEventListener('abort', cancel);
+    cancel();
   }
 }
 
-function httpError(status: number, write: boolean): never {
+function httpError(status: number, write: boolean, retryAfter: string | null): never {
   if (write && (status >= 500 || status === 408)) invalidProviderResponse(true);
   const errors: Record<number, [string, string, number]> = {
     401: ['PROVIDER_AUTH_FAILED', 'The connector provider credential was rejected.', 502],
@@ -114,7 +119,11 @@ function httpError(status: number, write: boolean): never {
   const error = errors[status] || (status >= 500
     ? ['PROVIDER_UNAVAILABLE', 'The connector provider is unavailable.', 502] as const
     : ['PROVIDER_REJECTED', 'The provider did not accept this operation.', 502] as const);
-  throw new ConnectorError(error[0], error[1], error[2]);
+  const failure = new ConnectorError(error[0], error[1], error[2]);
+  if (status === 429 && retryAfter !== null && /^\d{1,6}$/.test(retryAfter) && Number(retryAfter) <= 86_400) {
+    Object.assign(failure, { retryAfterSeconds: Number(retryAfter) });
+  }
+  throw failure;
 }
 
 /** A client is short-lived and belongs to one authorized request; never cache it globally. */
@@ -150,8 +159,19 @@ export function createComposioClient(apiKey: string): ComposioClient {
             headers: { 'x-api-key': apiKey, Accept: 'application/json', 'Content-Type': 'application/json' },
           });
           if (!response.ok) {
+            // Only this documented 400/direct-execute case needs a body to distinguish
+            // an account binding error. Other methods/statuses keep their HTTP-only path.
+            if (response.status === 400 && method === 'POST' && /^\/tools\/execute\/[A-Z0-9_]+$/.test(path)) {
+              let envelope: unknown;
+              // The status is already authoritative. A broken or stalled OPTIONAL
+              // diagnostic body must not supersede the known HTTP rejection.
+              const bodyDeadline = AbortSignal.any([controller.signal, AbortSignal.timeout(250)]);
+              try { envelope = await readJson(response, write, 4096, bodyDeadline); } catch { /* fall back to HTTP status */ }
+              const failure = executionRequestFailure(envelope, response.status);
+              if (failure) throw failure;
+            }
             void response.body?.cancel().catch(() => undefined);
-            httpError(response.status, write);
+            httpError(response.status, write, response.headers.get('retry-after'));
           }
           return readJson(response, write);
         };

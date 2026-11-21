@@ -18,7 +18,7 @@ let run: (...args: any[]) => Promise<any>;
 
 beforeEach(() => {
   admitted = snapshot = observed = undefined;
-  principal = { internal: false, userId: actor, siteId: null };
+  principal = { internal: false, userId: actor, siteId: null, userSession: true };
   jest.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
     const q: any = {};
     for (const method of ['select', 'eq', 'abortSignal', 'insert']) q[method] = () => q;
@@ -36,7 +36,7 @@ beforeEach(() => {
     } },
     '@/lib/services/robot-instance/vision-message-images': { hydrateMessageImages: async (v: any) => v, dehydrateMessageImages: (v: any) => v },
     './utils': { getInstanceAssistantTools: async (...args: any[]) => [{ name: 'connector', execute: async () => {
-      try { return await assistantConnectorContext({ siteId: args[0], userId: args[1], instanceId: args[2], host: args[12], agentId: args[13] })(); }
+      try { return await assistantConnectorContext({ siteId: args[0], userId: args[1], instanceId: args[2], host: args[12], agentId: args[13], catalogUserSession: args[17] })(); }
       catch (e: any) { return { code: e.code }; }
     } }] },
     '@/lib/services/workflow-robot/execution-tracker': {},
@@ -85,6 +85,8 @@ async function route(body: Record<string, unknown>) {
     './publish-tool-overrides': {},
     './skill-selection': { assistantSkillSelectionSchema: z.object({}), approvedCommunityImport: () => null, resolveAssistantSkillSelection: async () => undefined },
     '@/lib/security/site-access': {}, '@/lib/services/site-skill-access': {},
+    '@/lib/security/assistant-instance-access': { assistantInstanceAccess: async (_r:unknown, p: typeof principal, row: {id:string,site_id:string,user_id:string}) =>
+      p.internal || (p === principal && row.id === instance && row.site_id === site && row.user_id === actor && p.userId === actor) ? 200 : 404 },
     './node-context-boundary': { isNodeSpecificContext: () => false },
     '@/lib/security/tool-request-principal': { resolveToolRequestPrincipal: async () => principal, canToolPrincipalAccessSite: async () => true },
     './execution-mode': { resolveAssistantRequestMode: () => 'direct' },
@@ -98,7 +100,7 @@ test('real route -> workflow -> turn -> host resolver uses verified actor and pr
   const response = await route({ user_id: spoof, callerSource: 'background', agent_id: spoof });
   expect(await response.json()).toMatchObject({ assistant_response: 'done' });
   expect(admitted.callerSource).toBe('interactive');
-  expect(observed).toMatchObject({ userId: actor, agentId: agent, host: 'assistant' });
+  expect(observed).toMatchObject({ userId: actor, agentId: agent, host: 'assistant', catalogUserSession: true });
 });
 
 test('internal service route cannot become interactive from body source or recoveryScope', async () => {

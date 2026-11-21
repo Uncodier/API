@@ -44,7 +44,7 @@ function setup() {
   });
   const run = (options: any = { userMessageLogId: 'user-log' }) => workflow.runAssistantWorkflow(
     'instance', 'Publish the connected video', 'site', 'user', execution.customTools, false,
-    execution.systemPrompt, undefined, undefined, execution.instanceNodeId, 1,
+    execution.systemPrompt, undefined, undefined, context.instanceNodeId, 1,
     execution.contextString, execution.toolOverrides, options,
   );
   return { run, context, execution, transcript, processAssistantTurn, prepareRecoveryStep, guardRecoveryStep,
@@ -53,6 +53,16 @@ function setup() {
 }
 
 describe('node execution continuation workflow', () => {
+  it('a recovered conversation cannot inherit private connector execution with a newly prepared agent', async () => {
+    const h = setup(); h.context.instanceNodeId = undefined;
+    h.prepareRecoveryStep.mockResolvedValue({ ok:true, snapshot:{ messages:h.transcript, respawnCount:1,
+      execution:{ customTools:[],useSdkTools:false,executionMode:'direct',callerSource:'interactive',catalogUserSession:true } } });
+    h.processAssistantTurn.mockResolvedValue(h.result(h.transcript, 'Resumed safely', true));
+    await h.run({userMessageLogId:'user-log',resumeToken:'resume'});
+    expect(h.processAssistantTurn).toHaveBeenCalled();
+    expect(h.processAssistantTurn.mock.calls[0][0].catalogUserSession).toBeUndefined();
+  });
+
   it('retains an interrupted recovery checkpoint without failing the action or replaying its tools', async () => {
     const h = setup();
     h.processAssistantTurn.mockResolvedValue({
@@ -242,6 +252,28 @@ describe('node execution continuation workflow', () => {
     h.guardRecoveryStep.mockResolvedValueOnce(true).mockResolvedValue(false);
     expect((await h.run()).success).toBe(false);
     expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
+  });
+
+  it.each(['node', 'direct', 'harness'])('cancellation after a terminal checkpoint prevents %s plan lookup and completion', async mode => {
+    const h = setup();
+    if (mode !== 'node') h.context.instanceNodeId = undefined;
+    h.processAssistantTurn.mockResolvedValue(h.result(h.transcript, 'Done', true));
+    h.guardRecoveryStep.mockResolvedValueOnce(true).mockResolvedValue(false);
+    expect(await h.run({ userMessageLogId: 'user-log', ...(mode !== 'node' ? { executionMode: mode } : {}) }))
+      .toMatchObject({ execution_status: 'paused' });
+    expect(h.checkpointRecoveryStep).toHaveBeenCalledTimes(1);
+    expect(h.getActiveInstancePlan).not.toHaveBeenCalled();
+    expect(h.completeUserMessageStep).not.toHaveBeenCalled();
+  });
+
+  it('uses only one guard between a direct terminal checkpoint and completion', async () => {
+    const h = setup();
+    h.context.instanceNodeId = undefined;
+    h.processAssistantTurn.mockResolvedValue(h.result(h.transcript, 'Done', true));
+    await h.run({ userMessageLogId: 'user-log', executionMode: 'direct' });
+    expect(h.guardRecoveryStep).toHaveBeenCalledTimes(2); // start turn, then finalize
+    expect(h.getActiveInstancePlan).not.toHaveBeenCalled();
+    expect(h.completeUserMessageStep).toHaveBeenCalledWith('user-log', 0);
   });
 
   it('finishes a conversation without dispatching the linked plan even when context linkage is missing', async () => {

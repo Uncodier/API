@@ -50,6 +50,31 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); });
 
 describe('per-turn and per-tool recovery guards', () => {
+  it('times a failed setup exactly once without logging its contents or invoking the executor', async () => {
+    const log = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const error = new Error('private node lookup details');
+    resolveBinding.mockRejectedValueOnce(error);
+    await expect(processAssistantTurn(context, [{ role: 'user', content: 'private input' }])).rejects.toBe(error);
+    expect(execute).not.toHaveBeenCalled();
+    expect(releaseFailedTurn).not.toHaveBeenCalled();
+    expect(log.mock.calls).toEqual([['[AssistantTiming] turn', {
+      setupMs: expect.any(Number), executorMs: 0, outcome: 'setup_error',
+    }]]);
+  });
+
+  it.each([
+    ['after_tool', { messages: [{ role: 'tool', content: 'private result' }], isDone: false, text: '' }],
+    ['output_limit', { steps: [{ finishReason: 'length' }], isDone: false, text: 'private partial' }],
+    ['completed', { isDone: true, text: 'private answer' }],
+  ] as const)('logs numeric turn timings and the bounded %s outcome only', async (outcome, result) => {
+    const log = jest.spyOn(console, 'info').mockImplementation(() => {});
+    execute.mockResolvedValue(result);
+    await processAssistantTurn(context, [{ role: 'user', content: 'private input' }]);
+    expect(log).toHaveBeenCalledWith('[AssistantTiming] turn', {
+      setupMs: expect.any(Number), executorMs: expect.any(Number), outcome,
+    });
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private');
+  });
   it.each(['inactive', 'missing', 'context_changed', 'in_flight', 'limit', 'conflict', 'invalid_state'] as const)(
     'carries recovery interruption %s as sanitized data rather than a durable exception', async code => {
       execute.mockRejectedValue(new RecoveryError(code));

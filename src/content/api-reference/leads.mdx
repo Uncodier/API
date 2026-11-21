@@ -58,3 +58,5 @@ curl -X POST "https://backend.makinari.com/api/agents/tools/leads/create" \
 Typical errors: `400` missing email/name, `401` no key / no Origin, `403` missing `write` scope.
 
 MCP schema: [CRM tools](/mcp-server/crm).
+
+For bulk operations in an assistant chat authenticated with a user session, use `leads_bulk_operations` from the `crm` category of `tools`. That capability is not a public Leads API endpoint and is not available to API keys.

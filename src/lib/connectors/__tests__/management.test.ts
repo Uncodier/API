@@ -204,3 +204,48 @@ it('sends publication settings only to managers, not to members with use permiss
   ownGrant.mockResolvedValue({ ...grant, can_use: true });
   expect((await getConnectorAccess(site, user, id)).policy).not.toHaveProperty('support_publication');
 });
+
+it('exposes configured catalogue reads to managers and effective policy only to usable members', async () => {
+  expect((await getConnectorAccess(site,user,id)).policy.catalog_reads).toBe(false);
+  visible.mockResolvedValue({...await visible(),verified_at:'2026-11-10T00:00:00Z'});
+  policy.mockResolvedValue({...(await policy()), catalog_reads:true});
+  expect((await getConnectorAccess(site,user,id)).policy.catalog_reads).toBe(true);
+  access.mockResolvedValue({can_view:true,can_manage:false});
+  expect((await getConnectorAccess(site,user,id)).policy.catalog_reads).toBe(false);
+  ownGrant.mockResolvedValue({...grant,can_use:true});
+  expect((await getConnectorAccess(site,user,id)).policy.catalog_reads).toBe(true);
+  visible.mockResolvedValue({...await visible(),revocation_pending:true});
+  expect((await getConnectorAccess(site,user,id)).policy.catalog_reads).toBe(false);
+});
+
+it('selects the catalog opt-in overload only for an explicit boolean and never infers consent from mode', async () => {
+  const input = {...policyInput, tool_access_mode:'all' as const, allowed_tools:[]};
+  for (const invalid of [null, 'true', 1]) expect(policyPatchSchema.safeParse({...input,catalog_reads:invalid}).success).toBe(false);
+  for (const consent of [true, false]) {
+    await updateConnectorPolicy(user,id,{...input,catalog_reads:consent});
+    expect(rpc).toHaveBeenLastCalledWith('connector_update_policy',expect.objectContaining({p_catalog_reads:consent,p_expected_revision:1}));
+  }
+  await updateConnectorPolicy(user,id,input); expect(rpc.mock.calls.at(-1)![1]).not.toHaveProperty('p_catalog_reads');
+  access.mockRejectedValue(new ConnectorError('ACCESS_DENIED','Denied.',403));
+  await expect(updateConnectorPolicy(user,id,{...input,catalog_reads:true})).rejects.toMatchObject({code:'ACCESS_DENIED'});
+  expect(rpc).toHaveBeenCalledTimes(3);
+});
+
+it('can turn reads off without a credential or provider catalogue, never mixing in additional changes', async () => {
+  credential.mockRejectedValue(new Error('provider unavailable')); provider.mockResolvedValue({items:[]});
+  const current = {...policyInput, allowed_tools:['DELISTED_ID'], catalog_reads:false};
+  await updateConnectorPolicy(user,id,current);
+  expect(rpc).toHaveBeenLastCalledWith('connector_update_policy',expect.objectContaining({p_catalog_reads:false,p_allowed_tools:['DELISTED_ID']}));
+  rpc.mockImplementationOnce(() => query(null,{code:'P0C01'})); // Other fields differ from the locked DB snapshot.
+  await expect(updateConnectorPolicy(user,id,{...current, allowed_tools:['UNCHECKED_ID']})).rejects.toMatchObject({code:'CATALOG_OPT_OUT_SEPARATE'});
+  const revocation = {...base,catalog_reads:false as const}; await updateConnectorPolicy(user,id,revocation);
+  expect(rpc).toHaveBeenLastCalledWith('connector_disable_catalog_reads',{p_actor_id:user,p_site_id:site,p_connector_id:id,p_expected_revision:1});
+  for (const invalid of [{...revocation,allowed_tools:['NEW']}, {...revocation,enabled:true}, {...revocation,catalog_reads:true}]) {
+    expect(policyPatchSchema.safeParse(invalid).success).toBe(false);
+  }
+  access.mockRejectedValueOnce(new ConnectorError('ACCESS_DENIED','Denied.',403));
+  await expect(updateConnectorPolicy(user,id,revocation)).rejects.toMatchObject({code:'ACCESS_DENIED'});
+  rpc.mockImplementationOnce(() => query(null,{code:'40001'}));
+  await expect(updateConnectorPolicy(user,id,revocation)).rejects.toMatchObject({code:'REVISION_CONFLICT'});
+  expect(credential).not.toHaveBeenCalled(); expect(provider).not.toHaveBeenCalled();
+});

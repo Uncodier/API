@@ -95,6 +95,15 @@ describe("live inbound call through signed POST, real identity/executor/catalog 
     else process.env.SERVICE_API_KEY = originalApiKey;
   });
 
+  it('does not authenticate with an independent Support profile\'s signing key', async () => {
+    state.tables.agents[0].configuration.agentOrigin = 'independent';
+    const response = await POST(request('IDENTIFY_LEAD', identity));
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ code: 'VOICE_TOOL_AUTH_FAILED' });
+    expect(transport).not.toHaveBeenCalled();
+    expect(state.operations.map(operation => operation.table)).toEqual(['agents']);
+  });
+
   async function initiate() {
     const result = await handleUntrackedInboundVoiceEvent({
       type: "call.initiated", senderId: "sender-1", data: { callId: CALL },

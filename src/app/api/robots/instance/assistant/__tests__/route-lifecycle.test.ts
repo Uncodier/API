@@ -6,6 +6,8 @@ import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-re
 import { runAssistantWorkflow } from '../workflow';
 import { insertUserActionLog, markRemoteInstanceError } from '../user-message-log';
 import { POST } from '../route';
+import { assistantInstanceAccess } from '@/lib/security/assistant-instance-access';
+jest.mock('@/lib/security/assistant-instance-access', () => ({ assistantInstanceAccess: jest.fn() }));
 import { POST as scopedAssistant } from '../connector/route';
 import { normalizePublishToolOverrides } from '../publish-tool-overrides';
 import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
@@ -44,6 +46,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue({ internal: true, userId: null, siteId: null });
   (canToolPrincipalAccessSite as jest.Mock).mockResolvedValue(true);
+  (assistantInstanceAccess as jest.Mock).mockResolvedValue(200);
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
   (CreditService.validateCredits as jest.Mock).mockResolvedValue(true);
@@ -111,6 +114,25 @@ it('uses the same lifecycle for a newly created session', async () => {
   expect(body).toContain('event: completed');
   expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
   expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
+});
+
+it.each([INSTANCE, undefined])('admits bulk leads only from a verified user session (%s)', async instance_id => {
+  for (const userSession of [undefined, true] as const) {
+    (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue({ internal: false, userId: USER, siteId: null, userSession });
+    expect((await POST(request({ ...payload, instance_id, leadBulkUserSession: true, lead_bulk_user_session: true, catalogUserSession:true }))).status).toBe(200);
+    const action = (insertUserActionLog as jest.Mock).mock.lastCall![0];
+    const options = (start as jest.Mock).mock.lastCall![1][13];
+    expect(action.details.lead_bulk_user_session).toBe(userSession);
+    expect(options.leadBulkUserSession).toBe(userSession);
+    expect(options.catalogUserSession).toBe(userSession);
+  }
+});
+
+it('does not grant catalog reads to a plan, even with a verified user session', async () => {
+  (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue({ internal:false, userId:USER, siteId:null, userSession:true });
+  const response = await POST(request({ ...payload, execution_mode:'harness', catalogUserSession:true }));
+  expect(response.status).toBe(200);
+  expect((start as jest.Mock).mock.lastCall![1][13].catalogUserSession).toBeUndefined();
 });
 
 it.each([INSTANCE, undefined])('uses the authenticated actor instead of body/instance owner on %s', async instance_id => {
@@ -361,4 +383,12 @@ it('never starts an unscoped turn at the scoped-only entry point', async () => {
   });
   expect((await scopedAssistant(req)).status).toBe(400);
   expect(start).not.toHaveBeenCalled();
+});
+
+
+it.each([403,404,503])('denies an unhinted existing instance before trusted logging when row access returns %s', async status => {
+  (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue({internal:false,userSession:true,userId:USER,siteId:null});
+  (assistantInstanceAccess as jest.Mock).mockResolvedValue(status);
+  expect(await POST(request(payload))).toHaveProperty('status', status);
+  expect(start).not.toHaveBeenCalled(); expect(insertUserActionLog).not.toHaveBeenCalled();
 });

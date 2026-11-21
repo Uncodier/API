@@ -4,6 +4,7 @@ import base from './jest.harness.config.js';
 export default {
   ...base,
   testMatch: [
+    '<rootDir>/src/app/api/agents/tools/leads_bulk_operations/__tests__/**/*.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/**/*.test.ts',
     '<rootDir>/src/lib/services/robot-instance/__tests__/assistant-recovery-schema.test.ts',
     '<rootDir>/src/lib/services/robot-instance/__tests__/assistant-respawn.test.ts',

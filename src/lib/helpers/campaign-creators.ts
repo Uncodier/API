@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { invalidateCampaignPromptProjection } from '@/lib/services/campaign-prompt-cache';
 import { isValidUUID } from './command-utils';
 
 // Función para crear campañas desde los resultados del Growth Marketer
@@ -139,6 +140,7 @@ export async function createRequirementsFromResults(
         .from('campaigns')
         .select('*')
         .eq('id', campaignId)
+        .eq('site_id', siteId)
         .single();
       
       if (campaignError || !existingCampaign) {
@@ -213,10 +215,12 @@ export async function createRequirementsFromResults(
           .from('campaigns')
           .update({ status: 'pending' })
           .eq('id', campaignId)
+          .eq('site_id', siteId)
           .select('*')
           .single();
           
         if (!updateError && updatedCampaign) {
+          await invalidateCampaignPromptProjection(siteId);
           console.log(`✅ Campaña ${campaignId} actualizada a estado 'pending'`);
           updatedCampaigns.push({
             ...updatedCampaign,

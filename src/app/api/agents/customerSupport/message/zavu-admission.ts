@@ -16,11 +16,18 @@ export async function checkZavuSupportAdmission(request: Request, body: any) {
     return NextResponse.json({ success: false, error: 'Invalid channel ingestion identity' }, { status: 400 });
   }
   try {
-    if (!await admitZavuInboundAutomation({
+    const input = {
       siteId: body.site_id, userId: body.userId, channel: body.origin,
       connectionId: metadata.connection_id, senderId: metadata.zavu_sender_id,
       from: metadata.zavu_from, message: body.message, originMessageId: body.origin_message_id,
-    })) return NextResponse.json({ success: true, skipped: 'channel_unavailable' });
+    };
+    let receipt: { conversationId: string; messageId: string } | undefined;
+    if (!await admitZavuInboundAutomation(input, saved => { receipt = saved; })) {
+      if (!receipt) throw new Error('Suppressed inbound history was not confirmed');
+      const { conversationId, messageId } = receipt;
+      return NextResponse.json({ success: true, skipped: 'channel_unavailable', conversation_id: conversationId,
+        messages: { user: { message_id: messageId } } });
+    }
   } catch (error) {
     if (!(error instanceof ResourceLicenseError)) throw error;
     return NextResponse.json({ success: false, error: error.message, code: error.code }, { status: error.status });

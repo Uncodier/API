@@ -33,7 +33,7 @@ export async function runAssistantWorkflow(
   expectedResultsAmount?: number,
   contextString?: string,
   toolOverrides?: Record<string, any>,
-   options?: { connectorIdHint?: string; callerSource?: 'interactive' | 'background'; silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string; resumeToken?: string; executionMode?: AssistantExecutionMode; executionRouting?: import('@/lib/services/ai/customer-routing').ExecutionRoutingReference }
+   options?: { connectorIdHint?: string; callerSource?: 'interactive' | 'background'; leadBulkUserSession?: true; catalogUserSession?: true; silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string; resumeToken?: string; executionMode?: AssistantExecutionMode; executionRouting?: import('@/lib/services/ai/customer-routing').ExecutionRoutingReference }
 ) {
   'use workflow';
 
@@ -66,6 +66,8 @@ export async function runAssistantWorkflow(
       expectedResultsAmount, contextString, toolOverrides, selectedSkills: options?.selectedSkills,
       approvedImport: options?.approvedImport,
       executionRouting: options?.executionRouting, callerSource: options?.callerSource, connectorIdHint: options?.connectorIdHint,
+      ...(options?.catalogUserSession === true ? { catalogUserSession: true } : {}),
+      ...(options?.leadBulkUserSession === true ? { leadBulkUserSession: true } : {}),
       ...(options?.executionMode ? { executionMode: options.executionMode } : {}),
     }, options?.resumeToken);
     if (!recovery.ok) return blockedResult;
@@ -83,7 +85,8 @@ export async function runAssistantWorkflow(
       options = { ...options, selectedSkills: execution.selectedSkills as AssistantSkillSelection | undefined,
         approvedImport: execution.approvedImport as { url: string; sha256: string; userId: string } | undefined,
         // The claimed snapshot, not the new request, owns continuation intent.
-        executionMode: execution.executionMode, executionRouting: execution.executionRouting, callerSource: execution.callerSource, connectorIdHint: execution.connectorIdHint };
+        executionMode: execution.executionMode, executionRouting: execution.executionRouting, callerSource: execution.callerSource,
+        connectorIdHint: execution.connectorIdHint, catalogUserSession: execution.catalogUserSession, leadBulkUserSession: execution.leadBulkUserSession };
       recoveryScope.generation = recovery.snapshot.respawnCount;
     }
 
@@ -110,6 +113,10 @@ export async function runAssistantWorkflow(
     options?.executionRouting,
   );
   context.callerSource = options?.callerSource;
+  // A resumed workflow builds a new prompt and can select a different agent. Require
+  // a new human turn for private connector reads; a snapshot is not fresh admission.
+  context.catalogUserSession = recovery.snapshot || options?.executionMode !== 'direct' ? undefined : options?.catalogUserSession;
+  context.leadBulkUserSession = options?.leadBulkUserSession;
   context.connectorIdHint = options?.connectorIdHint;
   if (context.connectorIdHint) {
     context.systemPrompt += '\nA connector account is selected for this turn. If relevant to the request, search the available connector tools. If the selected account has no suitable action, say so; do not substitute another account or project. The selection is not a request to execute anything.';
@@ -220,8 +227,6 @@ export async function runAssistantWorkflow(
     return { ...blockedResult, execution_status: 'exhausted',
       message: 'Execution paused without a final answer; original context and completed tool results were retained' };
   }
-  if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
-
   // Step 3: Check for active instance plan AFTER the agent conversation
   // The agent might have just created or updated an instance_plan during its turn
   // If instanceNodeId is present, we SKIP auto-executing plans because Node (Imprenta) executions are single-shot and should not spawn ghost nodes.
@@ -229,8 +234,10 @@ export async function runAssistantWorkflow(
   // even if requirement linkage disappears while preparing its context.
   // Legacy internal callers/checkpoints retain their plan behavior. New direct
   // requests never fall through into an unrelated pending plan after replying.
-  const activePlan = context.conversationRecoveryOnly || options?.executionMode === 'direct'
-    ? null : await getActiveInstancePlan(instanceId, siteId);
+  const inspectPlan = !instanceNodeId && !context.conversationRecoveryOnly && options?.executionMode !== 'direct';
+  // If there is no lookup, go straight to the generation guard before completion.
+  if (inspectPlan && !await guardRecoveryStep(recoveryScope)) return blockedResult;
+  const activePlan = inspectPlan ? await getActiveInstancePlan(instanceId, siteId) : null;
   // The initial context predates tool-created requirements. Only inspect here
   // for ordinary conversation plans; node/recovery-only execution stays isolated.
   const ownership = activePlan && !context.conversationRecoveryOnly && !instanceNodeId

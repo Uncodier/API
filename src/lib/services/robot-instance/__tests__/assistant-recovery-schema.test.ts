@@ -170,3 +170,23 @@ it('retains the account ceiling during interactive recovery and rejects malforme
   expect(() => parseRecoveryExecution({ ...bound, callerSource: 'background' })).toThrow(RecoveryError);
   expect(() => parseRecoveryExecution({ ...bound, connectorIdHint: '' })).toThrow(RecoveryError);
 });
+
+it('restores bulk lead admission only for a verified interactive single-turn execution', () => {
+  const bound = { ...execution, callerSource: 'interactive', leadBulkUserSession: true };
+  expect(parseRecoveryExecution(bound)).toEqual(bound);
+  for (const override of [{ callerSource: 'background' }, { leadBulkUserSession: 'true' },
+    { instanceNodeId: 'node' }, { expectedResultsAmount: 2 }]) {
+    expect(() => parseRecoveryExecution({ ...bound, ...override })).toThrow(RecoveryError);
+  }
+  expect(parseRecoveryExecution(execution).leadBulkUserSession).toBeUndefined();
+});
+
+
+it('restores catalog read admission only for the original interactive single-result user session', () => {
+  const bound = { ...execution, callerSource:'interactive', catalogUserSession:true };
+  expect(parseRecoveryExecution(bound)).toEqual(bound);
+  for(const patch of [{callerSource:'background'},{catalogUserSession:'true'},{instanceNodeId:'node'},{expectedResultsAmount:2}]) {
+    expect(()=>parseRecoveryExecution({...bound,...patch})).toThrow(RecoveryError);
+  }
+  expect(parseRecoveryExecution(execution).catalogUserSession).toBeUndefined();
+});

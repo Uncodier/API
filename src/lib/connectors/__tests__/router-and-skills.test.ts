@@ -118,3 +118,11 @@ test('blocked business screen or failed grants hide skill account references', a
   expect(result).toMatchObject({ content: 'Original', connector_capabilities: { status: 'unavailable', capabilities: [] } });
   expect(JSON.stringify(result)).not.toContain('Private database error');
 });
+test('partial external discovery retains native tools, continuation and scoped recovery; never forwards raw failure text', async () => {
+  runtime.search.mockResolvedValue({tools:[], partial_error:'PROVIDER_RATE_LIMITED', truncated:true, next_cursor:'cursor'});
+  const router=toolsRouterTool([native,connectorGateway(async () => context)],scope);
+  const response=await router.execute({action:'search',query:'CRM contacts',catalog_query:'list contacts'});
+  expect(runtime.search).toHaveBeenCalledWith(expect.objectContaining({catalog_query:'list contacts'}));
+  expect(response.tools.map((t:any) => t.name)).toContain('leads');
+  expect(response).toMatchObject({connector_status:'partial', connector_error:'PROVIDER_RATE_LIMITED', connector_recovery:{action:'retry_later'}, connector_next_cursor:'cursor'});
+});

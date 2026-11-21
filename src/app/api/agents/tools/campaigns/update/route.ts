@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { invalidateCampaignPromptProjection } from '@/lib/services/campaign-prompt-cache';
 import { trySyncConnectedCustomerSupportVoiceAgent } from '@/lib/services/zavu/voice-sync';
 
 const UpdateCampaignSchema = z.object({
@@ -56,11 +57,15 @@ export async function POST(request: NextRequest) {
       .from('campaigns')
       .update(updates)
       .eq('id', validated.campaign_id)
+      .eq('site_id', validated.site_id)
       .select()
       .single();
 
     if (error) {
       throw new Error(error.message);
+    }
+    if (validated.status !== undefined || validated.title !== undefined || validated.description !== undefined) {
+      await invalidateCampaignPromptProjection(validated.site_id);
     }
     await trySyncConnectedCustomerSupportVoiceAgent(validated.site_id);
 

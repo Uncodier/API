@@ -6,9 +6,7 @@ import { InstanceContextManager } from '@/lib/services/robot-instance/InstanceCo
 import { findAssistantManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 import {
-  fetchMemoriesContext,
-  generateAssistantAgentIdentity,
-  getInstanceAssistantTools,
+  loadAssistantAgentContext,
   determineInstanceCapabilities,
   ICP_CATEGORY_IDS_INSTRUCTION,
   getRequirementWorkflowInstruction,
@@ -124,23 +122,16 @@ async function prepareContext(
       }
   }
 
-  const {
-    activeRequirementId: linkedRequirementId,
-    requirementStatusContext,
-    progressContext,
-    backlogContext,
-  } = await loadAssistantRequirementContext(instanceId);
+  const [requirement, { data: lastPlans }, { data: lastCompletedPlans }] = await Promise.all([
+    loadAssistantRequirementContext(instanceId),
+    supabaseAdmin.from('instance_plans').select('*').eq('instance_id', instanceId)
+      .in('status', ['pending', 'in_progress']).order('created_at', { ascending: false }).limit(20),
+    supabaseAdmin.from('instance_plans').select('id, title, status').eq('instance_id', instanceId)
+      .eq('status', 'completed').order('completed_at', { ascending: false }).limit(1),
+  ]);
+  const { activeRequirementId: linkedRequirementId, requirementStatusContext, progressContext, backlogContext } = requirement;
   const activeRequirementId = requirementExecution?.requirementId ?? linkedRequirementId;
   const directExecution = executionMode === 'direct' && !instanceNodeId && !requirementExecution;
-
-  // Fetch active instance plan context
-  const { data: lastPlans } = await supabaseAdmin
-    .from('instance_plans')
-    .select('*')
-    .eq('instance_id', instanceId)
-    .in('status', ['pending', 'in_progress'])
-    .order('created_at', { ascending: false })
-    .limit(20);
 
   let instance_plan_id = null;
   let activeStepContext = '';
@@ -202,15 +193,6 @@ async function prepareContext(
       : '\nPlan and step information is context only in this direct request. Planning is optional and does not start a plan cycle; do not report unexecuted steps as completed.';
   }
 
-  // Fetch last completed plan title
-  const { data: lastCompletedPlans } = await supabaseAdmin
-    .from('instance_plans')
-    .select('id, title, status')
-    .eq('instance_id', instanceId)
-    .eq('status', 'completed')
-    .order('completed_at', { ascending: false })
-    .limit(1);
-
   if (lastCompletedPlans && lastCompletedPlans.length > 0) {
     lastCompletedPlanContext = `\n- Last Completed Plan: "${lastCompletedPlans[0].title}" (ID: ${lastCompletedPlans[0].id})`;
   }
@@ -228,29 +210,18 @@ async function prepareContext(
     toolOverrides: uiMediaContract?.toolOverrides ?? toolOverrides,
   }) : null;
 
-  const { background: agentBackground, agentId: connectorAgentId } = await generateAssistantAgentIdentity(siteId, userId);
-  const memoriesContext = await fetchMemoriesContext(siteId, userId, instanceId);
-  const historyContext = instanceNodeId || (systemPrompt || '').includes('WORKFLOW MODE')
-    ? ''
-    : await new InstanceContextManager(instanceId, siteId)
-        .buildHistory(message, finalProvider, finalModel);
-  
-  // Get tools list just for counting/prompt purposes here
-  // We do NOT pass these instantiated tools in the return value to avoid serialization issues
-  const toolsWithImageGeneration = await getInstanceAssistantTools(
-    siteId,
-    userId,
-    instanceId,
-    customTools,
-    agentType,
-    userPhone,
-    activeRequirementId ?? undefined,
-    uiMediaContract?.outputType,
-  );
-  
-  const assetsData = await InstanceAssetsService.getAssetsContext(instanceId);
-  const assetsContext = assetsData.text;
-  const imageAssets = assetsData.images;
+  // Fetch private conversation data only after instance and node/publish validation.
+  // Node inputs come from linked nodes, never the conversation's assets.
+  const isWorkflowMode = (systemPrompt || '').includes('WORKFLOW MODE');
+  const history = instanceNodeId || isWorkflowMode ? Promise.resolve('')
+    : new InstanceContextManager(instanceId, siteId).buildHistory(message, finalProvider, finalModel);
+  const [agent, historyContext, assets] = await Promise.all([
+    isWorkflowMode ? undefined : loadAssistantAgentContext(siteId, userId, instanceId),
+    history,
+    // File reads can outlive a failed step and overlap its retry. Don't start them
+    // if the mandatory history is unreadable. Agent setup still runs in parallel.
+    instanceNodeId ? { text: '', images: [] } : history.then(() => InstanceAssetsService.getAssetsContext(instanceId)),
+  ]);
 
   // Instance renaming logic prompt
   const instanceName = instance.name || '';
@@ -406,8 +377,6 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
 - General expenses, salaries, and payroll use \`tools\` → \`transactions\` (skill \`makinari-expenses\`). Legacy vendor bills / AP use \`purchases\` (skill \`makinari-purchases\`). Governed procurement orders use \`procurement_*\` (skill \`makinari-procurement\`). Do not mix them.
 - When an uploaded image is attached, use the HTTP URLs from the CRITICAL list as product image fields / references.`;
 
-  const isWorkflowMode = (systemPrompt || '').includes('WORKFLOW MODE');
-
   const fileDeliveryInstruction = 'For downloadable presentations, documents, reports or sheets, load skill_lookup action="get" skill_name="file-delivery", then discover deliver_file through tools. Every agent role can deliver private UTF-8 documents with Git receipts without a sandbox. This is not application deployment; do not promise a public preview or native Office binaries.';
   const combinedSystemPrompt = isWorkflowMode
     ? [
@@ -421,7 +390,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
         requiredSkillsPrompt(selectedSkills),
       ].filter(Boolean).join('\n')
     : [
-    agentBackground,
+    agent?.background,
     instanceContext,
     reinforcedNodeModeInstruction,
     baseSystemPrompt,
@@ -439,7 +408,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
     activePlanInstruction,
     whatsappInstruction,
     generationInstruction,
-    memoriesContext,
+    agent?.memoriesContext,
     instanceNodeId || !historyContext ? '' : `INSTANCE_HISTORY_START\n${historyContext}\nINSTANCE_HISTORY_END`,
     requirementStatusContext,
     progressContext,
@@ -447,14 +416,13 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
     requirementExecution
       ? 'This turn is executing the host-claimed requirement on its sole runner. Use requirement_plan and requirement_progress for this requirement; do not start another runner. Preserve all user restrictions. Finish with finish_task only after returning the actual result and limitations. A conversational reply is not requirement completion.'
       : directExecution ? DIRECT_EXECUTION_INSTRUCTION : getRequirementWorkflowInstruction(hasLinkedRequirement),
-    instanceNodeId ? '' : assetsContext,
+    assets.text,
     ICP_CATEGORY_IDS_INSTRUCTION,
     BOOKING_ROUTING_INSTRUCTION,
     EXPENSES_VS_PURCHASES_INSTRUCTION,
     agentType === 'gear' ? GEAR_PROJECT_SWITCH_INSTRUCTION : '',
     EXTERNAL_API_INTEGRATION_INSTRUCTION,
     renameInstruction,
-    toolsWithImageGeneration.length > 0 ? `\n\n🔧 CUSTOM TOOLS: ${toolsWithImageGeneration.length} additional tool(s)` : ''
   ].filter(Boolean).join('\n');
 
   // Clean base64 data
@@ -464,7 +432,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
   }
 
   return {
-    connectorAgentId: isWorkflowMode ? undefined : connectorAgentId,
+    connectorAgentId: agent?.agentId,
     executionRouting: getExecutionRouting(siteId),
     ...(executionMode ? { executionMode } : {}),
     instance,
@@ -483,7 +451,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
       user_id: userId,
       ...(activeRequirementId ? { requirement_id: activeRequirementId } : {}),
     },
-    imageAssets,
+    imageAssets: assets.images,
     hasLinkedRequirement,
     instanceNodeId,
     expectedResultsAmount: expectedResultsAmount || 1,

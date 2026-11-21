@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Client } from '@temporalio/client';
 import { WorkflowNotFoundError } from '@temporalio/client';
+import { isChannelMessageWorkflowId } from '../channels/message-identity';
 
 interface ConversationScope {
   siteId?: string;
@@ -46,6 +47,19 @@ export async function submitConversationMessage(
   ingressId: string,
   submission: ConversationMessageSubmission,
 ): Promise<void> {
+  // The coordinator can close after an idle hour. A retry of a known child
+  // must recover its result, not enqueue a duplicate start in a new coordinator.
+  if (submission.workflowType === 'customerSupportMessageWorkflow' && isChannelMessageWorkflowId(submission.workflowId)) {
+    try {
+      const child = await client.workflow.getHandle(submission.workflowId).describe();
+      if (child.type !== submission.workflowType || child.parentExecution?.workflowId !== ingressId) {
+        throw new Error('Channel message workflow identity conflict');
+      }
+      return;
+    } catch (error) {
+      if (!(error instanceof WorkflowNotFoundError)) throw error;
+    }
+  }
   await client.workflow.signalWithStart('conversationIngressWorkflow', {
     workflowId: ingressId,
     taskQueue: submission.taskQueue,

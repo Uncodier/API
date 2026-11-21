@@ -254,12 +254,17 @@ async function executeRoutedPlanStep(context: AssistantContext, plan: any, step:
   });
 
   const resultCapture = explicitResult ? createAssistantStepResult() : undefined;
-  const modifiedContext = {
+  const modifiedContext: AssistantContext = {
     ...context,
+    // A plan is a new, unattended actor even when its parent is a verified Ask turn.
+    // Rebuild routed tools for that host; never reuse an interactive capability or selection.
+    callerSource: 'background', catalogUserSession: undefined, leadBulkUserSession: undefined,
+    connectorIdHint: undefined, connectorAgentId: undefined, approvedImport: undefined,
     systemPrompt: stepSystemPrompt + (resultCapture ? '\nSTEP TERMINAL PROTOCOL: use plan_result with completed/failed and summary, or needs_input and question. Plain text, a plan proposal or a question is not completion. Ask for missing essential input using needs_input; do not complete unfinished work.' : ''),
     customTools: resultCapture ? [...context.customTools.filter(tool => tool?.name !== 'plan_result'), resultCapture.tool] : context.customTools,
     executionOptions: {
       ...context.executionOptions,
+      plan_id: plan.id, step_id: step.id,
       cycle_baseline_at: cycleBaselineAt,
     },
   };

@@ -13,6 +13,7 @@ type AgentRow = {
   created_at?: string;
   prompt?: string;
   backstory?: string;
+  configuration?: { agentOrigin?: string | null } | null;
 };
 
 const mockFrom = jest.fn();
@@ -24,6 +25,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
 }));
 
 function createBuilder(store: { rows: AgentRow[] }) {
+  let legacyOnly = false;
   const ctx: {
     filters: Array<[string, unknown]>;
     insertRow: Record<string, unknown> | null;
@@ -57,6 +59,7 @@ function createBuilder(store: { rows: AgentRow[] }) {
     }
 
     const matches = (row: AgentRow) =>
+      (!legacyOnly || row.configuration?.agentOrigin !== 'independent') &&
       ctx.filters.every(([key, value]) => (row as Record<string, unknown>)[key] === value);
 
     if (ctx.updatePatch) {
@@ -90,6 +93,11 @@ function createBuilder(store: { rows: AgentRow[] }) {
     },
     eq: (column: string, value: unknown) => {
       ctx.filters.push([column, value]);
+      return builder;
+    },
+    or: (filter: string) => {
+      expect(filter).toBe('configuration->>agentOrigin.is.null,configuration->>agentOrigin.neq.independent');
+      legacyOnly = true;
       return builder;
     },
     order: (column: string, options?: { ascending?: boolean }) => {
@@ -173,6 +181,19 @@ describe('ensureDefaultAgents', () => {
     expect(sales?.status).toBe('active');
     expect(sales?.prompt).toBe('original-prompt');
     expect(store.rows.filter((row) => row.role === 'Sales/CRM Specialist')).toHaveLength(1);
+  });
+
+  it.each(['active', 'inactive'])('does not count or reactivate an %s independent Support as a default', async status => {
+    const independent = { id: 'custom', role: 'Customer Support', status, user_id: USER_ID,
+      site_id: SITE_ID, configuration: { agentOrigin: 'independent' } };
+    store.rows = [{ ...independent }];
+    await expect(findActiveAgentForRole(SITE_ID, 'Customer Support')).resolves.toBeNull();
+    const result = await ensureDefaultAgents(SITE_ID, USER_ID);
+    expect(result.created).toContain('Customer Support');
+    expect(result.reactivated).toEqual([]);
+    expect(store.rows.find(row => row.id === 'custom')).toEqual(independent);
+    expect((await findActiveAgentForRole(SITE_ID, 'Customer Support'))?.agentId)
+      .toBe(store.rows.find(row => row.id !== 'custom' && row.role === 'Customer Support')?.id);
   });
 
   it('finds the active agent for a role after seeding', async () => {

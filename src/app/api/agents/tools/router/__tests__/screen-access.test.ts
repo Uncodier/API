@@ -82,6 +82,19 @@ it('uses the transcription screen policy for video analysis and denies dispatch 
   expect(video.execute).not.toHaveBeenCalled();
 });
 
+it('keeps bulk leads on the Leads screen and rejects a model-supplied site or actor', async () => {
+  const bulk = tool('leads_bulk_operations');
+  const router = toolsRouterTool([bulk], scope);
+  expect(await router.execute({ action: 'list', category: 'crm' })).toMatchObject({ count: 1 });
+  for (const args of [{ site_id: randomUUID() }, { user_id: otherUser }]) {
+    expect(await router.execute({ action: 'call', name: bulk.name, args })).toMatchObject({ status: 403 });
+  }
+  blocked = ['leads'];
+  expect(await router.execute({ action: 'list', category: 'crm' })).toMatchObject({ count: 0 });
+  expect(await router.execute({ action: 'call', name: bulk.name })).toMatchObject({ status: 403 });
+  expect(bulk.execute).not.toHaveBeenCalled();
+});
+
 it('uses exact navigation keys and all required screens, not category or role strings', () => {
   expect(canUseToolScreen('transactions', { isAdmin: false, blockedScreens: ['transactions'] })).toBe(false);
   expect(canUseToolScreen('sales', { isAdmin: false, blockedScreens: ['transactions'] })).toBe(true);

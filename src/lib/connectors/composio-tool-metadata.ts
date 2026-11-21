@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { invalidProviderResponse, type ComposioClient } from './composio-transport';
 import { inputValue, opaqueCursor, pageSchema, providerValue, safeText, toolkitSlug } from './composio-validation';
 import { ConnectorError } from './types';
+import { classifyToolActions, providerTagFor, type TaggedToolAction } from './tool-action-types';
 
 export const TOOL_CATALOG_LIMIT = 20;
 export const catalogToolId = z.string().regex(/^[A-Z0-9][A-Z0-9_]{0,149}$/);
@@ -9,6 +10,7 @@ export const toolSearchQuery = z.string().max(200).regex(/^[^\u0000-\u001f\u007f
 const metadata = z.object({
   slug: catalogToolId, name: safeText(300).min(1),
   description: safeText(32_000), toolkit: z.object({ slug: toolkitSlug }),
+  tags: z.unknown().optional(),
   is_deprecated: z.boolean(), deprecated: z.object({ is_deprecated: z.boolean().optional() }).nullish(),
 });
 
@@ -16,17 +18,20 @@ function eligible(tool: z.infer<typeof metadata>, slug: string) {
   return tool.toolkit.slug === slug && !tool.is_deprecated && !tool.deprecated?.is_deprecated;
 }
 
-export async function listToolkitToolMetadata(client: ComposioClient, slug: string, cursor?: string, query?: string) {
+export async function listToolkitToolMetadata(client: ComposioClient, slug: string, cursor?: string, query?: string, action?: TaggedToolAction) {
   inputValue(toolkitSlug, slug);
   if (cursor !== undefined) inputValue(opaqueCursor, cursor);
   const params = new URLSearchParams({ toolkit_slug: slug, limit: String(TOOL_CATALOG_LIMIT), include_deprecated: 'false' });
   if (query !== undefined) params.set('query', inputValue(toolSearchQuery, query));
+  if (action) params.set('tags', providerTagFor(action));
   if (cursor) params.set('cursor', cursor);
   const page = providerValue(pageSchema(metadata, TOOL_CATALOG_LIMIT), await client.request(`/tools?${params}`));
   if (page.items.some(tool => !eligible(tool, slug)) || new Set(page.items.map(tool => tool.slug)).size !== page.items.length
     || (cursor && page.next_cursor === cursor)) invalidProviderResponse();
+  const items = page.items.map(({ slug, name, description, tags }) => ({ slug, name, description, action_types: classifyToolActions(tags) }));
+  if (action && items.some(tool => !tool.action_types.includes(action))) invalidProviderResponse();
   return {
-    items: page.items.map(({ slug, name, description }) => ({ slug, name, description })),
+    items,
     next_cursor: page.next_cursor ?? null, total: page.total_items ?? null,
   };
 }
@@ -62,4 +67,19 @@ export async function validateCatalogToolIds(client: ComposioClient, slug: strin
       throw new ConnectorError('TOOL_NOT_IN_CATALOG', 'An action is not in this toolkit’s current catalogue. Reload your selection.', 422);
     }
   }
+}
+
+/** Browse a page of manager-selected IDs without scanning the entire upstream toolkit.
+ * tool_slugs overrides the toolkit filter upstream: verify the parent locally before using any row. */
+export async function listSelectedCatalogMetadata(client: ComposioClient, slug: string, ids: string[]) {
+  inputValue(toolkitSlug, slug);
+  inputValue(z.array(catalogToolId).min(1).max(12), ids);
+  const params = new URLSearchParams({ tool_slugs: ids.join(','), include_deprecated: 'false', limit: String(ids.length) });
+  const page = providerValue(pageSchema(metadata, 12), await client.request(`/tools?${params}`));
+  const unique = new Set(page.items.map(item => item.slug));
+  if (page.next_cursor || unique.size !== page.items.length || (page.total_items !== undefined && page.total_items !== page.items.length) ||
+    page.items.some(item => item.toolkit.slug !== slug || !ids.includes(item.slug))) invalidProviderResponse();
+  const items = page.items.filter(item => eligible(item, slug)).sort((a, b) => a.slug.localeCompare(b.slug)).map(({ slug, name, description, tags }) =>
+    ({ slug, name, description, action_types: classifyToolActions(tags) }));
+  return { items, missing: items.length !== ids.length };
 }

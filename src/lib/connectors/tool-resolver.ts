@@ -4,18 +4,14 @@ import { ConnectorError } from './types';
 import type { ConnectorContextResolver } from './host-context';
 import type { ConnectorRuntime } from './runtime';
 import { CONNECTOR_DOMAINS } from './domains';
+import { agentRecovery, failureForAgent } from './agent-recovery';
 
 /** A spread-safe host-private marker. A matching name/prefix alone grants nothing. */
 export const CONNECTOR_GATEWAY = Symbol.for('makinari.connector-gateway');
 type Gateway = RoutedTool & { [CONNECTOR_GATEWAY]?: true };
 
-export function connectorFailure(error: unknown) {
-  if ((error as any)?.name === 'RecoveryError' || (error as any)?.name === 'OpenRouterBillingError') throw error;
-  const known = error instanceof ConnectorError;
-  return { success: false, code: known ? error.code : 'CONNECTOR_UNAVAILABLE',
-    error: known ? error.message : 'Connector capability is unavailable.',
-    ...((error as any)?.effectStarted === false ? { executed: false, effectStarted: false } : {}) };
-}
+export const connectorFailure = failureForAgent;
+const catalogQuery = { type: 'string', description: 'English tool keywords or an exact tool slug for local catalog matching; use short public action terms. Never include customer text, names, credentials, query literals or other private values.' };
 
 /** Lazy construction: merely building a host/skill catalog never loads a secret or schema. */
 export function connectorGateway(resolveContext?: ConnectorContextResolver): Gateway {
@@ -31,7 +27,7 @@ export function connectorGateway(resolveContext?: ConnectorContextResolver): Gat
     description: 'Compatibility facade for tools connector discovery. Prefer tools search/describe/call. Exact connector references and fresh grants are required; no implicit account selection.',
     parameters: { type: 'object', properties: {
       action: { type: 'string', enum: ['search', 'describe', 'execute'] },
-      search_intent: { type: 'string' }, action_name: { type: 'string', description: 'Exact connector:<id>:<tool> reference.' },
+      search_intent: { type: 'string' }, catalog_query: catalogQuery, action_name: { type: 'string', description: 'Exact connector:<id>:<tool> reference.' },
       action_params: { type: 'string', description: 'JSON-encoded arguments from the described schema.' },
       domain: { type: 'string' }, category: { type: 'string' },
       connector_id: { type: 'string' }, connector_cursor: { type: 'string' },
@@ -40,7 +36,7 @@ export function connectorGateway(resolveContext?: ConnectorContextResolver): Gat
       try {
         const resolver = await getRuntime();
         if (args.action === 'search') return { success: true, ...await resolver.search({ query: args.search_intent,
-          domain: args.domain, category: args.category, connector_id: args.connector_id, cursor: args.connector_cursor }) };
+          catalog_query: args.catalog_query, domain: args.domain, category: args.category, connector_id: args.connector_id, cursor: args.connector_cursor }) };
         if (args.action === 'describe') return { success: true, ...await resolver.describe(args.action_name ?? '') };
         if (args.action === 'execute') {
           let input = args.action_params ?? {};
@@ -62,15 +58,17 @@ export function withConnectorResolver(native: RoutedTool, tools: RoutedTool[], s
   const gateways = tools.filter(tool => tool.name === 'use_composio_tools' && (tool as Gateway)[CONNECTOR_GATEWAY]);
   const gateway = gateways.length === 1 ? gateways[0] : undefined;
   const invoke = async (args: any) => {
-    if (!gateway) return { success: false, code: 'HOST_DISABLED', executed: false, error: 'Connector gateway is unavailable in this host.' };
+    if (!gateway) return connectorFailure(Object.assign(new ConnectorError('HOST_DISABLED', 'Connector unavailable.', 403), { effectStarted: false }));
     try {
       await assertToolScreenAccess('connector_gateway', scope);
-      return await gateway.execute(args);
-    } catch (error) { return connectorFailure(error); }
+    } catch (error) { return { ...connectorFailure(error), executed: false, effectStarted: false }; }
+    try { return await gateway.execute(args); }
+    catch (error) { return connectorFailure(error); }
   };
   return { ...native, parameters: { ...native.parameters, properties: { ...native.parameters.properties,
     domain: { type: 'string', description: 'Optional connector business-domain filter. Classification is not a permission.' },
     connector_id: { type: 'string', description: 'Optional exact local connector account ID; still subject to current grants.' },
+    catalog_query: catalogQuery,
     connector_cursor: { type: 'string', description: 'Continuation returned as connector_next_cursor; retain the same search filters.' },
   } }, execute: async (args: any) => {
     if ((args.action === 'call' || args.action === 'describe') && typeof args.name === 'string' && args.name.startsWith('connector:')) {
@@ -81,18 +79,21 @@ export function withConnectorResolver(native: RoutedTool, tools: RoutedTool[], s
     if (!gateway || !['search', 'list'].includes(args.action) || result?.success === false) return result;
     const external = await invoke({ action: 'search', search_intent: args.action === 'search' ? args.query : undefined,
       domain: args.domain, category: args.category, connector_id: args.connector_id,
-      connector_cursor: args.connector_cursor, thought_process: args.thought_process });
+      catalog_query: args.catalog_query, connector_cursor: args.connector_cursor, thought_process: args.thought_process });
     const compatibleCategories = args.domain ? CONNECTOR_DOMAINS.find(domain => domain.id === args.domain)?.categories ?? [] : null;
     const nativeTools = (result.tools ?? []).filter((tool: any) => tool.name !== gateway.name &&
       (!args.category || tool.category === args.category) && (!compatibleCategories || compatibleCategories.includes(tool.category)));
     const connectorTools = external.success ? external.tools ?? [] : [];
-    const staleCursor = external.success === false && external.code === 'STALE_CURSOR';
+    const failure = external.success ? external.partial_error : external.code ?? 'CONNECTOR_UNAVAILABLE';
+    const hint = failure ? agentRecovery(failure).message : !connectorTools.length && !external.next_cursor
+      ? 'No eligible connector match for this search. Ask the user to check the selected connection and catalog-read setting or offer an independently authorized same-scope native tool.'
+      : 'Use connector_next_cursor even for an empty page. Describe exact describe_required entries before calling. For manual_only entries, ask the user to perform the step; do not execute them.';
     const merged = [...nativeTools.slice(0, args.action === 'search' ? 10 - connectorTools.length : nativeTools.length), ...connectorTools];
     return { ...result, tools: merged, count: merged.length,
-      connector_status: external.success ? 'available' : 'unavailable',
-      ...(staleCursor ? { connector_error: 'STALE_CURSOR' } : {}),
+      connector_status: external.success ? (failure ? 'partial' : 'available') : 'unavailable',
+      ...(failure ? { connector_error: failure, connector_recovery: agentRecovery(failure) } : {}),
       connector_next_cursor: external.success ? external.next_cursor ?? null : null,
       truncated: external.truncated || (args.action === 'search' && nativeTools.length + connectorTools.length > 10),
-      hint: staleCursor ? 'Connector results changed. Repeat the search without connector_cursor.' : 'Native schemas may be called directly. Connector entries require tools describe for the exact account/version/schema before tools call.' };
+      hint };
   } };
 }

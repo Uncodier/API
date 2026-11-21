@@ -399,6 +399,7 @@ async function handleSupportRequest(request: Request) {
             data: {
                 command_id: effectiveDbUuid,
                 conversation_id: savedMessages.conversationId,
+                ...(inboundCustomData?.source === 'zavu_inbound_message' && isValidUUID(effectiveAgentId) ? { agent_id: effectiveAgentId } : {}),
                 conversation_title: savedMessages.conversationTitle,
                 response_format: responseFormat,
                 ...responseMedia,

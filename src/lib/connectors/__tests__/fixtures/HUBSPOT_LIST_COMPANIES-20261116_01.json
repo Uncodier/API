@@ -1,0 +1,395 @@
+{
+  "input_parameters": {
+    "type": "object",
+    "title": "RetrievePageOfCompaniesRequest",
+    "properties": {
+      "after": {
+        "type": "string",
+        "title": "After",
+        "examples": [
+          "1234567890",
+          "CMTYzNjQzNTM1Mg%3D%3D"
+        ],
+        "description": "Pagination token from `paging.next.after` of a previous response, used to fetch the subsequent page. Omit for the first page.",
+        "human_parameter_name": "After",
+        "human_parameter_description": "The token from the previous page to continue where you left off. Leave this blank to start from the first page."
+      },
+      "limit": {
+        "type": "integer",
+        "title": "Limit",
+        "default": 10,
+        "maximum": 100,
+        "examples": [
+          "10",
+          "50",
+          "100"
+        ],
+        "description": "Maximum number of companies to return per page, controlling pagination size (default: 10).",
+        "human_parameter_name": "Limit",
+        "human_parameter_description": "How many companies to show per page. Choose a smaller number for quick previews or a larger one to see more results at once (up to 100)."
+      },
+      "archived": {
+        "type": "boolean",
+        "title": "Archived",
+        "default": false,
+        "examples": [
+          "false",
+          "true"
+        ],
+        "description": "Boolean flag to filter companies by archived status: `true` returns only archived companies; `false` (default) returns only active companies.",
+        "human_parameter_name": "Archived",
+        "human_parameter_description": "Choose whether to see archived companies instead of active ones. Turn this on to retrieve only companies that have been archived."
+      },
+      "properties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "title": "Properties",
+        "examples": [
+          [
+            "name",
+            "domain",
+            "industry"
+          ],
+          [
+            "phone",
+            "city",
+            "country"
+          ]
+        ],
+        "description": "List of company property internal names to include in the response (e.g., 'name', 'domain'). If omitted, a default set of properties is returned.",
+        "human_parameter_name": "Properties",
+        "human_parameter_description": "Which company details you want returned, like name or domain. Pick only what you need to keep the results clean and fast."
+      },
+      "associations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "title": "Associations",
+        "examples": [
+          [
+            "contacts",
+            "deals"
+          ],
+          [
+            "tickets",
+            "products"
+          ]
+        ],
+        "description": "List of object types (e.g., 'contacts', 'deals') for which to retrieve associated IDs with each company.",
+        "human_parameter_name": "Associations",
+        "human_parameter_description": "Related records you want included with each company, such as contacts or deals. This helps you see linked items without making extra requests."
+      },
+      "propertiesWithHistory": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "title": "Properties With History",
+        "examples": [
+          [
+            "industry",
+            "annual_revenue"
+          ],
+          [
+            "company_size"
+          ]
+        ],
+        "description": "List of property internal names for which to retrieve historical values (e.g., 'industry'). If no history exists for a property, only its current value is returned.",
+        "human_parameter_name": "Properties With History",
+        "human_parameter_description": "Properties you want with their past values, not just the current one. Useful when you care about how a field has changed over time."
+      }
+    },
+    "description": "Request schema for retrieving a paginated list of companies."
+  },
+  "output_parameters": {
+    "type": "object",
+    "$defs": {
+      "Paging": {
+        "type": "object",
+        "title": "Paging",
+        "properties": {
+          "next": {
+            "$ref": "#/$defs/PagingNext",
+            "title": "Next",
+            "description": "Next page navigation details."
+          },
+          "prev": {
+            "$ref": "#/$defs/PagingPrev",
+            "title": "Prev",
+            "description": "Previous page navigation details."
+          }
+        },
+        "description": "Pagination details for navigating result sets."
+      },
+      "Company": {
+        "type": "object",
+        "title": "Company",
+        "required": [
+          "id",
+          "properties",
+          "createdAt",
+          "updatedAt",
+          "archived"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The unique ID of the object."
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Resource URL."
+          },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived",
+            "description": "Whether the object is archived."
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Created At",
+            "description": "The timestamp when the object was created, in ISO 8601 format."
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updated At",
+            "description": "The timestamp when the object was last updated, in ISO 8601 format."
+          },
+          "archivedAt": {
+            "type": "string",
+            "title": "Archived At",
+            "description": "The timestamp when the object was archived, in ISO 8601 format."
+          },
+          "properties": {
+            "type": "object",
+            "title": "Properties",
+            "description": "Key-value pairs representing company properties. Values are string or null. Common properties include hs_object_id, domain, name, createdate, hs_lastmodifieddate, etc.",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "associations": {
+            "type": "object",
+            "title": "Associations",
+            "description": "Relationships with other CRM objects by type. Each key represents an association type containing results and paging.",
+            "additionalProperties": {
+              "$ref": "#/$defs/AssociationResults"
+            }
+          },
+          "objectWriteTraceId": {
+            "type": "string",
+            "title": "Object Write Trace Id",
+            "description": "Tracking identifier for write operations."
+          },
+          "propertiesWithHistory": {
+            "type": "object",
+            "title": "Properties With History",
+            "description": "Properties with historical change records. Each key is a property name containing an array of historical values.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PropertyHistoryItem"
+              }
+            }
+          }
+        },
+        "description": "A HubSpot company object."
+      },
+      "PagingNext": {
+        "type": "object",
+        "title": "PagingNext",
+        "required": [
+          "after"
+        ],
+        "properties": {
+          "link": {
+            "type": "string",
+            "title": "Link",
+            "description": "URL for fetching next page."
+          },
+          "after": {
+            "type": "string",
+            "title": "After",
+            "description": "A paging cursor token for retrieving subsequent pages."
+          }
+        },
+        "description": "Token for retrieving subsequent pages."
+      },
+      "PagingPrev": {
+        "type": "object",
+        "title": "PagingPrev",
+        "required": [
+          "before"
+        ],
+        "properties": {
+          "link": {
+            "type": "string",
+            "title": "Link",
+            "description": "URL for fetching previous page."
+          },
+          "before": {
+            "type": "string",
+            "title": "Before",
+            "description": "A paging cursor token for retrieving previous pages."
+          }
+        },
+        "description": "Cursor for retrieving the previous page."
+      },
+      "AssociationItem": {
+        "type": "object",
+        "title": "AssociationItem",
+        "required": [
+          "id",
+          "type"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Associated object identifier."
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "Association relationship type (e.g., deal_to_contact)."
+          }
+        },
+        "description": "Association item representing a relationship with another object."
+      },
+      "AssociationPaging": {
+        "type": "object",
+        "title": "AssociationPaging",
+        "properties": {
+          "next": {
+            "$ref": "#/$defs/PagingNext",
+            "title": "Next",
+            "description": "Next page navigation details."
+          }
+        },
+        "description": "Pagination metadata for navigating through associated objects."
+      },
+      "AssociationResults": {
+        "type": "object",
+        "title": "AssociationResults",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "paging": {
+            "$ref": "#/$defs/AssociationPaging",
+            "title": "Paging",
+            "description": "Pagination for association results."
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/AssociationItem"
+            },
+            "title": "Results",
+            "description": "Array of associated object IDs and types."
+          }
+        },
+        "description": "A list defining relationships with other objects such as contacts, deals, etc."
+      },
+      "PropertyHistoryItem": {
+        "type": "object",
+        "title": "PropertyHistoryItem",
+        "required": [
+          "value",
+          "timestamp",
+          "sourceType"
+        ],
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "description": "Property value at this point in time."
+          },
+          "sourceId": {
+            "type": "string",
+            "title": "Source Id",
+            "description": "Unique property identifier."
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp",
+            "description": "The timestamp when the property was updated, in ISO 8601 format."
+          },
+          "sourceType": {
+            "type": "string",
+            "title": "Source Type",
+            "description": "The property type."
+          },
+          "sourceLabel": {
+            "type": "string",
+            "title": "Source Label",
+            "description": "Human-readable label for the source."
+          },
+          "updatedByUserId": {
+            "type": "integer",
+            "title": "Updated By User Id",
+            "description": "User ID of the modifier."
+          }
+        },
+        "description": "Historical property value with metadata for tracking changes over time."
+      },
+      "RetrievePageOfCompaniesResponse": {
+        "type": "object",
+        "title": "RetrievePageOfCompaniesResponse",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "paging": {
+            "$ref": "#/$defs/Paging",
+            "title": "Paging",
+            "description": "Pagination information for navigating results. May be absent if there are no additional pages."
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Company"
+            },
+            "title": "Results",
+            "description": "Array of company objects returned by the API."
+          }
+        },
+        "description": "Response schema for paginated company list returned by HubSpot CRM API.\n\nHubSpot returns results and paging directly at the top level."
+      }
+    },
+    "title": "RetrievePageOfCompaniesResponseWrapper",
+    "required": [
+      "data",
+      "successful"
+    ],
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/RetrievePageOfCompaniesResponse",
+        "title": "Data",
+        "description": "Data from the action execution"
+      },
+      "error": {
+        "type": "string",
+        "title": "Error",
+        "description": "Error if any occurred during the execution of the action"
+      },
+      "successful": {
+        "type": "boolean",
+        "title": "Successful",
+        "description": "Whether or not the action execution was successful or not"
+      }
+    }
+  }
+}

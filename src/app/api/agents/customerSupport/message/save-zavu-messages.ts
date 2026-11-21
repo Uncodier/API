@@ -104,11 +104,13 @@ export async function saveZavuSupportMessages(input: Input): Promise<{
     if (!error) continue;
     if (error.code !== '23505') throw new Error('CUSTOMER_SUPPORT_MESSAGE_SAVE_FAILED');
     const { data: existing, error: readError } = await db().from('messages')
-      .select('id, role, conversation_id, content, created_at, custom_data').eq('id', row.id).maybeSingle();
+      .select('id, role, agent_id, conversation_id, content, created_at, custom_data').eq('id', row.id).maybeSingle();
     if (readError || !existing || existing.role !== row.role || existing.conversation_id !== conversationId
         || existing.content !== row.content || existing.custom_data?.connection_id !== connection
         || existing.custom_data?.origin_message_id !== input.originMessageId
-        || (row.role === 'assistant' && ((existing.custom_data?.response_format || 'text') !== (input.responseFormat || 'text')
+        || (row.role === 'assistant' && ((existing.agent_id ?? null) !== (input.agentId ?? null)
+          || existing.custom_data?.reply_to_message_id !== inboundId
+          || (existing.custom_data?.response_format || 'text') !== (input.responseFormat || 'text')
           || (['message_type', 'media_url', 'mime_type'] as const)
             .some(key => existing.custom_data?.[key] !== media?.[key])))) {
       throw new Error('CUSTOMER_SUPPORT_MESSAGE_SCOPE_CONFLICT');

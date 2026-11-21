@@ -9,8 +9,7 @@ jest.mock('@/lib/services/robot-instance/InstanceAssetsService', () => ({
   InstanceAssetsService: { getAssetsContext: jest.fn() },
 }));
 jest.mock('../utils', () => ({
-  fetchMemoriesContext: jest.fn(async () => ''),
-  generateAssistantAgentIdentity: jest.fn(async () => ({ background: '', agentId: 'prompt-agent' })),
+  loadAssistantAgentContext: jest.fn(async () => ({ background: 'Agent background', agentId: 'prompt-agent', memoriesContext: 'Agent memories' })),
   getInstanceAssistantTools: jest.fn(async () => []),
   determineInstanceCapabilities: () => ({ capabilities: {}, shouldUseSDKTools: false }),
   getRequirementWorkflowInstruction: () => '',
@@ -28,7 +27,7 @@ jest.mock('@/app/api/agents/tools/publish/social-media', () => ({ validateSocial
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { InstanceContextManager } from '@/lib/services/robot-instance/InstanceContextManager';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
-import { getInstanceAssistantTools, generateAssistantAgentIdentity } from '../utils';
+import { getInstanceAssistantTools, loadAssistantAgentContext } from '../utils';
 import { prepareAssistantContext } from '../steps';
 import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 import { MOTION_DESIGN_INSTRUCTION } from '../motion-design-instruction';
@@ -83,6 +82,46 @@ it('preserves motion routing in the prepared workflow context', async () => {
     'WORKFLOW MODE: Execute the assigned step only.');
   expect(context.systemPrompt).toContain(MOTION_DESIGN_INSTRUCTION);
   expect(context.systemPrompt).toContain('Execute the assigned step only.');
+  expect(context.connectorAgentId).toBeUndefined();
+  expect(loadAssistantAgentContext).not.toHaveBeenCalled();
+  expect(buildHistory).not.toHaveBeenCalled();
+  expect(context.imageAssets).toHaveLength(1); // the non-node user message still consumes attachments
+});
+
+it('does not serialize history or assets behind the agent background, or construct the tool catalog', async () => {
+  // A held dependency proves overlap without relying on machine speed.
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  jest.mocked(loadAssistantAgentContext).mockImplementationOnce(async () => {
+    await gate;
+    return { background: 'Agent background', agentId: 'prompt-agent', memoriesContext: 'Agent memories' };
+  });
+  const preparing = prepare();
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(loadAssistantAgentContext).toHaveBeenCalledWith(SITE, USER, INSTANCE);
+    expect(buildHistory).toHaveBeenCalledTimes(1);
+    expect(InstanceAssetsService.getAssetsContext).toHaveBeenCalledWith(INSTANCE);
+  } finally { release(); }
+  const { systemPrompt } = await preparing;
+  for (const part of ['Agent background', 'Agent memories', 'Ordinary conversation history', 'Conversation asset context']) {
+    expect(systemPrompt).toContain(part);
+  }
+  expect(getInstanceAssistantTools).not.toHaveBeenCalled();
+});
+
+it('does not start attachment reads when the mandatory conversation history fails', async () => {
+  let fail!: (reason: Error) => void;
+  let started!: () => void;
+  const startedHistory = new Promise<void>(resolve => { started = resolve; });
+  buildHistory.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; started(); }));
+  const preparing = prepare();
+  await startedHistory;
+  const failure = new Error('History cursor unavailable');
+  fail(failure);
+  await expect(preparing).rejects.toBe(failure);
+  expect(InstanceAssetsService.getAssetsContext).not.toHaveBeenCalled();
+  expect(getInstanceAssistantTools).not.toHaveBeenCalled();
 });
 
 it('keeps the node media contract binding alongside motion routing', async () => {
@@ -95,6 +134,8 @@ it('keeps the node media contract binding alongside motion routing', async () =>
 it('denies private purchasing instance access before building history or tools', async () => {
   (canReadProcurementWorkflowInstanceAsActor as jest.Mock).mockResolvedValue(false);
   await expect(prepare()).rejects.toThrow('Assistant instance access denied');
+  expect(loadAssistantAgentContext).not.toHaveBeenCalled();
+  expect(InstanceAssetsService.getAssetsContext).not.toHaveBeenCalled();
   expect(buildHistory).not.toHaveBeenCalled();
   expect(getInstanceAssistantTools).not.toHaveBeenCalled();
 });
@@ -106,7 +147,7 @@ it('prepares an owned requirement through the same history/background pipeline w
     { requirementId: 'owned-requirement', assertActive });
   expect(assertActive).toHaveBeenCalled();
   expect(buildHistory).toHaveBeenCalledWith('Research objective', 'openrouter', 'test-model');
-  expect(generateAssistantAgentIdentity).toHaveBeenCalledWith(SITE, USER);
+  expect(loadAssistantAgentContext).toHaveBeenCalledWith(SITE, USER, INSTANCE);
   expect(context.connectorAgentId).toBe('prompt-agent');
   expect(context.executionOptions.requirement_id).toBe('owned-requirement');
   expect(context.systemPrompt).toContain('requirement_plan/requirement_progress');
@@ -151,7 +192,7 @@ it.each([
   expect(supabaseAdmin.from).not.toHaveBeenCalled();
   expect(InstanceContextManager).not.toHaveBeenCalled();
   expect(InstanceAssetsService.getAssetsContext).not.toHaveBeenCalled();
-  expect(generateAssistantAgentIdentity).not.toHaveBeenCalled();
+  expect(loadAssistantAgentContext).not.toHaveBeenCalled();
   expect(getInstanceAssistantTools).not.toHaveBeenCalled();
 });
 
@@ -185,7 +226,7 @@ it.each(['text', 'image', 'video', 'audio', 'audience'])('prepares conversationa
   expect(context.systemPrompt).toContain('Conversation asset context');
   expect(context.systemPrompt).not.toContain('VISUAL NODE MODE');
   expect(buildHistory).toHaveBeenCalledTimes(1);
-  expect(getInstanceAssistantTools).toHaveBeenCalled();
+  expect(getInstanceAssistantTools).not.toHaveBeenCalled();
   expect((supabaseAdmin.from as jest.Mock).mock.calls.map(([table]) => table)).not.toContain('instance_nodes');
 });
 
@@ -213,5 +254,7 @@ it('preserves explicit node identity and skips conversation history after scoped
   expect(context.executionOptions).toMatchObject({ instance_id: INSTANCE, site_id: SITE, user_id: USER });
   expect(context.systemPrompt).toContain('VISUAL NODE MODE');
   expect(buildHistory).not.toHaveBeenCalled();
+  expect(InstanceAssetsService.getAssetsContext).not.toHaveBeenCalled();
+  expect(context.imageAssets).toEqual([]);
   expect(context.systemPrompt).not.toContain('Conversation asset context');
 });

@@ -1,10 +1,13 @@
 import { supabaseAdmin } from "@/lib/database/supabase-server";
-import { WorkflowService } from "@/lib/services/workflow-service";
+import { admitChannelMessage, reconcileChannelMessage } from '@/lib/services/channels/admit-message';
 export { handleInvitationStatusChanged } from "./invitation-finalization";
 export { handleDomainStatusChanged } from "./domain-status";
 import { getCachedJson, setCachedJson, sha256 } from "@/lib/security/upstash-rest";
 import { admitZavuInboundAutomation } from './inbound-message-license';
 import { resolveInboundAudioMedia } from './inbound-audio-media';
+import { inboundBinding, type InboundBinding } from './inbound-claim';
+import { inboundZavuRecipient } from './inbound-recipient';
+import { persistDeniedZavuInbound } from './inbound-message-history';
 export {
   handleVoiceCallEvent,
   resolveVoiceCallWebhookStatus,
@@ -48,13 +51,52 @@ async function getUserIdFromSite(siteId: string): Promise<string | undefined> {
   return data?.user_id || undefined;
 }
 
-export async function handleInboundMessage(event: any) {
+// These origins have a message branch in the current worker. In particular,
+// SMS and unknown origins must not fall through to its legacy email branch.
+const messageChannels = new Set(['whatsapp', 'email', 'telegram', 'messenger', 'facebook',
+  'instagram', 'threads', 'linkedin', 'x', 'twitter', 'youtube']);
+
+export async function handleInboundMessage(event: any, verifiedSiteId?: string, options?: {
+  binding?: InboundBinding; reconcileOnly?: boolean;
+}) {
   const data = event.data;
-  if (!data || !data.from) {
+  const from = data?.from;
+  if (!(typeof from === 'string' && from.trim()) && !Number.isSafeInteger(from)) {
     console.warn("[Zavu Webhook] Inbound event missing data.from");
     return;
   }
 
+  const senderId = event.senderId || data.senderId || event.sender?.id;
+  if (typeof senderId !== 'string' || !senderId) {
+    console.warn('[Zavu Webhook] Invalid sender');
+    return;
+  }
+
+  const sites = await findSettingsForSender(senderId, { skipCache: true });
+  const binding = inboundBinding(sites, senderId, data.channel, verifiedSiteId);
+  const pin = options?.binding;
+  if (pin && (!binding || pin.siteId !== binding.siteId || pin.connectionId !== binding.connectionId
+    || pin.channel !== binding.channel || pin.senderId !== binding.senderId)) {
+    throw new Error('Zavu inbound binding changed after receipt admission');
+  }
+  if (!binding) return;
+  const { siteId, channel, connectionId } = binding;
+  const rawFrom = String(from);
+  const identity = inboundZavuRecipient(rawFrom);
+  const isEmail = channel === 'email' || identity.includes('@');
+  const contact = isEmail ? { email: identity } : { phone: identity };
+  const source = { provider: 'zavu' as const, senderId, from: rawFrom };
+  const originMessageId = data.messageId || event.id;
+  if (typeof originMessageId !== 'string' || !originMessageId.trim()) return;
+  if (options?.reconcileOnly) {
+    // Read the previously admitted turn only. Changed content, a changed
+    // license or missing media cannot turn an unresolved delivery into an ACK.
+    await reconcileChannelMessage({ siteId, channel, connectionId, originMessageId, ...contact, source,
+      message: '', attachments: [] });
+    return;
+  }
+  // Voice and outbound echoes never start a text turn.
+  if (channel === 'voice' || (data.direction && data.direction !== 'inbound')) return;
   // Handle cases where media comes without text
   let messageText = data.text || data.body || data.caption;
   
@@ -67,84 +109,25 @@ export async function handleInboundMessage(event: any) {
     }
   }
 
-  const senderId = event.senderId || data.senderId || event.sender?.id;
-  if (!senderId) {
-    console.warn("[Zavu Webhook] No senderId found for inbound message");
-    return;
-  }
-
-  const sites = await findSettingsForSender(senderId, { skipCache: true });
-  if (sites.length !== 1) {
-    console.warn(`[Zavu Webhook] No site found for sender ${senderId}`);
-    return;
-  }
-
-  const siteId = sites[0].site_id;
-  const channel = data.channel;
-  if (!channel || channel === "zavu") {
-    console.warn("[Zavu Webhook] Inbound event missing a valid channel");
-    return;
-  }
-  // Zavu's Voice agent handles speech and tool calls during the live call.
-  // A text-shaped echo from that call must never start a second support agent.
-  if (channel === "voice") return;
-
-  const rawFrom = String(data.from);
-  const identity = rawFrom.includes(":") ? rawFrom.split(":").slice(1).join(":") : rawFrom;
-  const isEmail = channel === "email" || identity.includes("@");
+  if (typeof messageText !== 'string') return;
   const userId = await getUserIdFromSite(siteId);
-  const connections = sites[0].channels?.connections;
-  const matches = Array.isArray(connections) ? connections.filter((row: any) =>
-    row.zavu_sender_id === senderId && row.type === channel) : [];
-  if (matches.length !== 1 || typeof matches[0].id !== 'string' || !matches[0].id) return;
-  const connectionId = matches[0].id;
-  const originMessageId = data.messageId || event.id;
-  if (!await admitZavuInboundAutomation({
+  const history = {
     siteId, userId, channel, connectionId, senderId, from: rawFrom, message: messageText,
-    originMessageId: typeof originMessageId === 'string' ? originMessageId : undefined,
-  })) return;
-
+    originMessageId,
+  };
+  if (!await admitZavuInboundAutomation(history)) return;
+  if (!messageChannels.has(channel)) {
+    await persistDeniedZavuInbound(history);
+    return;
+  }
   const media = await resolveInboundAudioMedia(data, senderId);
   if (media.audioUnavailable) {
     messageText += '\n[Audio unavailable: the recording could not be retrieved. Ask for a resend or text; do not infer its contents.]';
   }
 
-  console.log(`[Zavu Webhook] Starting customerSupport workflow for ${channel} on site ${siteId}`);
-
-  const workflowService = WorkflowService.getInstance();
-  const workflowResult = await workflowService.customerSupportMessage(
-    {
-      userId,
-      message: messageText,
-      site_id: siteId,
-      name: data.profileName,
-      email: isEmail ? identity : undefined,
-      phone: isEmail ? undefined : identity,
-      origin: channel,
-      origin_message_id: originMessageId,
-      custom_data: {
-        source: 'zavu_inbound_message', connection_id: connectionId,
-        zavu_sender_id: senderId, zavu_from: rawFrom, channel,
-        attachments: media.attachments,
-      },
-      channel_delivery: true,
-      website_chat_origin: false,
-    },
-    {
-      priority: "high",
-      async: false,
-      retryAttempts: 3,
-      taskQueue: "high",
-      workflowId: `customer-support-${channel}-${siteId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-    }
-  );
-
-  if (workflowResult.success) {
-    console.log(`[Zavu Webhook] customerSupport workflow started: ${workflowResult.workflowId}`);
-  } else {
-    console.error("[Zavu Webhook] customerSupport workflow failed:", workflowResult.error);
-    throw new Error(
-      `Zavu customer support workflow failed: ${String(workflowResult.error)}`,
-    );
-  }
+  await admitChannelMessage({
+    siteId, userId, channel, connectionId, originMessageId, message: messageText,
+    name: typeof data.profileName === 'string' ? data.profileName : undefined,
+    ...contact, source, attachments: media.attachments,
+  });
 }

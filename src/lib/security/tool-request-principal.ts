@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ApiKeyService } from '@/lib/services/api-keys/ApiKeyService';
 import { isServiceApiKeyCredential } from './api-key-credential';
 
-export type ToolRequestPrincipal = { internal: boolean; userId: string | null; siteId: string | null };
+export type ToolRequestPrincipal = { internal: boolean; userId: string | null; siteId: string | null; userSession?: true };
 
 /** Body/user metadata headers are never credentials. Internal BFFs may forward a resolved actor. */
 export async function resolveToolRequestPrincipal(request: Request): Promise<ToolRequestPrincipal | null> {
@@ -14,7 +14,9 @@ export async function resolveToolRequestPrincipal(request: Request): Promise<Too
   try {
     if (!request.headers.has('x-api-key') && apiKey.split('.').length === 3) {
       const { data, error } = await supabaseAdmin.auth.getUser(apiKey);
-      return !error && data.user ? { internal: false, userId: data.user.id, siteId: null } : null;
+      if (error || !data.user) return null;
+      const userSession = data.user.role === 'authenticated' && data.user.is_anonymous === false;
+      return { internal: false, userId: data.user.id, siteId: null, ...(userSession ? { userSession: true } : {}) };
     }
     const { isValid, keyData } = await ApiKeyService.validateApiKey(apiKey);
     if (!isValid || !keyData?.user_id) return null;

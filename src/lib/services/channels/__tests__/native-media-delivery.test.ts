@@ -82,4 +82,12 @@ it('leaves the claim sticky if the provider succeeds but receipt persistence fai
   await expect(dispatchNativeMedia(input, 'smtp', send, id => ({ id }))).rejects.toThrow('receipt requires reconciliation');
   expect(row.custom_data).toMatchObject({ status: 'reconciliation_required', native_media_delivery: { state: 'attempting' } });
   expect(send).toHaveBeenCalledTimes(1);
+});it('does not adopt an assistant that gained a pinned inbound link during generic Zavu or Outstand preflight', async () => {
+  Object.assign(row.custom_data, { origin_message_id: 'event', connection_id: 'pinned', reply_to_message_id: 'inbound' });
+  const send = jest.fn();
+  for (const genericProvider of ['zavu', 'outstand']) {
+    await expect(dispatchNativeMedia(input, genericProvider, send, () => ({}))).rejects.toThrow('original inbound channel binding');
+  }
+  expect(send).not.toHaveBeenCalled();
+  expect(row.custom_data.native_media_delivery).toBeUndefined();
 });

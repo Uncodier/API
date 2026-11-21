@@ -11,8 +11,7 @@ export type Row = Record<string, any>;
 type Filter = [string, unknown];
 
 function field(row: Row, key: string) {
-  const [column, property] = key.split("->>");
-  return property ? row[column]?.[property] : row[column];
+  return key.split(/->>?/).reduce((value, part) => value?.[part], row as any);
 }
 
 function equal(actual: unknown, expected: unknown) {
@@ -63,6 +62,7 @@ export function inboundDatabase(mockFrom: jest.Mock, initial: Record<string, Row
   mockFrom.mockImplementation((table: string) => {
     if (!tables[table]) throw new Error(`Unexpected test table ${table}`);
     const filters: Filter[] = [];
+    const alternatives: Filter[] = [];
     const contains: Filter[] = [];
     const excluded: Filter[] = [];
     const patterns: Array<[string, RegExp]> = [];
@@ -86,6 +86,7 @@ export function inboundDatabase(mockFrom: jest.Mock, initial: Record<string, Row
         for (const row of upsert) if (!tables[table].some(saved => saved.id === row.id)) tables[table].push(structuredClone(row));
       }
       let rows = tables[table].filter(row => filters.every(([key, value]) => equal(field(row, key), value)));
+      if (alternatives.length) rows = rows.filter(row => alternatives.some(([key, value]) => equal(field(row, key), value)));
       rows = rows.filter(row => included.every(([key, values]) => values.some(value => equal(field(row, key), value))));
       rows = rows.filter(row => excluded.every(([key, value]) => (field(row, key) ?? null) !== value));
       rows = rows.filter(row => contains.every(([key, value]) => {
@@ -108,6 +109,26 @@ export function inboundDatabase(mockFrom: jest.Mock, initial: Record<string, Row
     const q: any = {
       select: () => q,
       contains: (key: string, value: unknown) => { contains.push([key, value]); return q; },
+      or: (filter: string) => {
+        if (filter.startsWith('custom_data->')) {
+          // Narrow PostgREST OR support: fixed JSON lookup paths and quoted
+          // equality values, with punctuation inside literals left intact.
+          const term = /(custom_data(?:->(?:pinned_text_delivery|native_media_delivery|template_delivery|audio_delivery))?->>(?:provider_message_id|id))\.eq\.("(?:[^"\\]|\\.)*")(,|$)/gy;
+          let at = 0;
+          while (at < filter.length) {
+            const m = term.exec(filter);
+            if (!m) throw new Error('Unexpected pinned receipt filter');
+            alternatives.push([m[1], JSON.parse(m[2])]);
+            at = term.lastIndex;
+          }
+          return q;
+        }
+        if (filter !== 'configuration->>agentOrigin.is.null,configuration->>agentOrigin.neq.independent') {
+          throw new Error(`Unexpected OR filter: ${filter}`);
+        }
+        excluded.push(['configuration->>agentOrigin', 'independent']);
+        return q;
+      },
       eq: (key: string, value: unknown) => { filters.push([key, value]); return q; },
       is: (key: string, value: unknown) => { filters.push([key, value]); return q; },
       in: (key: string, values: unknown[]) => { included.push([key, values]); return q; },

@@ -22,10 +22,16 @@ it('recognizes the actual service credential, not identity assertions', async ()
 });
 it('uses the verified JWT actor instead of the claimed actor', async () => {
   const credential = Array.from({ length: 3 }, () => randomBytes(16).toString('base64url')).join('.');
-  (supabaseAdmin.auth.getUser as jest.Mock).mockResolvedValue({ data: { user: { id: userId } }, error: null });
+  (supabaseAdmin.auth.getUser as jest.Mock).mockResolvedValue({ data: { user: { id: userId, role: 'authenticated', is_anonymous: false } }, error: null });
   expect(await resolveToolRequestPrincipal(request({ authorization: `Bearer ${credential}`, 'x-auth-user-id': randomUUID() })))
-    .toEqual({ internal: false, userId, siteId: null });
+    .toEqual({ internal: false, userId, siteId: null, userSession: true });
   expect(supabaseAdmin.auth.getUser).toHaveBeenCalledWith(credential);
+});
+it.each([true, undefined, 'false'])('does not infer nonanonymous admission from an absent, malformed or anonymous flag (%s)', async is_anonymous => {
+  const credential = Array.from({ length: 3 }, () => randomBytes(16).toString('base64url')).join('.');
+  (supabaseAdmin.auth.getUser as jest.Mock).mockResolvedValue({ data: { user: { id: userId, role: 'authenticated', is_anonymous } }, error: null });
+  expect(await resolveToolRequestPrincipal(request({ authorization: `Bearer ${credential}` })))
+    .toEqual({ internal: false, userId, siteId: null });
 });
 it('binds DB API keys to their own user and site and respects key precedence', async () => {
   const key = randomBytes(32).toString('hex');

@@ -152,7 +152,8 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
       },
       required: ['action'],
     },
-    execute: async (args: { action: 'list' | 'search' | 'describe' | 'call'; name?: string; args?: any; category?: string; query?: string }) => {
+    execute: async (args: { action: 'list' | 'search' | 'describe' | 'call'; name?: string; args?: any; category?: string; query?: string;
+      domain?: string; connector_id?: string; connector_cursor?: string; catalog_query?: string }) => {
       const { action } = args;
       const denied = () => screenAccessFailure(new ToolScreenAccessDenied(), true);
       const target = (action === 'describe' || action === 'call') && args.name ? byName.get(args.name) : undefined;

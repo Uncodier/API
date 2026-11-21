@@ -22,7 +22,7 @@ export class TemplateDeliveryError extends Error {
 }
 interface Input {
   siteId: string; conversationId?: string; messageId?: string; text: string;
-  recipient: string; connectionId: string; senderId: string;
+  recipient: string; connectionId: string; senderId: string; verifyBinding?: () => Promise<void>;
 }
 
 /** The same saved row owns either audio or template, never two dispatches. */
@@ -84,6 +84,7 @@ export async function deliverZavuTemplate(input: Input): Promise<TemplateDeliver
     await persist({ key: fingerprint, name, language, body: input.text, state: 'creating', started_at: new Date().toISOString() },
       { status: 'queued', command_status: 'pending' });
     let created: ZavuTemplate;
+    await input.verifyBinding?.();
     try { created = await createZavuTemplate({ name, language, body: input.text }); }
     catch { return fail('unknown', 'Template creation is unconfirmed; reconcile before retrying'); }
     if (created.name !== name || created.body !== input.text || created.language !== language || created.status !== 'draft') {
@@ -107,6 +108,7 @@ export async function deliverZavuTemplate(input: Input): Promise<TemplateDeliver
   if (current.status === 'draft') {
     if (receipt.state !== 'ready') return result(true);
     await persist({ ...receipt, state: 'submitting' });
+    await input.verifyBinding?.();
     try { await submitZavuTemplate(receipt.template_id, input.senderId); }
     catch { return fail('unknown', 'Template submission is unconfirmed; reconcile before retrying'); }
     await persist({ ...receipt, state: 'pending', submitted_sender_id: input.senderId }, { status: 'queued', command_status: 'pending' });
@@ -123,6 +125,7 @@ export async function deliverZavuTemplate(input: Input): Promise<TemplateDeliver
   await guard();
   await persist({ ...receipt, state: 'dispatching', sender_id: input.senderId, recipient: input.recipient,
     connection_id: input.connectionId }, { status: 'sending', command_status: 'pending' });
+  await input.verifyBinding?.();
   let providerId: string;
   try { providerId = await sendZavuTemplate({ to: input.recipient, senderId: input.senderId,
     templateId: receipt.template_id, idempotencyKey: `template-fallback:${input.siteId}:${input.messageId}` }); }

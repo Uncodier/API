@@ -196,6 +196,7 @@ describe('support route persistence boundary', () => {
         conversationId: 'conversation', message: 'Hello', origin: 'telegram', origin_message_id: 'provider-in', custom_data }),
     }));
     expect(response.status).toBe(200);
+    expect((await response.json()).data.agent_id).toBe(agentId);
     expect(buildSupportContext).toHaveBeenCalledWith(expect.objectContaining({
       custom_data, effectiveOrigin: 'telegram', effectiveConversationId: 'conversation',
     }));

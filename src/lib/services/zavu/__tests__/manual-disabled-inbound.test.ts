@@ -1,3 +1,4 @@
+jest.mock('@/lib/services/channels/saved-channel-outcome', () => ({ readSavedChannelOutcome: async () => ({state:'draft',stage:'delivery',reason:'approval_required'}) }));
 const mockRpc = jest.fn();
 const mockFrom = jest.fn();
 const mockSupport = jest.fn();
@@ -49,7 +50,7 @@ describe('manual-disabled Zavu inbound automation and history', () => {
     await handleInboundMessage(event);
     expect(mockSupport).toHaveBeenCalledWith(expect.objectContaining({ site_id: SITE,
       custom_data: { source: 'zavu_inbound_message', connection_id: connection.id,
-        zavu_sender_id: 'sender-1', zavu_from: event.data.from, channel: 'telegram' },
+        zavu_sender_id: 'sender-1', zavu_from: event.data.from, channel: 'telegram', attachments: [] },
     }), expect.any(Object));
     expect(mockRpc).toHaveBeenCalledWith('get_site_licensed_resources', { p_site_id: SITE });
   });
@@ -70,11 +71,39 @@ describe('manual-disabled Zavu inbound automation and history', () => {
     },
   );
 
+  it('keeps distinct history for two channels on the same sender with the same message ID', async () => {
+    projected.enabled = false;
+    await handleInboundMessage(event);
+    const mail = { ...connection, id: 'another-inbox', type: 'email' };
+    state.tables.settings[0].channels.connections.push(mail);
+    projected = { ...mail, enabled: false };
+    await handleInboundMessage({ ...event, data: { ...event.data, channel: 'email', from: 'email:user@example.test' } });
+    expect(state.tables.messages.map(row => row.custom_data.connection_id)).toEqual([connection.id, mail.id]);
+    expect(mockSupport).not.toHaveBeenCalled();
+  });
+
   it('fails closed on unavailable projection, retains history, and remains retryable', async () => {
     mockRpc.mockImplementation(() => ({ abortSignal: async () => ({ data: null, error: { message: 'offline' } }) }));
     await expect(handleInboundMessage(event)).rejects.toMatchObject({ status: 503 });
+    expect(state.tables.messages[0].custom_data.suppression_reason).toBe('license_check_unavailable');
     expect(mockSupport).not.toHaveBeenCalled();
     expect(state.tables.messages).toHaveLength(1);
+  });
+
+  it.each(['sms', 'unknown-channel'])('preserves %s history without running the legacy email branch', async channel => {
+    state.tables.settings[0].channels.connections = [{ ...connection, type: channel }];
+    projected.type = channel;
+    await handleInboundMessage({ ...event, data: { ...event.data, channel } });
+    expect(mockSupport).not.toHaveBeenCalled();
+    expect(state.tables.messages).toHaveLength(1);
+    expect(state.tables.conversations[0].channel).toBe(channel);
+  });
+
+  it('does not follow a sender into another tenant after sender-secret verification', async () => {
+    await handleInboundMessage(event, 'another-site');
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockSupport).not.toHaveBeenCalled();
+    expect(state.tables.messages).toHaveLength(0);
   });
 
   it('rejects ambiguous site or connection mappings instead of guessing a tenant', async () => {
@@ -100,7 +129,8 @@ describe('manual-disabled Zavu inbound automation and history', () => {
     const body = mockSupport.mock.calls[0][0];
     projected._license = { manually_disabled: true };
     const response = await checkZavuSupportAdmission(new Request('https://api.example.test'), body);
-    expect(await response!.json()).toEqual({ success: true, skipped: 'channel_unavailable' });
+    expect(await response!.json()).toEqual({ success: true, skipped: 'channel_unavailable',
+      conversation_id: state.tables.conversations[0].id, messages: { user: { message_id: state.tables.messages[0].id } } });
     expect(state.tables.messages).toHaveLength(1);
   });
 

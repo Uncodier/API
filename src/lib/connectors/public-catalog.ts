@@ -1,8 +1,8 @@
 import { unstable_cache } from 'next/cache';
 import { z } from 'zod';
-import { catalogPageCursor, catalogPagination } from './catalog-pagination';
 import { getToolkit, type ComposioToolkit } from './composio-catalog';
-import { listToolkitToolMetadata, TOOL_CATALOG_LIMIT } from './composio-tool-metadata';
+import { toolActionFilter, type ToolActionFilter } from './tool-action-types';
+import { readToolkitToolsPage } from './tool-catalog-page';
 import { createComposioClient } from './composio-transport';
 import { toolkitSlug } from './composio-validation';
 import { CONNECTOR_DOMAINS, getToolkitDomains } from './domains';
@@ -16,7 +16,7 @@ const catalogQuery = z.object({
   category: z.string().refine(value => domains.some(domain => domain.id === value)).optional(),
   page: pageQuery,
 }).strict();
-const toolsQuery = z.object({ page: pageQuery }).strict();
+const toolsQuery = z.object({ page: pageQuery, action: toolActionFilter.optional() }).strict();
 const detailQuery = z.object({}).strict();
 
 function client() {
@@ -40,16 +40,15 @@ const snapshot = unstable_cache(async () => {
 const toolkitDetail = unstable_cache(async (slug: string) => project(await getToolkit(client(), slug), 12_000),
   ['public-integration-detail-v1'], { revalidate: 900 });
 
-const toolkitTools = unstable_cache(async (slug: string, page: number) => {
-  const result = await listToolkitToolMetadata(client(), slug, catalogPageCursor(page, TOOL_CATALOG_LIMIT));
-  return { items: result.items, total: result.total,
-    ...catalogPagination(page, TOOL_CATALOG_LIMIT, result.total, !!result.next_cursor) };
-}, ['public-integration-tools-v1'], { revalidate: 900 });
+const toolkitTools = unstable_cache(async (slug: string, page: number, action?: ToolActionFilter) => {
+  const { items, total, current_page, total_pages, has_next } = await readToolkitToolsPage(client(), slug, { page, action });
+  return { items, total, current_page, total_pages, has_next };
+}, ['public-integration-tools-v2'], { revalidate: 900 });
 
 function queryParams(request: Request) {
   const query: Record<string, string> = Object.create(null);
   for (const [key, value] of new URL(request.url).searchParams) {
-    if (!['q', 'page', 'category'].includes(key) || Object.hasOwn(query, key) || value.length > 200) {
+    if (!['q', 'page', 'category', 'action'].includes(key) || Object.hasOwn(query, key) || value.length > 200) {
       throw new ConnectorError('INVALID_REQUEST', 'Invalid catalogue query.', 400);
     }
     query[key] = value;
@@ -74,10 +73,10 @@ export async function publicCatalogResponse(request: Request, kind: 'list' | 'de
         detailQuery.parse(query);
         data = { toolkit: await toolkitDetail(id), domains };
       } else {
-        const { page = 1 } = toolsQuery.parse(query);
+        const { page = 1, action } = toolsQuery.parse(query);
         // Verify the toolkit is native before listing tools. No custom project catalogue.
         await toolkitDetail(id);
-        data = await toolkitTools(id, page);
+        data = await toolkitTools(id, page, action);
       }
     }
     return Response.json(data, { headers: { 'Cache-Control': query.q ? 'no-store' : 'public, max-age=60, s-maxage=300' } });

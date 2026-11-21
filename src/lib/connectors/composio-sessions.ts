@@ -2,12 +2,17 @@ import { getReviewedTool } from './reviewed-tools';
 import { DATABASE_READ, TABLE_TOOL, tableArguments } from './supabase-table-policy';
 import { projectTableNames } from './supabase-table-result';
 import { validateTableDispatchSchema } from './reviewed-tool-schema';
-import { createHash } from 'node:crypto';
+import { hashConnectorSchema, validateConnectorArguments } from './composio-tool-json';
+import type { ConnectorDescriptionInput as DescriptionInput, ConnectorToolDescription } from './catalog-read-metadata';
+import { describeCatalogRead, executeCatalogRead } from './catalog-read-adapter';
+import { assertProviderToolSucceeded, rethrowReadFailure } from './provider-outcome';
 import { z } from 'zod';
-import { ConnectorError, type Connector, type ConnectorProvider } from './types';
+import { ConnectorError, type ConnectorProvider } from './types';
 import { createComposioClient, invalidProviderResponse, validateJson, type ComposioClient } from './composio-transport';
 import { verifyAccountIdentity } from './composio-accounts';
 import { inputValue, providerId, providerValue, safeText, scopesSchema, toolkitSlug, toolSlug } from './composio-validation';
+
+export { hashConnectorSchema, validateConnectorArguments };
 
 /**
  * Deliberate pinned REST backend, NOT a session-to-direct fallback. Current v3.1
@@ -15,13 +20,6 @@ import { inputValue, providerId, providerValue, safeText, scopesSchema, toolkitS
  * path is /tools/execute/{slug}; sessions, automatic auth and file loaders are
  * never created. Runtime authorization and reviewed-tool policy remain mandatory.
  */
-type DescriptionInput = {
-  credential: { apiKey: string; revision?: string };
-  connector: Connector;
-  provider?: ConnectorProvider;
-  toolSlug: string;
-  toolkitVersion?: string;
-};
 const versionSchema = z.string().regex(/^[a-zA-Z0-9_.-]{1,100}$/)
   .refine(value => !['latest', 'default', 'stable'].includes(value.toLowerCase()));
 const toolSchema = z.object({
@@ -30,18 +28,6 @@ const toolSchema = z.object({
   scopes: scopesSchema, scope_requirements: z.record(z.unknown()).nullable(),
   no_auth: z.boolean(), is_deprecated: z.boolean(),
 });
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key =>
-    `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(',')}}`;
-  return JSON.stringify(value);
-}
-
-export function hashConnectorSchema(schema: unknown): string {
-  validateJson(schema);
-  return createHash('sha256').update(canonicalJson(schema)).digest('hex');
-}
 
 function validateSchema(schema: Record<string, unknown>): void {
   try { validateJson(schema); } catch { invalidProviderResponse(); }
@@ -82,34 +68,13 @@ async function describe(client: ComposioClient, input: DescriptionInput) {
 }
 
 /** No session, connection, or external business action is created during describe. */
-export async function describeConnectorTool(input: DescriptionInput) {
+export async function describeConnectorTool(input: DescriptionInput): Promise<ConnectorToolDescription> {
+  if (input.catalogRead === true) return describeCatalogRead(input);
   return describe(createComposioClient(input.credential.apiKey), input);
 }
 
 function denied(code: string, message: string): never {
   throw Object.assign(new ConnectorError(code, message, 409), { executed: false, effectStarted: false });
-}
-
-/** Reject file/URL coercion inputs; data is never dereferenced or downloaded by this adapter. */
-export function validateConnectorArguments(input: unknown): asserts input is Record<string, unknown> {
-  validateJson(input);
-  if (!input || Array.isArray(input) || typeof input !== 'object' || Buffer.byteLength(JSON.stringify(input)) > 48_000) {
-    denied('CONNECTOR_INVALID_INPUT', 'Tool arguments must be a bounded JSON object.');
-  }
-  const visit = (item: unknown): void => {
-    if (typeof item === 'string' && (/^(?:\/|~\/|\.\.?[\\/]|[a-z]:[\\/])/i.test(item)
-      || /(?:https?|file|ftp|data|s3):\/\//i.test(item) || /^(?:data|file):/i.test(item))) {
-      denied('CONNECTOR_UNSAFE_ARGUMENT', 'File paths and external URL loading are not supported.');
-    }
-    if (item && typeof item === 'object') for (const [key, value] of Object.entries(item)) {
-      if (/(?:^|_)(?:file|files|filepath|path|url|uri|attachments?)(?:$|_)/i.test(key)
-        || ['custom_auth_params', 'custom_connection_data', 'connected_account_id', 'user_id', 'version', 'text'].includes(key)) {
-        denied('CONNECTOR_UNSAFE_ARGUMENT', 'This argument requires an unsupported execution capability.');
-      }
-      visit(value);
-    }
-  };
-  visit(input);
 }
 
 function safeResult(value: unknown, apiKey: string): unknown {
@@ -143,13 +108,12 @@ export type ConnectorExecutionInput = DescriptionInput & {
   requiredScopes: string[];
   toolkitVersion: string;
   schemaHash: string;
-  /** Server-selected only for a direct tool result in the private instance assistant. */
-  instanceResponse?: boolean;
   /** Required fresh authorization immediately before provider dispatch. */
   beforeDispatch: () => Promise<void>;
 };
 
 export async function executeConnectorTool(input: ConnectorExecutionInput) {
+  if (input.catalogRead === true) return executeCatalogRead(input);
   let dispatched = false;
   try {
     inputValue(versionSchema, input.toolkitVersion);
@@ -202,12 +166,8 @@ export async function executeConnectorTool(input: ConnectorExecutionInput) {
       connected_account_id: account.id, user_id: provider.provider_user_id,
       version: descriptor.toolkitVersion, arguments: argumentsSnapshot,
     } });
-    if (input.instanceResponse) {
-      const envelope = providerValue(z.object({ successful: z.literal(true), error: z.null() }).passthrough(), response, true);
-      if (!Object.hasOwn(envelope, 'data')) invalidProviderResponse(true);
-      // Redact the entire envelope, including diagnostics, before returning tool data.
-      return safeResult(envelope, input.credential.apiKey) as { successful: true; data: unknown; [key: string]: unknown };
-    }
+    // The reviewed-tools allowlist above contains reads only.
+    assertProviderToolSucceeded(response, { effect: 'read', toolkit: descriptor.toolkitSlug });
     const data = providerValue(z.object({
       successful: z.boolean(), error: z.string().nullable(), data: z.record(z.unknown()), log_id: providerId.optional(),
     }), response, true);
@@ -218,11 +178,11 @@ export async function executeConnectorTool(input: ConnectorExecutionInput) {
     }
     return { successful: true as const, data: safeResult(data.data, input.credential.apiKey), logId: data.log_id };
   } catch (error) {
+    if (dispatched) rethrowReadFailure(error);
     if (error instanceof ConnectorError) {
-      if (!dispatched) Object.assign(error, { executed: false, effectStarted: false });
+      Object.assign(error, { executed: false, effectStarted: false });
       throw error;
     }
-    if (dispatched) invalidProviderResponse(true);
     denied('CONNECTOR_EXECUTION_DENIED', 'The connector execution could not be authorized.');
   }
 }

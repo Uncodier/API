@@ -1,0 +1,353 @@
+{
+  "input_parameters": {
+    "type": "object",
+    "title": "ReadAPageOfDealsRequest",
+    "properties": {
+      "after": {
+        "type": "string",
+        "title": "After",
+        "examples": [
+          "1234567890"
+        ],
+        "description": "Pagination token from previous response to fetch the subsequent page.",
+        "human_parameter_name": "After",
+        "human_parameter_description": "Use the token from the previous page of results to continue where you left off. Leave empty to start from the first page."
+      },
+      "limit": {
+        "type": "integer",
+        "title": "Limit",
+        "default": 10,
+        "maximum": 100,
+        "examples": [
+          "10",
+          "50"
+        ],
+        "description": "Maximum number of deals to return per page (default: 10). Maximum is 100 normally, but when propertiesWithHistory is requested, the maximum is 50.",
+        "human_parameter_name": "Limit",
+        "human_parameter_description": "How many deals to return per page. Maximum 100 normally, but limited to 50 when requesting properties with history."
+      },
+      "archived": {
+        "type": "boolean",
+        "title": "Archived",
+        "default": false,
+        "examples": [
+          "false",
+          "true"
+        ],
+        "description": "Filter by archived status: true for archived deals, false for active deals.",
+        "human_parameter_name": "Archived",
+        "human_parameter_description": "Whether to show archived deals. Set to true to list archived deals; leave false to see active deals."
+      },
+      "properties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "title": "Properties",
+        "examples": [
+          [
+            "dealname",
+            "amount",
+            "dealstage"
+          ],
+          [
+            "pipeline",
+            "closedate"
+          ]
+        ],
+        "description": "List of deal property names to include in the response.",
+        "human_parameter_name": "Properties",
+        "human_parameter_description": "Which deal fields you want included in each result (e.g., dealname, amount). Choose only what you need to keep responses concise."
+      },
+      "associations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "title": "Associations",
+        "examples": [
+          [
+            "contacts",
+            "companies"
+          ]
+        ],
+        "description": "List of object types for which to retrieve associated IDs.",
+        "human_parameter_name": "Associations",
+        "human_parameter_description": "Which related record types to include with each deal (e.g., contacts, companies). Adds their IDs so you can link deals to other objects."
+      },
+      "propertiesWithHistory": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "title": "Properties With History",
+        "examples": [
+          [
+            "dealstage",
+            "amount"
+          ]
+        ],
+        "description": "List of property names for which to retrieve historical values.",
+        "human_parameter_name": "Properties With History",
+        "human_parameter_description": "The deal fields for which you also want the change history. Helpful for seeing how values have changed over time."
+      }
+    },
+    "description": "Request schema for retrieving a paginated list of deals."
+  },
+  "output_parameters": {
+    "type": "object",
+    "$defs": {
+      "Deal": {
+        "type": "object",
+        "title": "Deal",
+        "required": [
+          "id",
+          "properties",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique identifier for the deal."
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Direct URL to view the deal in HubSpot's web interface."
+          },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived",
+            "description": "Indicates whether the deal is archived (deleted)."
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Created At",
+            "description": "Timestamp when the deal was created, in ISO 8601 format."
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updated At",
+            "description": "Timestamp when the deal was last modified, in ISO 8601 format."
+          },
+          "archivedAt": {
+            "type": "string",
+            "title": "Archived At",
+            "description": "Timestamp when the deal was archived, in ISO 8601 format. Only present if the deal is archived."
+          },
+          "properties": {
+            "type": "object",
+            "title": "Properties",
+            "description": "Key-value pairs containing deal property values. Common properties include dealname, dealstage, pipeline, amount, closedate, createdate, hs_lastmodifieddate, hs_object_id, and hubspot_owner_id, among others. Custom properties may also be included. Property values can be null when not set.",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "associations": {
+            "type": "object",
+            "title": "Associations",
+            "description": "Object containing associated records grouped by association type (e.g., contacts, companies). Only included if the associations query parameter is specified in the request.",
+            "additionalProperties": {
+              "$ref": "#/$defs/Associations"
+            }
+          },
+          "propertiesWithHistory": {
+            "type": "object",
+            "title": "Properties With History",
+            "description": "Object containing properties with their historical values and timestamps. Only included if the propertiesWithHistory query parameter is specified in the request.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PropertyHistoryValue"
+              }
+            }
+          }
+        },
+        "description": "Individual deal object with properties and metadata."
+      },
+      "Paging": {
+        "type": "object",
+        "title": "Paging",
+        "properties": {
+          "next": {
+            "$ref": "#/$defs/NextPage",
+            "title": "Next",
+            "description": "Contains information for retrieving the next page of results."
+          }
+        },
+        "description": "Pagination information for navigating through multiple pages of results."
+      },
+      "NextPage": {
+        "type": "object",
+        "title": "NextPage",
+        "required": [
+          "after"
+        ],
+        "properties": {
+          "link": {
+            "type": "string",
+            "title": "Link",
+            "description": "Full URL for fetching the next page of results, including the after parameter."
+          },
+          "after": {
+            "type": "string",
+            "title": "After",
+            "description": "Cursor value used to retrieve the next page of results. Pass this value as the 'after' query parameter in subsequent requests."
+          }
+        },
+        "description": "Information for retrieving the next page of results."
+      },
+      "Associations": {
+        "type": "object",
+        "title": "Associations",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "paging": {
+            "$ref": "#/$defs/AssociationPaging",
+            "title": "Paging",
+            "description": "Pagination information for the associated records if there are more than can be returned in a single response."
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/AssociationResult"
+            },
+            "title": "Results",
+            "description": "Array of associated record IDs."
+          }
+        },
+        "description": "Associated object IDs grouped by object type."
+      },
+      "AssociationPaging": {
+        "type": "object",
+        "title": "AssociationPaging",
+        "properties": {
+          "next": {
+            "$ref": "#/$defs/AssociationNextPage",
+            "title": "Next",
+            "description": "Contains information for retrieving the next page of associated records."
+          }
+        },
+        "description": "Pagination information for associations."
+      },
+      "AssociationResult": {
+        "type": "object",
+        "title": "AssociationResult",
+        "required": [
+          "id",
+          "type"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The ID of the associated record."
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "The association type identifier (e.g., 'deal_to_contact', 'deal_to_company')."
+          }
+        },
+        "description": "Associated object identifier."
+      },
+      "AssociationNextPage": {
+        "type": "object",
+        "title": "AssociationNextPage",
+        "required": [
+          "after"
+        ],
+        "properties": {
+          "link": {
+            "type": "string",
+            "title": "Link",
+            "description": "Full URL for fetching the next page of results."
+          },
+          "after": {
+            "type": "string",
+            "title": "After",
+            "description": "Cursor value for retrieving the next page of results."
+          }
+        },
+        "description": "Information for retrieving the next page of associated records."
+      },
+      "PropertyHistoryValue": {
+        "type": "object",
+        "title": "PropertyHistoryValue",
+        "required": [
+          "value",
+          "timestamp"
+        ],
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "description": "The property value at a specific point in time."
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp",
+            "description": "The timestamp when this value was set, in ISO 8601 format."
+          }
+        },
+        "description": "Historical value of a property at a specific point in time."
+      },
+      "ReadAPageOfDealsResponse": {
+        "type": "object",
+        "title": "ReadAPageOfDealsResponse",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "paging": {
+            "$ref": "#/$defs/Paging",
+            "title": "Paging",
+            "description": "Pagination information for navigating through multiple pages of deals. Only present if there are more results available."
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Deal"
+            },
+            "title": "Results",
+            "description": "Array of deal objects returned by the API."
+          }
+        },
+        "description": "Response schema for paginated deal list."
+      }
+    },
+    "title": "ReadAPageOfDealsResponseWrapper",
+    "required": [
+      "data",
+      "successful"
+    ],
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/ReadAPageOfDealsResponse",
+        "title": "Data",
+        "description": "Data from the action execution"
+      },
+      "error": {
+        "type": "string",
+        "title": "Error",
+        "description": "Error if any occurred during the execution of the action"
+      },
+      "successful": {
+        "type": "boolean",
+        "title": "Successful",
+        "description": "Whether or not the action execution was successful or not"
+      }
+    }
+  }
+}

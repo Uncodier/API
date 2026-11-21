@@ -71,6 +71,7 @@
     "instance_project": { "screens": null, "requiresUser": true, "allowTenantSwitch": true, "adminOnly": true },
     "integration_api_request": { "screens": ["integrations"], "adminOnly": true },
     "leads": { "screens": ["leads"] },
+    "leads_bulk_operations": { "screens": ["leads"], "requiresUser": true, "bindActor": true },
     "list_site_secrets": { "screens": ["applicationsSecrets"], "adminOnly": true },
     "memories": { "screens": ["context"] },
     "save_on_memory": { "screens": ["context"] },

@@ -44,7 +44,7 @@ describe('signed Voice tool callback manual-disabled enforcement', () => {
     mockRpc.mockImplementation(() => ({ abortSignal: async () => ({ data: {
       effective_plan: 'engine', social_media: [], channels: { connections },
     }, error: null }) }));
-    const q: any = { select: () => q, eq: () => q, order: () => q, limit: () => q,
+    const q: any = { select: () => q, eq: () => q, or: () => q, order: () => q, limit: () => q,
       maybeSingle: async () => ({ data: { configuration: { zavu: { tool_webhook_secret: 'offline-fixture' } } }, error: null }) };
     mockFrom.mockReturnValue(q);
     fetchSpy = jest.spyOn(global, 'fetch').mockRejectedValue(new Error('No live calls'));

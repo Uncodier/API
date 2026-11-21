@@ -1,0 +1,146 @@
+{
+  "input_parameters": {
+    "type": "object",
+    "title": "RunReadOnlyQueryRequest",
+    "required": [
+      "ref",
+      "query"
+    ],
+    "properties": {
+      "ref": {
+        "type": "string",
+        "title": "Ref",
+        "pattern": "^[a-z]{20}$",
+        "examples": [
+          "abcdefghijklmnopqrst",
+          "pamqaklsszmjzugtywow"
+        ],
+        "maxLength": 20,
+        "minLength": 20,
+        "description": "The unique reference ID of the Supabase project (used in the URL path). Must be exactly 20 lowercase letters (a-z). Can be found in Project Settings > General > Reference ID in the Supabase Dashboard, or from the dashboard URL: https://supabase.com/dashboard/project/<project-ref>. Can also be provided as 'project_ref'."
+      },
+      "query": {
+        "type": "string",
+        "title": "Query",
+        "examples": [
+          "SELECT * FROM users WHERE id = 1;",
+          "SELECT version();",
+          "SELECT NOW();",
+          "SELECT COUNT(*) FROM products;"
+        ],
+        "minLength": 1,
+        "description": "The SQL query to be executed as supabase_read_only_user. Only SELECT and other read-only operations are allowed. Write operations (INSERT, UPDATE, DELETE, CREATE, etc.) will be rejected. Can also be provided as 'sql'. IMPORTANT - Single Quote Handling: DO NOT double or escape single quotes in your SQL. The query is transmitted as a JSON string body, so standard SQL single quotes work directly. For example, write WHERE name = 'John' NOT WHERE name = ''John''."
+      },
+      "parameters": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": "Parameters",
+        "examples": [
+          null,
+          [
+            1,
+            "active"
+          ],
+          [
+            "John",
+            25
+          ]
+        ],
+        "description": "Optional array of parameters for parameterized queries. Use $1, $2, etc. in the query to reference parameters."
+      }
+    },
+    "description": "Request schema for running a read-only SQL query."
+  },
+  "output_parameters": {
+    "type": "object",
+    "$defs": {
+      "RunReadOnlyQueryResponse": {
+        "type": "object",
+        "title": "RunReadOnlyQueryResponse",
+        "properties": {
+          "result": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "array",
+                    "items": {}
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "title": "Result",
+            "description": "Query results as an array of row objects. For SELECT queries: contains the retrieved rows. Empty array if no rows match."
+          },
+          "rows_returned": {
+            "type": "integer",
+            "title": "Rows Returned",
+            "description": "Number of rows returned by the query."
+          }
+        },
+        "description": "Response from executing a read-only SQL query."
+      }
+    },
+    "title": "RunReadOnlyQueryResponseWrapper",
+    "required": [
+      "data",
+      "successful"
+    ],
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/RunReadOnlyQueryResponse",
+        "title": "Data",
+        "description": "Data from the action execution"
+      },
+      "error": {
+        "type": "string",
+        "title": "Error",
+        "description": "Error if any occurred during the execution of the action"
+      },
+      "successful": {
+        "type": "boolean",
+        "title": "Successful",
+        "description": "Whether or not the action execution was successful or not"
+      }
+    }
+  }
+}

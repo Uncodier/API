@@ -10,6 +10,9 @@ export interface AssistantContext {
   connectorAgentId?: string;
   /** Server route admission or protected recovery snapshot only; absent denies connectors. */
   callerSource?: 'interactive' | 'background';
+  /** From verified user-session admission, never model or request body. */
+  leadBulkUserSession?: true;
+  catalogUserSession?: true;
   connectorIdHint?: string;
   executionRouting?: import('@/lib/services/ai/customer-routing').ExecutionRoutingReference;
   executionMode?: AssistantExecutionMode;

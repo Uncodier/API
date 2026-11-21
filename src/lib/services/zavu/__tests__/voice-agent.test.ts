@@ -3,6 +3,7 @@ const mockGetSiteInfo = jest.fn();
 const mockGetActiveCampaigns = jest.fn();
 const mockGetAgentFiles = jest.fn();
 const mockAppendAgentFiles = jest.fn();
+const mockAgentTable = jest.fn();
 const mockMaybeSingle = jest.fn();
 const mockPersistAgent = jest.fn();
 const mockGetAgent = jest.fn();
@@ -38,18 +39,7 @@ jest.mock("@/lib/timezone", () => ({
 }));
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            order: () => ({
-              limit: () => ({ maybeSingle: mockMaybeSingle }),
-            }),
-          }),
-        }),
-      }),
-      update: () => ({ eq: mockPersistAgent }),
-    }),
+    from: (...args: unknown[]) => mockAgentTable(...args),
   },
 }));
 jest.mock("@/lib/utils/token-encryption", () => ({
@@ -69,9 +59,11 @@ jest.mock("../client", () => ({
   detachSenderFromAgent: mockDetachSenderFromAgent,
 }));
 
+import { inboundDatabase } from "./inbound-lead-test-database";
 import {
   buildCustomerSupportBackground,
   buildZavuAgentInput,
+  updateCustomerSupportVoicePreferences,
   fitZavuSystemPrompt,
   syncCustomerSupportVoiceAgent,
   type CustomerSupportAgent,
@@ -173,6 +165,13 @@ describe("fitZavuSystemPrompt", () => {
 describe("syncCustomerSupportVoiceAgent", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAgentTable.mockImplementation(() => {
+      const query = {
+        select: () => query, eq: () => query, or: () => query, order: () => query, limit: () => query,
+        maybeSingle: mockMaybeSingle, update: () => ({ eq: mockPersistAgent }),
+      };
+      return query;
+    });
     mockGetSiteInfo.mockResolvedValue({ site: {}, settings: {} });
     mockGetActiveCampaigns.mockResolvedValue([]);
     mockBuildAgentPrompt.mockReturnValue("Base background");
@@ -217,6 +216,33 @@ describe("syncCustomerSupportVoiceAgent", () => {
         name: "Customer Support",
         systemPrompt: "Base background",
       });
+  });
+
+  it.each([null, {}, { agentOrigin: null }, { agentOrigin: 'other' }])(
+    'writes preferences to the most recently updated legacy Support, even when inactive (configuration %j)',
+    async configuration => {
+      const base = { ...localAgent, site_id: 'site-1', role: 'Customer Support' };
+      const independent = { ...base, id: 'custom', status: 'active', updated_at: 3,
+        configuration: { agentOrigin: 'independent' } };
+      const state = inboundDatabase(mockAgentTable, { agents: [independent,
+        { ...base, id: 'older', status: 'active', updated_at: 1 },
+        { ...base, id: 'legacy', status: 'inactive', updated_at: 2, configuration },
+      ] });
+      await updateCustomerSupportVoicePreferences('site-1', { language: 'es' });
+      expect(state.tables.agents.find(row => row.id === 'legacy')?.configuration.zavu.voice.language).toBe('es');
+      expect(state.tables.agents.find(row => row.id === 'older')?.configuration).toEqual({});
+      expect(state.tables.agents.find(row => row.id === 'custom')?.configuration).toEqual({ agentOrigin: 'independent' });
+    },
+  );
+
+  it('does not provision a provider agent when only an independent Support exists', async () => {
+    inboundDatabase(mockAgentTable, { agents: [{ ...localAgent, site_id: 'site-1', role: 'Customer Support',
+      configuration: { agentOrigin: 'independent' } }] });
+    await expect(syncCustomerSupportVoiceAgent({ siteId: 'site-1', senderIds: ['sender_1'] }))
+      .rejects.toThrow('Customer Support agent not found');
+    expect(mockGetSiteInfo).not.toHaveBeenCalled();
+    expect(mockCreateStandaloneAgent).not.toHaveBeenCalled();
+    expect(mockUpdateAgent).not.toHaveBeenCalled();
   });
 
   it("restores an existing agent when sender validation fails", async () => {

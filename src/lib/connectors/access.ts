@@ -7,7 +7,7 @@ import {
   type AuthorizedConnector, type Connector, type ConnectorContext,
   type ConnectorMemberGrant, type ConnectorPolicy, type ConnectorProvider,
 } from './types';
-import { policyReviewedTools } from './reviewed-tools';
+import { policyReviewedTools, REVIEWED_CONNECTOR_TOOLS } from './reviewed-tools';
 import { effectiveAgentGrant, effectiveMemberGrant } from './grant-resolution';
 
 const uuid = z.string().uuid();
@@ -15,6 +15,7 @@ const deadline = () => AbortSignal.timeout(5_000);
 
 export function connectorDatabaseError(error: unknown): never {
   const code = error && typeof error === 'object' ? (error as { code?: string }).code : undefined;
+  if (code === 'P0C01') throw new ConnectorError('CATALOG_OPT_OUT_SEPARATE', 'Save the catalogue opt-out separately from other policy changes.', 409);
   if (code === '40001') throw new ConnectorError('REVISION_CONFLICT', 'Configuration changed. Reload before trying again.', 409);
   if (code === '42501') throw new ConnectorError('ACCESS_DENIED', 'Connector access denied.', 403);
   if (code === '23503' || code === '23514' || code === '22023') {
@@ -93,11 +94,11 @@ export async function getConnectorProvider(siteId: string, providerId?: string):
 
 export async function getConnectorPolicy(siteId: string, connectorId: string): Promise<ConnectorPolicy> {
   const { data, error } = await supabaseAdmin.from('connector_policies')
-    .select('tool_access_mode,allowed_tools,allowed_hosts,require_approval,support_publication,revision')
+    .select('tool_access_mode,catalog_reads,allowed_tools,allowed_hosts,require_approval,support_publication,revision')
     .eq('site_id', siteId).eq('connector_id', connectorId).abortSignal(deadline()).maybeSingle();
   if (error) connectorDatabaseError(error);
   return { ...(data ?? { allowed_tools: [], allowed_hosts: [], require_approval: true }),
-    tool_access_mode: connectorToolAccessMode(data?.tool_access_mode) };
+    tool_access_mode: connectorToolAccessMode(data?.tool_access_mode), catalog_reads: data?.catalog_reads === true };
 }
 
 export async function getMemberGrant(siteId: string, userId: string, connectorId: string): Promise<ConnectorMemberGrant | null> {
@@ -108,7 +109,30 @@ export async function getMemberGrant(siteId: string, userId: string, connectorId
   return data;
 }
 
-async function assertUse(context: ConnectorContext, connector: Connector, allowRequest = false): Promise<AuthorizedConnector> {
+// A provider descriptor and its current permissions must still be checked before dispatch.
+// Never reinterpret a registered reviewed action (including one incompatible with this account).
+function catalogSlug(slug: string) {
+  return /^[A-Z0-9][A-Z0-9_]{0,149}$/.test(slug) && !slug.startsWith('COMPOSIO_')
+    && !REVIEWED_CONNECTOR_TOOLS.some(tool => tool.slug === slug);
+}
+
+type CatalogActorCheck = () => Promise<boolean>;
+
+// Only the instance path requests this extra authority. Share the actor lookup
+// within one listing, never between requests or execution rechecks.
+function catalogActorCheck(context: ConnectorContext, requested: boolean): CatalogActorCheck | undefined {
+  if (!requested || context.catalogUserSession !== true || context.host !== 'assistant' || !uuid.safeParse(context.instanceId).success || !uuid.safeParse(context.agentId).success) return;
+  let check: Promise<boolean> | undefined;
+  return () => check ??= (async () => {
+    const { data, error } = await supabaseAdmin.rpc('connector_catalog_read_actor', {
+      p_site_id: context.siteId, p_user_id: context.userId, p_instance_id: context.instanceId, p_agent_id: context.agentId,
+    }).abortSignal(deadline());
+    if (error || typeof data !== 'boolean') connectorDatabaseError(error);
+    return data === true;
+  })();
+}
+
+async function assertUse(context: ConnectorContext, connector: Connector, allowRequest: boolean, check?: CatalogActorCheck, action?: string): Promise<AuthorizedConnector> {
   // No delegation is inferred from a background run or an absent human principal.
   if (context.host !== 'assistant' && context.host !== 'direct') {
     throw new ConnectorError('HOST_DISABLED', 'Background connector delegation is not enabled.', 403);
@@ -124,7 +148,8 @@ async function assertUse(context: ConnectorContext, connector: Connector, allowR
     throw new ConnectorError('ACCESS_DENIED', 'Connector use is not granted to this member.', 403);
   }
   const agentUse = context.agentId ? await requireConnectorAgent(connector, context.agentId, allowRequest) : true;
-  const access = await resolveConnectorPolicy(connector, context.host);
+  const access = await resolveAccountPolicy(connector, context.host, usable && agentUse ? check : undefined,
+    context.connectorIdHint === connector.id, action);
   if (usable && agentUse) return access;
   if (allowRequest && context.host === 'assistant' && context.agentId && access.policy.require_approval === true) {
     return { ...access, requestOnly: true };
@@ -148,12 +173,24 @@ export async function requireConnectorAgent(connector: Connector, agentId: strin
 }
 
 /** Configuration and grant checks do not consume an approval or authorize dispatch. */
-export async function resolveConnectorPolicy(connector: Connector, host: string): Promise<AuthorizedConnector> {
+export function resolveConnectorPolicy(connector: Connector, host: string): Promise<AuthorizedConnector> {
+  return resolveAccountPolicy(connector, host);
+}
+
+async function resolveAccountPolicy(connector: Connector, host: string, check?: CatalogActorCheck, selected = false, action?: string): Promise<AuthorizedConnector> {
   if (!connector.enabled || connector.revocation_pending || connector.provider_status !== 'ACTIVE') {
     throw new ConnectorError('AUTH_REQUIRED', 'This connector is disabled or requires authentication.', 409);
   }
   const policy = await getConnectorPolicy(connector.site_id, connector.id);
-  if (!policy.allowed_hosts.includes(host) || !policyReviewedTools(connector, policy).length) {
+  const hostAllowed = policy.allowed_hosts.includes(host);
+  const reviewed = policyReviewedTools(connector, policy).length > 0;
+  const catalogScope = policy.tool_access_mode === 'all' || (action ? policy.allowed_tools.includes(action) : policy.allowed_tools.some(catalogSlug));
+  // Never expose this setting for a guessed/unselected account or for an ineligible
+  // principal. For discovery on mixed accounts keep returning the reviewed tools.
+  const askForOptIn = selected && policy.catalog_reads === false && (action !== undefined || !reviewed);
+  const catalogEligible = !!(check && (policy.catalog_reads === true || askForOptIn) && hostAllowed && catalogScope
+    && connector.verified_at && !connector.revocation_dispatched && await check());
+  if (!hostAllowed || (!catalogEligible && !reviewed)) {
     throw new ConnectorError('ACCESS_DENIED', 'No tool policy permits this connector operation.', 403);
   }
   const provider = await getConnectorProvider(connector.site_id, connector.provider_id);
@@ -161,37 +198,49 @@ export async function resolveConnectorPolicy(connector: Connector, host: string)
   if (!provider || provider.status !== 'active' || provider.credential_revision !== credential.revision) {
     throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'Verify the provider configuration after changing its credential.', 409);
   }
-  return { connector, provider, policy };
+  if (catalogEligible && askForOptIn) {
+    throw new ConnectorError('CATALOG_OPT_IN_REQUIRED', 'Ask a workspace manager to enable catalogue reads for the selected connection.', 403);
+  }
+  return { connector, provider, policy: { ...policy, catalog_reads: catalogEligible && policy.catalog_reads === true } };
 }
 
-export async function listUsableConnectors(context: ConnectorContext, allowRequest = false): Promise<AuthorizedConnector[]> {
+export async function listUsableConnectors(context: ConnectorContext, allowRequest = false, catalogReads = false): Promise<AuthorizedConnector[]> {
   const connectors = context.connectorIdHint === undefined ? await listVisibleConnectors(context.siteId, context.userId)
     : [await getVisibleConnector(context.siteId, context.userId, context.connectorIdHint)];
   const results: AuthorizedConnector[] = [];
+  const check = catalogActorCheck(context, catalogReads);
   for (const connector of connectors) {
-    try { results.push(await assertUse(context, connector, allowRequest)); }
+    try { results.push(await assertUse(context, connector, allowRequest, check)); }
     catch (error) {
-      if (!(error instanceof ConnectorError) || error.status >= 500) throw error;
+      // This connector was already proven visible by getVisibleConnector. Explain failure for the
+      // explicitly selected instance account, but never reveal hidden accounts in broad discovery.
+      if (!(error instanceof ConnectorError) || error.status >= 500 || (catalogReads && context.connectorIdHint !== undefined && context.host === 'assistant' && context.instanceId)) throw error;
     }
   }
   return results;
 }
 
-export async function resolveConnectorAction(context: ConnectorContext, connectorId: string, toolSlug: string, allowRequest = false): Promise<AuthorizedConnector> {
-  const access = await resolveUsableAccount(context, connectorId, allowRequest);
-  if (!policyReviewedTools(access.connector, access.policy).some(tool => tool.slug === toolSlug)) {
+export async function resolveConnectorAction(context: ConnectorContext, connectorId: string, toolSlug: string, allowRequest = false, catalogReads = false): Promise<AuthorizedConnector> {
+  const access = await resolveAccount(context, connectorId, allowRequest, catalogActorCheck(context, catalogReads && catalogSlug(toolSlug)), toolSlug);
+  const catalogCandidate = !access.requestOnly && access.policy.catalog_reads === true && catalogSlug(toolSlug)
+    && (access.policy.tool_access_mode === 'all' || access.policy.allowed_tools.includes(toolSlug));
+  if (!catalogCandidate && !policyReviewedTools(access.connector, access.policy).some(tool => tool.slug === toolSlug)) {
     throw new ConnectorError('ACCESS_DENIED', 'This connector tool is not permitted.', 403);
   }
   return access;
 }
 
 /** Resolve account grants once for discovery. Concrete execution must still resolve the exact action. */
-export async function resolveUsableAccount(context: ConnectorContext, connectorId: string, allowRequest = false): Promise<AuthorizedConnector> {
+export function resolveUsableAccount(context: ConnectorContext, connectorId: string, allowRequest = false): Promise<AuthorizedConnector> {
+  return resolveAccount(context, connectorId, allowRequest);
+}
+
+async function resolveAccount(context: ConnectorContext, connectorId: string, allowRequest: boolean, check?: CatalogActorCheck, action?: string): Promise<AuthorizedConnector> {
   if (context.connectorIdHint !== undefined && connectorId !== context.connectorIdHint) {
     throw new ConnectorError('NOT_FOUND', 'Connector not found in the selected account.', 404);
   }
   const connector = await getVisibleConnector(context.siteId, context.userId, connectorId);
-  return assertUse(context, connector, allowRequest);
+  return assertUse(context, connector, allowRequest, check, action);
 }
 /** Approval executes in the manager's own name on the original allowed host,
  * not with the proposer's agent grant. The caller independently rechecks origin. */

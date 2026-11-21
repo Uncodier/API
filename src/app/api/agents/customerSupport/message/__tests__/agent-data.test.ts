@@ -1,7 +1,7 @@
 const mockQuery: any = {};
 const mockResult = jest.fn();
-for (const method of ['schema', 'from', 'select', 'eq', 'order']) {
-  mockQuery[method] = () => mockQuery;
+for (const method of ['schema', 'from', 'select', 'eq', 'or', 'order']) {
+  mockQuery[method] = jest.fn(() => mockQuery);
 }
 mockQuery.limit = mockResult;
 mockQuery.single = mockResult;
@@ -21,4 +21,14 @@ describe('support agent lookup failures', () => {
     mockResult.mockResolvedValueOnce({ data: [], error: null });
     await expect(findActiveCustomerSupportAgent(id)).resolves.toBeNull();
   });
+});
+// The origin predicate must run in PostgREST: filtering after limit(1) hides the legacy row.
+it('looks up the newest created active legacy Support, retaining NULL/missing origins', async () => {
+  jest.clearAllMocks();
+  mockResult.mockResolvedValueOnce({ data: [{ id: 'legacy', user_id: 'owner' }], error: null });
+  await expect(findActiveCustomerSupportAgent(id)).resolves.toEqual({ agentId: 'legacy', userId: 'owner' });
+  expect(mockQuery.eq.mock.calls).toEqual([['site_id', id], ['role', 'Customer Support'], ['status', 'active']]);
+  expect(mockQuery.or).toHaveBeenCalledWith('configuration->>agentOrigin.is.null,configuration->>agentOrigin.neq.independent');
+  expect(mockQuery.order).toHaveBeenCalledWith('created_at', { ascending: false });
+  expect(mockQuery.limit).toHaveBeenCalledWith(1);
 });

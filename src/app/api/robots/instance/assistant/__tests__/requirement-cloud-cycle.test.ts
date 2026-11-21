@@ -279,6 +279,8 @@ test('direct cloud catalog descriptors dispatch through the canonical boundary e
     realTools.createCloudFileTools(scope, assertActive, { ...options, store: { write } as any }));
   const { routeTools } = loadRuntimeModule<typeof import('@/app/api/agents/tools/router/assistantProtocol')>(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
+      './search-context': jest.requireActual('@/app/api/agents/tools/router/search-context'),
+      '@/lib/connectors/tool-resolver': jest.requireActual('@/lib/connectors/tool-resolver'),
       './tool-categories': loadRuntimeModule('src/app/api/agents/tools/router/tool-categories.ts', {}),
       './tool-routing-policy': loadRuntimeModule('src/app/api/agents/tools/router/tool-routing-policy.ts', {}),
       '@/lib/services/embeddings-service': {},

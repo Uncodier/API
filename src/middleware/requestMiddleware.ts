@@ -20,6 +20,7 @@ import {
 } from '@/lib/security/upstash-rest';
 
 const WEBHOOK_PATHS = new Set([
+  '/api/agent/message',
   '/api/agents/whatsapp',
   '/api/agents/gear/whatsapp/webhook',
   '/api/integrations/whatsapp/webhook',

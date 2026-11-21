@@ -40,18 +40,41 @@ export async function processAssistantTurn(
   context: AssistantContext,
   messages: any[],
 ): Promise<any> {
-  return withAssistantRouting(context.executionOptions.site_id, context.executionRouting,
-    () => {
+  const startedAt = Date.now();
+  let executorStartedAt: number | undefined;
+  let outcome = 'setup_error';
+  try {
+    const result = await withAssistantRouting(context.executionOptions.site_id, context.executionRouting, () => {
       const scope = context.recoveryScope;
       const identity = [scope?.userMessageLogId, scope?.generation,
         context.executionOptions.plan_id, context.executionOptions.step_id, context.instanceNodeId, messages];
       const digest = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
       return withCustomerOperation(`assistant-turn:${context.executionOptions.instance_id}:${digest}`,
-        () => processRoutedAssistantTurn(context, messages), { durableBoundary: true });
+        () => processRoutedAssistantTurn(context, messages, () => {
+          executorStartedAt = Date.now();
+          outcome = 'error';
+        }), { durableBoundary: true });
     });
+    // Never use provider strings, tool arguments, messages or error details as log fields.
+    if ('creditExhausted' in result) outcome = 'credit_exhausted';
+    else {
+      const hasText = typeof result.text === 'string' && Boolean(result.text.trim());
+      outcome = result.isDone && hasText ? 'completed'
+        : result.resumable === false ? 'not_resumable'
+        : result.steps?.at(-1)?.finishReason === 'length' ? 'output_limit'
+        : result.messages?.at(-1)?.role === 'tool' ? 'after_tool'
+        : hasText ? 'incomplete' : 'no_final_text';
+    }
+    return result;
+  } finally {
+    const end = Date.now();
+    const transition = executorStartedAt ?? end;
+    console.info('[AssistantTiming] turn', { setupMs: Math.max(0, transition - startedAt),
+      executorMs: Math.max(0, end - transition), outcome });
+  }
 }
 
-async function processRoutedAssistantTurn(context: AssistantContext, messages: any[]): Promise<any> {
+async function processRoutedAssistantTurn(context: AssistantContext, messages: any[], onExecutorStart: () => void) {
   const requirementHost = readRequirementAssistantHost(context);
   if (requirementHost) await requirementHost.assertActive();
   if (context.recoveryScope) await assertAssistantRecoveryActive(context.recoveryScope);
@@ -131,6 +154,8 @@ async function processRoutedAssistantTurn(context: AssistantContext, messages: a
         context.connectorIdHint,
         interactive && context.recoveryScope && typeof context.initialMessage === 'string'
           ? createHash('sha256').update(context.initialMessage).digest('hex') : undefined,
+        interactive ? context.leadBulkUserSession : undefined,
+        interactive ? context.catalogUserSession : undefined,
       );
   const trackedTools = context.toolExecutionTracker && !context.conversationRecoveryOnly
     ? instrumentWorkflowTools(availableTools, context.toolExecutionTracker)
@@ -184,13 +209,16 @@ async function processRoutedAssistantTurn(context: AssistantContext, messages: a
   }
 
   const hydratedMessages = await hydrateMessageImages(messages);
+  onExecutorStart();
   let result;
   try {
     result = await executeAssistantStep(hydratedMessages, context.instance, options);
   } catch (error) {
     // Carry billing as data across the durable boundary: exhausted retry wrappers
     // can otherwise discard the original error name/cause.
-    if (isInsufficientCreditsError(error)) return { creditExhausted: true, isDone: false, text: '', messages };
+    if (isInsufficientCreditsError(error)) {
+      return { creditExhausted: true, isDone: false, text: '', messages };
+    }
     throw error;
   }
 

@@ -54,6 +54,12 @@ describe("signed Voice identity callback with real executor and PostgREST serial
       const url = new URL(String(input));
       const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { "content-type": "application/json" } });
       if (url.pathname.endsWith("/agents")) {
+        expect(url.searchParams.get("site_id")).toBe(`eq.${SITE}`);
+        expect(url.searchParams.get("role")).toBe("eq.Customer Support");
+        expect(url.searchParams.get("or")).toBe("(configuration->>agentOrigin.is.null,configuration->>agentOrigin.neq.independent)");
+        expect(url.searchParams.get("order")).toBe("updated_at.desc");
+        expect(url.searchParams.get("limit")).toBe("1");
+        expect(url.searchParams.has("status")).toBe(false);
         return json({ configuration: { zavu: { tool_webhook_secret: "encrypted-test-secret" } } });
       }
       expect(url.pathname).toBe("/rest/v1/leads");

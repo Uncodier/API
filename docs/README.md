@@ -6,6 +6,8 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 ## Implementation plans
 
+- [Channel message admission](CHANNEL_MESSAGE_ADMISSION.md) — first Zavu adapter, neutral endpoint, callback compatibility and remaining provider migrations.
+
 - [Cloud deliverables and requirement execution environments](CLOUD_FILES.md) — implemented cloud tools, private versioning/Git, requirement filters, no-sandbox routing, authenticated downloads and rollout prerequisites.
 
 - [Assistant harness simplification plan — 2026-10-28](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/ASSISTANT_HARNESS_SIMPLIFICATION_PLAN_2026-10-28.md) — partially started locally: direct and plan-driven execution within `instance/assistant`, shared tools, broad steps and improvement cycles, workflow compatibility, requirement/70% fallback budgets, cloud files, on-demand environments and required Git evidence at work completion. Includes migration, acceptance criteria, pending decisions and verified baseline; not deployed functionality.

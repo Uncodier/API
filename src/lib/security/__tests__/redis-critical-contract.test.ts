@@ -22,7 +22,7 @@ describe('critical Redis failure contracts', () => {
     ['src/app/api/integrations/outstand/webhooks/route.ts', 'outstand'],
     ['src/app/api/integrations/stripe/webhook/route.ts', 'stripe'],
     ['src/app/api/integrations/whatsapp/webhook/post-handler.ts', 'meta-whatsapp'],
-    ['src/app/api/integrations/zavu/webhook/route.ts', 'zavu'],
+    ['src/lib/services/zavu/receive-webhook.ts', 'zavu'],
     [
       'src/app/api/agents/gear/whatsapp/webhook/twilio-webhook-auth.ts',
       'twilio-whatsapp-gear',

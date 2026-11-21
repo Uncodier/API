@@ -34,6 +34,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 
   // crm / growth
   leads: 'crm',
+  leads_bulk_operations: 'crm',
   sales: 'crm',
   deals: 'crm',
   sales_order: 'crm',

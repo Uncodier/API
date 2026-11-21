@@ -126,6 +126,15 @@ describe('durable Zavu message identity', () => {
     await expect(saveZavuSupportMessages({ ...input, assistantMessage: 'Different' })).rejects.toThrow('SCOPE_CONFLICT');
   });
 
+  it('cannot attribute a saved reply to a replacement agent or a different inbound message on retry', async () => {
+    const saved = await saveZavuSupportMessages(input);
+    await expect(saveZavuSupportMessages({ ...input, agentId: 'other-agent' })).rejects.toThrow('SCOPE_CONFLICT');
+    const reply = tables.messages.get(saved.assistantMessageId);
+    expect(reply.agent_id).toBe(input.agentId);
+    reply.custom_data.reply_to_message_id = 'another-inbound';
+    await expect(saveZavuSupportMessages(input)).rejects.toThrow('SCOPE_CONFLICT');
+  });
+
   it('rejects a conversation from another site', async () => {
     tables.conversations.set('other', { id: 'other', site_id: 'other-site' });
     await expect(saveZavuSupportMessages({ ...input, conversationId: 'other' })).rejects.toThrow('SCOPE_CONFLICT');

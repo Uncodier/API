@@ -1,4 +1,4 @@
-import { validateCatalogToolIds } from '../composio-tool-metadata';
+import { listSelectedCatalogMetadata, validateCatalogToolIds } from '../composio-tool-metadata';
 import { createComposioClient } from '../composio-transport';
 import { ConnectorError } from '../types';
 import { jsonResponse, secret, toolFixture } from './composio-fixtures';
@@ -54,4 +54,14 @@ it('shares the single retry across batches, never retries denied or rate-limited
     await expect(validateCatalogToolIds({ request }, 'gmail', ids)).rejects.toMatchObject({ code });
     expect(request).toHaveBeenCalledTimes(1);
   }
+});
+
+
+test('selected catalog discovery checks exact parent and returns only current provider metadata',async()=>{
+  const request=jest.fn().mockResolvedValueOnce({items:[row],next_cursor:null,total_items:1});
+  expect(await listSelectedCatalogMetadata({request},'gmail',[row.slug,'MAIL_REMOVED'])).toMatchObject({items:[{slug:row.slug}],missing:true});
+  const url=new URL(request.mock.calls[0][0],'https://example.test');
+  expect(url.searchParams.get('tool_slugs')).toBe([row.slug,'MAIL_REMOVED'].join(','));
+  request.mockResolvedValueOnce({items:[{...row,toolkit:{slug:'other'}}],total_items:1});
+  await expect(listSelectedCatalogMetadata({request},'gmail',[row.slug])).rejects.toMatchObject({code:'PROVIDER_INVALID_RESPONSE'});
 });

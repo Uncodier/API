@@ -18,6 +18,7 @@ jest.mock('@/lib/services/channels/outbound-media', () => ({ validateOutboundMed
 
 import { BusinessWorkflowService } from '../business-workflow-service';
 import { conversationIngressId, conversationMessageResult } from '../conversation-ingress';
+import { channelMessageWorkflowId } from '../../channels/message-identity';
 
 const hash = (scope: string) => createHash('sha256').update(scope).digest('hex');
 const supportArgs = { site_id: 'site', conversationId: 'conversation', message: 'Hello',
@@ -70,6 +71,30 @@ describe('durable conversation ingress API contract', () => {
       await service.customerSupportMessage(supportArgs, options));
     expect(mockSignalWithStart).toHaveBeenCalledTimes(2);
     expect(mockSignalWithStart.mock.calls[1][1].signalArgs[0].workflowId).toBe('stable-message');
+  });
+
+  it('enqueues a new channel event but recovers a known child after coordinator rollover', async () => {
+    const service = BusinessWorkflowService.getInstance();
+    const options = { workflowId: channelMessageWorkflowId('zavu', 'site', 'telegram', 'connection', 'event'), async: false };
+    mockDescribe.mockRejectedValueOnce(new WorkflowNotFoundError('New event', options.workflowId, undefined));
+    expect((await service.customerSupportMessage(supportArgs, options)).data).toEqual({ reply: 'child' });
+    const parent = mockSignalWithStart.mock.calls[0][1].workflowId;
+    mockDescribe.mockResolvedValueOnce({ type: 'customerSupportMessageWorkflow', parentExecution: { workflowId: parent } });
+    expect((await service.customerSupportMessage(supportArgs, options)).data).toEqual({ reply: 'child' });
+    expect(mockSignalWithStart).toHaveBeenCalledTimes(1);
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('does not signal or recover an unconfirmed channel message identity', async () => {
+    const options = { workflowId: channelMessageWorkflowId('zavu', 'site', 'email', 'connection', 'event'), async: false };
+    mockDescribe.mockResolvedValueOnce({ type: 'customerSupportMessageWorkflow', parentExecution: { workflowId: 'another-ingress' } });
+    mockDescribe.mockRejectedValueOnce(new Error('Unavailable'));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect((await BusinessWorkflowService.getInstance().customerSupportMessage(supportArgs, options)).success).toBe(false);
+    }
+    expect(mockSignalWithStart).not.toHaveBeenCalled();
+    expect(mockResult).not.toHaveBeenCalled();
   });
 
   it.each(['support', 'whatsapp'])('sync %s waits for admission then returns the run-bound child result', async (kind) => {

@@ -3,17 +3,19 @@ import { resolveConnectorAction, listUsableConnectors, loadConnectorCredential }
 import { describeConnectorTool, executeConnectorTool } from './composio-sessions';
 import { ConnectorError, type AuthorizedConnector, type ConnectorContext } from './types';
 import { createActionRanker } from './action-search';
-import { connectorToolRef, getReviewedTool, parseConnectorToolRef, policyReviewedTools, type ReviewedConnectorTool } from './reviewed-tools';
+import { connectorToolRef, getReviewedTool, parseConnectorToolRef, policyReviewedTools, REVIEWED_CONNECTOR_TOOLS, type ReviewedConnectorTool } from './reviewed-tools';
 import { validateConnectorInput } from './schema-validation';
 import { reviewedInputSchema, assertReviewedInputLimits } from './reviewed-tool-schema';
 import { loadToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
 import type { ConnectorContextResolver } from './host-context';
-import { createHash } from 'node:crypto';
+import { catalogDefinition, catalogGrant, catalogInstance, catalogScreens, instanceCatalogPage } from './instance-catalog-discovery';
 
-export type ConnectorFilters = { query?: string; domain?: string; category?: string; connector_id?: string; cursor?: string };
+import { privateResultBinding, checkPrivateDestination, deliverPrivateResult } from './private-result-delivery';
+
+export type ConnectorFilters = { query?: string; catalog_query?: string; domain?: string; category?: string; connector_id?: string; cursor?: string };
 export type ConnectorCandidate = {
   name: string; description: string; category: string; domains: string[];
-  connector_id: string; toolkit: string; availability: 'describe_required'; request_only?: true;
+  connector_id: string; toolkit: string; availability: 'describe_required' | 'manual_only'; request_only?: true;
 };
 const binding = (value: AuthorizedConnector) => JSON.stringify([value.connector, value.provider, value.policy, value.requestOnly]);
 const actor = (context: ConnectorContext) => JSON.stringify(context);
@@ -27,13 +29,21 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
     if (!['assistant', 'direct'].includes(context.host) || (context.host === 'assistant' && !context.agentId)) {
       throw new ConnectorError('HOST_DISABLED', 'This connector host has no supported authority.', 403);
     }
-    const authorized = await resolveConnectorAction(context, connectorId, toolSlug, !!context.instanceId && !!context.requestId);
-    const tool = getReviewedTool(toolSlug, authorized.connector.toolkit_slug);
-    if (!screenAllowed(tool, await loadToolScreenAccess(context))) {
+    const reviewed = REVIEWED_CONNECTOR_TOOLS.find(t => t.slug === toolSlug);
+    const mayRequest = !!context.instanceId && !!context.requestId;
+    const catalogRead = !reviewed && catalogInstance(context);
+    const authorized = catalogRead ? await resolveConnectorAction(context, connectorId, toolSlug, false, true)
+      : await resolveConnectorAction(context, connectorId, toolSlug, mayRequest);
+    const toolkit = authorized.connector.toolkit_slug;
+    // Never reinterpret an incompatible curated action as an ordinary catalog read.
+    const dynamic = catalogRead && catalogGrant(authorized, toolSlug);
+    const tool = dynamic ? catalogDefinition(toolSlug, toolkit) : getReviewedTool(toolSlug, toolkit);
+    const access = await loadToolScreenAccess(context);
+    if (!screenAllowed(tool, access) || (dynamic && !catalogScreens(access))) {
       throw new ConnectorError('ACCESS_DENIED', 'Connector business-screen access denied.', 403);
     }
-    assertScopes(authorized, tool);
-    return { context, authorized, tool };
+    if (!dynamic) assertScopes(authorized, tool);
+    return { context, authorized, tool, dynamic };
   }
 
   return {
@@ -43,7 +53,7 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
         throw new ConnectorError('HOST_DISABLED', 'This connector host has no supported authority.', 403);
       }
       const access = await loadToolScreenAccess(context);
-      const permitted = await listUsableConnectors(context, !!context.instanceId && !!context.requestId);
+      const permitted = await listUsableConnectors(context, !!context.instanceId && !!context.requestId, catalogInstance(context));
       const eligible: { tool: ReviewedConnectorTool; id: string; requestOnly?: true }[] = [];
       if (filters.connector_id && !/^[0-9a-f-]{36}$/i.test(filters.connector_id)) throw new ConnectorError('INVALID_FILTER', 'Invalid connector filter.', 400);
       for (const authorized of permitted) {
@@ -60,38 +70,29 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
         .sort((a, b) => scores.get(b.tool.slug)! - scores.get(a.tool.slug)! || a.id.localeCompare(b.id) || a.tool.slug.localeCompare(b.tool.slug))
         .map(({ tool, id, requestOnly }) => ({ ...(requestOnly && {request_only: true as const}), name: connectorToolRef(id, tool.slug), description: tool.description,
           category: tool.category, domains: tool.domains, connector_id: id, toolkit: tool.toolkit, availability: 'describe_required' }));
-      const digest = createHash('sha256').update(JSON.stringify([actor(context), filters.query, filters.domain,
-        filters.category, filters.connector_id, candidates.map(item => [item.name, item.request_only])])).digest('hex').slice(0, 24);
-      let offset = 0;
-      if (filters.cursor) {
-        const match = /^([a-f0-9]{24}):(\d{1,5})$/.exec(filters.cursor);
-        if (!match || match[1] !== digest || Number(match[2]) > candidates.length) throw new ConnectorError('STALE_CURSOR', 'Connector inventory changed. Search again without the cursor.', 409);
-        offset = Number(match[2]);
-      }
-      const more = offset + 5 < candidates.length;
-      return { tools: candidates.slice(offset, offset + 5), truncated: more,
-        next_cursor: more ? `${digest}:${offset + 5}` : null };
+      return instanceCatalogPage(context, filters, candidates, permitted, access);
     },
 
     async describe(name: string) {
-      const { context, authorized, tool } = await authorize(name);
+      const { context, authorized, tool, dynamic } = await authorize(name);
       const credential = await loadConnectorCredential(context.siteId);
       if (credential.revision !== authorized.provider.credential_revision) {
         throw new ConnectorError('STALE_CREDENTIAL', 'Refresh the provider credential binding.', 409);
       }
       const descriptor = await describeConnectorTool({ credential, connector: authorized.connector,
-        provider: authorized.provider, toolSlug: tool.slug });
+        provider: authorized.provider, ...(dynamic && { catalogRead: true }), toolSlug: tool.slug });
       if (descriptor.slug !== tool.slug || descriptor.toolkitSlug !== tool.toolkit || !descriptor.toolkitVersion || !descriptor.schemaHash) {
         throw new ConnectorError('SCHEMA_CHANGED', 'The connector tool identity could not be verified.', 409);
       }
-      const modelSchema = reviewedInputSchema(tool.slug, descriptor.inputSchema);
+      const modelSchema = dynamic ? descriptor.catalogModelSchema : reviewedInputSchema(tool.slug, descriptor.inputSchema);
+      if (!modelSchema) throw new ConnectorError('SCHEMA_UNSUPPORTED', 'No safe input contract for this action.', 409);
       if (descriptor.scopeRequirements !== null) throw new ConnectorError('SCOPES_UNSUPPORTED', 'Structured OAuth requirements need review.', 409);
-      assertScopes(authorized, tool, descriptor.scopes);
+      if (!dynamic) assertScopes(authorized, tool, descriptor.scopes);
       const current = await authorize(name);
       if (actor(current.context) !== actor(context) || binding(current.authorized) !== binding(authorized)) {
         throw new ConnectorError('ACCESS_CHANGED', 'Connector authority changed; describe the tool again.', 409);
       }
-      return { name, description: tool.description, category: tool.category, domains: tool.domains,
+      return { name, description: dynamic ? descriptor.description : tool.description, category: tool.category, domains: tool.domains,
         connector_id: authorized.connector.id, toolkit: tool.toolkit, version: descriptor.toolkitVersion,
         schema_hash: descriptor.schemaHash, parameters: { type: 'object', additionalProperties: false,
           required: ['version', 'schema_hash', 'arguments'], properties: {
@@ -107,7 +108,7 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
         const serialized = JSON.stringify(input);
         if (!serialized || serialized.length > 32000) throw new ConnectorError('INVALID_TOOL_ARGUMENTS', 'Arguments must be bounded JSON.', 400);
         input = JSON.parse(serialized);
-        const { context, authorized, tool } = await authorize(name);
+        const { context, authorized, tool, dynamic } = await authorize(name);
         const envelope = input as { version?: unknown; schema_hash?: unknown; arguments?: unknown } | null;
         if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) ||
           Object.keys(envelope).some(key => !['version', 'schema_hash', 'arguments'].includes(key)) ||
@@ -118,43 +119,62 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
         }
         const credential = await loadConnectorCredential(context.siteId);
         if (credential.revision !== authorized.provider.credential_revision) throw new ConnectorError('STALE_CREDENTIAL', 'Provider credential changed.', 409);
-        const descriptor = await describeConnectorTool({ credential, connector: authorized.connector,
-          provider: authorized.provider, toolSlug: tool.slug, toolkitVersion: envelope.version });
-        if (descriptor.schemaHash !== envelope.schema_hash || descriptor.toolkitVersion !== envelope.version ||
-          descriptor.slug !== tool.slug || descriptor.toolkitSlug !== tool.toolkit) {
-          throw new ConnectorError('SCHEMA_CHANGED', 'The connector schema changed; describe this tool again.', 409);
+        if (!envelope.arguments || typeof envelope.arguments !== 'object' || Array.isArray(envelope.arguments)) {
+          throw new ConnectorError('INVALID_TOOL_ARGUMENTS', 'Tool arguments must be an object.', 400);
         }
-        assertScopes(authorized, tool, descriptor.scopes);
-        if (descriptor.scopeRequirements !== null) throw new ConnectorError('SCOPES_UNSUPPORTED', 'Structured OAuth requirements need review.', 409);
-        validateConnectorInput(reviewedInputSchema(tool.slug, descriptor.inputSchema), envelope.arguments);
-        assertReviewedInputLimits(tool.slug, envelope.arguments);
-        if (authorized.requestOnly === true) {
-          const current = await authorize(name);
-          if (actor(current.context) !== actor(context) || binding(current.authorized) !== binding(authorized)) {
-            throw new ConnectorError('ACCESS_CHANGED', 'Connector authority changed before proposal.', 409);
+        const args = envelope.arguments as Record<string, unknown>;
+        // The catalog adapter verifies and projects its pinned descriptor with live grants immediately
+        // before dispatch. Do not double-fetch that metadata. Curated request-only proposals still
+        // need their described contract here, before any approval request can be written.
+        if (!dynamic) {
+          const descriptor = await describeConnectorTool({ credential, connector: authorized.connector,
+            provider: authorized.provider, toolSlug: tool.slug, toolkitVersion: envelope.version });
+          if (descriptor.schemaHash !== envelope.schema_hash || descriptor.toolkitVersion !== envelope.version ||
+            descriptor.slug !== tool.slug || descriptor.toolkitSlug !== tool.toolkit) {
+            throw new ConnectorError('SCHEMA_CHANGED', 'The connector schema changed; describe this tool again.', 409);
           }
-          const { proposeInteractiveConnectorAction } = await import('./approval-proposals');
-          const proposal = await proposeInteractiveConnectorAction(context, authorized, descriptor, envelope.arguments);
-          return { success: true, ...proposal };
+          assertScopes(authorized, tool, descriptor.scopes);
+          if (descriptor.scopeRequirements !== null) throw new ConnectorError('SCOPES_UNSUPPORTED', 'Structured OAuth requirements need review.', 409);
+          validateConnectorInput(reviewedInputSchema(tool.slug, descriptor.inputSchema), envelope.arguments);
+          assertReviewedInputLimits(tool.slug, envelope.arguments);
+          if (authorized.requestOnly === true) {
+            const current = await authorize(name);
+            if (actor(current.context) !== actor(context) || binding(current.authorized) !== binding(authorized)) {
+              throw new ConnectorError('ACCESS_CHANGED', 'Connector authority changed before proposal.', 409);
+            }
+            const { proposeInteractiveConnectorAction } = await import('./approval-proposals');
+            const proposal = await proposeInteractiveConnectorAction(context, authorized, descriptor, envelope.arguments);
+            return { success: true, ...proposal };
+          }
         }
+        const destination = context.host === 'assistant' ? privateResultBinding(context, authorized, tool.slug, dynamic) : null;
         const result = await executeConnectorTool({ credential, connector: authorized.connector, provider: authorized.provider,
-          instanceResponse: context.host === 'assistant',
-          toolSlug: tool.slug, input: envelope.arguments, allowedTools: [tool.slug], toolkitVersion: descriptor.toolkitVersion,
-          schemaHash: descriptor.schemaHash, requiredScopes: tool.requiredScopes, beforeDispatch: async () => {
+          ...(dynamic && { catalogRead: true }),
+          toolSlug: tool.slug, input: args, allowedTools: [tool.slug], toolkitVersion: envelope.version,
+          schemaHash: envelope.schema_hash, requiredScopes: tool.requiredScopes, beforeDispatch: async () => {
             const current = await authorize(name);
             if (actor(current.context) !== actor(context) || binding(current.authorized) !== binding(authorized)) {
               throw new ConnectorError('ACCESS_CHANGED', 'Connector authority changed before dispatch.', 409);
             }
+            if (destination) await checkPrivateDestination(destination);
             dispatched = true;
           } });
         const after = await authorize(name);
         if (actor(after.context) !== actor(context) || binding(after.authorized) !== binding(authorized)) {
           throw new ConnectorError('ACCESS_CHANGED', 'Connector result is no longer available.', 403);
         }
+        if (destination) return await deliverPrivateResult(destination, result, credential.apiKey, envelope.version, envelope.schema_hash);
         return { success: true, name, result, receipt: { connector_id: authorized.connector.id,
-          tool: tool.slug, version: descriptor.toolkitVersion, effect: 'read', status: 'completed' } };
+          tool: tool.slug, version: envelope.version, effect: 'read', status: 'completed' } };
       } catch (error) {
-        if (!dispatched && error && typeof error === 'object') Object.assign(error, { executed: false, effectStarted: false });
+        if (error && typeof error === 'object') {
+          if (!dispatched) Object.assign(error, { executed: false, effectStarted: false });
+          else {
+            // A postflight authorization sub-call may itself fail before it starts. That cannot
+            // undo the preceding provider dispatch or prove its outcome to the caller.
+            Reflect.deleteProperty(error, 'executed'); Reflect.deleteProperty(error, 'effectStarted');
+          }
+        }
         throw error;
       }
     },

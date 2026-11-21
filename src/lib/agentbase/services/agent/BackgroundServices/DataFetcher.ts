@@ -7,6 +7,7 @@ import { AgentCacheService } from '../AgentCacheService';
 import { DatabaseAdapter } from '../../../adapters/DatabaseAdapter';
 import { CapabilitiesExtractor } from './CapabilitiesExtractor';
 import { CommandCache } from '../../command/CommandCache';
+import { getCampaignPromptProjection } from '@/lib/services/campaign-prompt-cache';
 
 export class DataFetcher {
   private static agentCache = new AgentCacheService(); // Fresh instance for Edge Functions
@@ -600,40 +601,24 @@ export class DataFetcher {
         return [];
       }
 
-      console.log(`🔍 [DataFetcher] Obteniendo campañas activas para el sitio: ${siteId}`);
-      
-      // Importamos dinámicamente el supabaseAdmin para hacer la consulta
-      const { supabaseAdmin } = await import('../../../../database/supabase-client');
-      
-      const { data: campaigns, error } = await supabaseAdmin
-        .from('campaigns')
-        .select('title, description')
-        .eq('site_id', siteId)
-        .eq('status', 'active')
-        .order('created_at', { ascending: false });
+      return await getCampaignPromptProjection(siteId, async () => {
+        const { supabaseAdmin } = await import('../../../../database/supabase-client');
+        const { data: campaigns, error } = await supabaseAdmin
+          .from('campaigns')
+          .select('title, description')
+          .eq('site_id', siteId)
+          .eq('status', 'active')
+          .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error(`❌ [DataFetcher] Error al consultar campañas activas:`, error);
-        return [];
-      }
-
-      if (!campaigns || campaigns.length === 0) {
-        console.log(`⚠️ [DataFetcher] No se encontraron campañas activas para el sitio: ${siteId}`);
-        return [];
-      }
-
-      // Filtrar campañas que tengan al menos un título válido
-      const filteredCampaigns = campaigns
-        .filter((campaign: any) => campaign.title && campaign.title.trim() !== '')
-        .map((campaign: any) => ({
-          title: campaign.title.trim(),
-          ...(campaign.description && campaign.description.trim() !== '' 
-            ? { description: campaign.description.trim() } 
-            : {})
-        }));
-
-      console.log(`✅ [DataFetcher] Encontradas ${filteredCampaigns.length} campañas activas con título válido`);
-      return filteredCampaigns;
+        if (error) throw error;
+        if (!Array.isArray(campaigns)) throw new Error('Missing campaign query result');
+        return campaigns
+          .filter(campaign => campaign.title && campaign.title.trim() !== '')
+          .map(campaign => ({
+            title: campaign.title.trim(),
+            ...(campaign.description?.trim() ? { description: campaign.description.trim() } : {}),
+          }));
+      });
     } catch (error) {
       console.error(`❌ [DataFetcher] Error al obtener campañas activas:`, error);
       return [];

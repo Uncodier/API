@@ -151,7 +151,7 @@ describe('sendChannelMessage Outstand reconciliation', () => {
       channel: 'instagram', to: 'user', site_id: 'site', message: '', message_id: 'saved', conversation_id: 'conversation',
       message_type: 'image', media_url: 'https://media.example.test/photo.png',
     }) }));
-    expect(await response.json()).toMatchObject({ success: true, status: 'sent', delivered: true, messageId: 'zavu-provider' });
+    expect(await response.json()).toMatchObject({ success: true, status: 'sent', delivered: false, messageId: 'zavu-provider' });
     expect(bindLocalOutstandMessage).not.toHaveBeenCalled();
     expect(supabaseAdmin.from).not.toHaveBeenCalled();
   });

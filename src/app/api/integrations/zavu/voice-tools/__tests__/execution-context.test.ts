@@ -46,7 +46,7 @@ describe('signed voice context retrieval without provider contact metadata', () 
         error: null,
       });
       const q: any = {
-        select: () => q, order: () => q, limit: () => q, in: () => q, is: () => q,
+        select: () => q, or: () => q, order: () => q, limit: () => q, in: () => q, is: () => q,
         eq: (key: string, value: unknown) => { read.filters[key] = value; return q; },
         maybeSingle: async () => result(),
         then: (resolve: any) => Promise.resolve(result()).then(resolve),

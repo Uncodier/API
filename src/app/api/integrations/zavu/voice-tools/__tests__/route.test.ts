@@ -55,8 +55,8 @@ describe("Zavu Voice tools webhook", () => {
         select: () => ({
           eq: () => ({
             eq: () => ({
-              order: () => ({
-                limit: () => ({ maybeSingle: mockMaybeSingle }),
+              or: () => ({
+                order: () => ({ limit: () => ({ maybeSingle: mockMaybeSingle }) }),
               }),
             }),
           }),

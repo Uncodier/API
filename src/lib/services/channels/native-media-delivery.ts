@@ -19,6 +19,12 @@ export async function dispatchNativeMedia<T>(input: {
     throw new OutboundMediaError('Saved media delivery scope is unavailable');
   }
   const previous = saved.custom_data || {};
+  // A reply can acquire inbound routing metadata after provider selection. A
+  // generic claimant must never adopt it (including via a different adapter).
+  if (previous.pinned_text_delivery || (saved.role === 'assistant' && previous.source !== 'comment'
+    && 'origin_message_id' in previous && ('reply_to_message_id' in previous || 'connection_id' in previous))) {
+    throw new OutboundMediaError('Native media requires the original inbound channel binding');
+  }
   if ((input.media_url !== undefined && (input.media_url !== previous.media_url
     || input.message_type !== previous.message_type || input.mime_type !== previous.mime_type))
     || (input.media_urls?.length && (input.media_urls.length !== 1 || input.media_urls[0] !== previous.media_url))) {

@@ -1,0 +1,83 @@
+import { randomBytes, randomUUID } from 'node:crypto';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { leadBulkOperationsTool } from '../assistantProtocol';
+
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: jest.fn() } }));
+
+const host = { siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(), actionId: randomUUID() };
+const leadId = randomUUID(), otherLeadId = randomUUID(), previewId = randomUUID();
+const execute = (args: unknown) => leadBulkOperationsTool(host).execute(args);
+const rpc = jest.mocked(supabaseAdmin.rpc);
+const change = { action: 'change_status', lead_ids: [leadId], status: 'qualified' };
+const apply = { ...change, dry_run: false, expected_count: 1, preview_id: previewId };
+
+function response(data: unknown, error: unknown = null) {
+  (rpc as jest.Mock).mockReturnValue({ abortSignal: jest.fn(async () => ({ data, error })) });
+}
+
+beforeEach(() => jest.resetAllMocks());
+
+it.each([
+  { action: 'update', lead_ids: [leadId] },
+  { action: 'assign_to_me', lead_ids: [] },
+  { action: 'assign_to_me', lead_ids: ['not a UUID'] },
+  { action: 'assign_to_me', lead_ids: [leadId, leadId.toUpperCase()] },
+  { action: 'assign_to_me', lead_ids: Array.from({ length: 51 }, () => randomUUID()) },
+  { action: 'assign_to_me', lead_ids: [leadId], assignee_id: host.userId },
+  { ...change, site_id: randomUUID() },
+  { ...change, status: 'unsupported' },
+  { ...change, status: undefined },
+  { ...apply, preview_id: undefined },
+  { ...apply, expected_count: undefined },
+  { ...apply, dry_run: true },
+  { ...apply, action: 'delete', status: undefined, confirmation_message: 'not a chat message' },
+  { action: 'create', leads: [{ name: 'No contact' }] },
+  { action: 'create', leads: [{ name: 'Wrong actor', email: 'test@example.test', user_id: host.userId }] },
+])('rejects invalid and forged arguments before the RPC (%j)', async args => {
+  expect(await execute(args)).toMatchObject({ success: false, executed: false });
+  expect(rpc).not.toHaveBeenCalled();
+});
+
+it('pegs the request to the host scope and canonicalizes IDs without forwarding transport metadata', async () => {
+  response({ success: true, dry_run: true, matched_count: 2, affected_count: 0, missing_lead_ids: [], preview_id: previewId });
+  expect(await execute({ ...change, lead_ids: [otherLeadId.toUpperCase(), leadId], thought_process: 'Preview only' }))
+    .toMatchObject({ preview_id: previewId, affected_count: 0 });
+  expect(rpc).toHaveBeenCalledWith('assistant_leads_bulk', {
+    p_site_id: host.siteId, p_user_id: host.userId, p_instance_id: host.instanceId, p_action_id: host.actionId,
+    p_payload: { lead_ids: [leadId, otherLeadId].sort(), status: 'qualified' }, p_operation: 'change_status',
+    p_preview_id: null, p_expected_count: null,
+  });
+});
+
+it('validates a write receipt and keeps the same RPC input when replaying it', async () => {
+  const receipt = { success: true, dry_run: false, preview_id: previewId, affected_count: 1, affected_lead_ids: [leadId] };
+  response({ ...receipt, replayed: false });
+  expect(await execute(apply)).toEqual({ ...receipt, replayed: false });
+  response({ ...receipt, replayed: true });
+  expect(await execute(apply)).toEqual({ ...receipt, replayed: true });
+  expect(rpc.mock.calls[0]).toEqual(rpc.mock.calls[1]);
+  response({ ...receipt, preview_id: randomUUID(), replayed: true });
+  expect(await execute(apply)).toMatchObject({ success: false, code: 'LEAD_BULK_OUTCOME_UNKNOWN', preview_id: previewId });
+});
+
+it.each(['access_denied', 'invalid_preview', 'selection_changed', 'confirmation_required'])('reports %s without raw details', async code => {
+  const detail = randomBytes(12).toString('hex');
+  response({ success: false, code, detail });
+  const result = await execute(apply);
+  expect(result).toMatchObject({ success: false, executed: false, code: `LEAD_BULK_${code.toUpperCase()}` });
+  expect(JSON.stringify(result)).not.toContain(detail);
+});
+
+it.each([
+  ['23503', 'LEAD_BULK_WRITE_REJECTED'],
+  ['PGRST202', 'LEAD_BULK_UNAVAILABLE'],
+  ['PGRST000', 'LEAD_BULK_OUTCOME_UNKNOWN'],
+])('reports database error %s without retrying or leaking the response', async (code, expected) => {
+  const detail = randomBytes(12).toString('hex');
+  response(null, { code, message: detail });
+  const result = await execute(apply);
+  expect(result).toMatchObject({ success: false, code: expected });
+  if (expected === 'LEAD_BULK_OUTCOME_UNKNOWN') expect(result).toMatchObject({ preview_id: previewId });
+  expect(JSON.stringify(result)).not.toContain(detail);
+  expect(rpc).toHaveBeenCalledTimes(1);
+});

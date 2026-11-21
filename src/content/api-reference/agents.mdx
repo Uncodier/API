@@ -32,6 +32,10 @@ curl -X POST "https://backend.makinari.com/api/agents/cmo/message" \
 
 Other role prefixes follow the same pattern: `/api/agents/sales/...`, `/api/agents/customerSupport/message`, `/api/agents/email/reply`, `/api/agents/copywriter/content-editor`.
 
+### Inbound channel messages
+
+`POST /api/agent/message` is for admission, not direct chat. Its first supported input is an original Zavu inbound message envelope with its `X-Zavu-Signature`. Do not send a site API key or choose an agent in the body. Keep the existing Zavu webhook registered for lifecycle and delivery events; its inbound messages already use the same admission path. The chat widget keeps its workflow and status URLs.
+
 ## Tools (preferred for CRUD)
 
 Do not guess `GET /list` paths. CRM and marketing use **POST + action**:

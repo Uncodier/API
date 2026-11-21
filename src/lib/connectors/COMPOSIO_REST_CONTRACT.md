@@ -24,6 +24,13 @@ attempted on incomplete or failed lookup. Saving a catalogue-only action does
 not make it available to runtime search, describe or execution. These contracts
 were verified with offline transport tests, not live project credentials.
 
+Both tool listings accept a bounded `action` filter and expose only normalized
+`action_types`, derived from the four [Composio hints](https://docs.composio.dev/docs/governance/tool-hints).
+Known filters use the documented provider `tags` filter before pagination;
+`unclassified` uses a bounded metadata scan because there is no negative tag
+filter. A timeout or scan cap returns an error instead of a partial count.
+Provider hints never change reviewed-tool membership, scopes, or approval policy.
+
 Detail follow-up: Google Calendar returns `{slug: "scheduling-&-booking", name}`
 where the listing uses `id`. Both category identifier fields now share the same
 bounded validation; toolkit slugs remain stricter. Live Google Calendar detail

@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/integrations/zavu/webhook/route";
 import { reconcileTemplateDeliveryEvent } from '@/lib/services/zavu/template-delivery-events';
+import { reconcilePinnedDeliveryEvent } from '@/lib/services/zavu/pinned-delivery-events';
+jest.mock('@/lib/services/zavu/pinned-delivery-events', () => ({ reconcilePinnedDeliveryEvent: jest.fn() }));
 import { reconcileAudioDeliveryEvent } from '@/lib/services/zavu/audio-delivery-events';
 jest.mock('@/lib/services/zavu/audio-delivery-events', () => ({ reconcileAudioDeliveryEvent: jest.fn() }));
 jest.mock('@/lib/services/zavu/template-delivery-events', () => ({ reconcileTemplateDeliveryEvent: jest.fn() }));
@@ -32,6 +34,7 @@ jest.mock("@/lib/utils/token-decryption", () => ({
 
 jest.mock("@/lib/services/provider-webhook-claims", () => ({
   claimProviderWebhookEvent: jest.fn(),
+  claimZavuInboundWebhook: jest.fn(),
   finishProviderWebhookEvent: jest.fn(),
 }));
 
@@ -53,6 +56,11 @@ afterAll(() => {
 describe("Zavu Webhook Dispatch", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(webhookHandlers.findSettingsForSender).mockResolvedValue([{ site_id: 'site', channels: {
+      connections: [{ id: 'telegram', type: 'telegram', zavu_sender_id: 'snd_123' }],
+    } }]);
+    jest.mocked(webhookClaims.claimZavuInboundWebhook).mockResolvedValue({ state: 'claimed',
+      token: 'claim-token', expiresAt: '2026-09-20T08:00:00.000Z', reconcileOnly: false });
     (webhookClaims.claimProviderWebhookEvent as jest.Mock).mockResolvedValue({
       state: "claimed",
       token: "claim-token",
@@ -96,7 +104,8 @@ describe("Zavu Webhook Dispatch", () => {
     expect(res.status).toBe(200);
     expect(webhookHandlers.handleInboundMessage).toHaveBeenCalledTimes(1);
     expect(webhookHandlers.handleInboundMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "message.inbound" })
+      expect.objectContaining({ type: "message.inbound" }), undefined,
+      { binding: { siteId: 'site', channel: 'telegram', connectionId: 'telegram', senderId: 'snd_123' }, reconcileOnly: false },
     );
     expect(webhookClaims.finishProviderWebhookEvent).toHaveBeenCalledWith(
       "zavu",
@@ -216,6 +225,7 @@ describe("Zavu Webhook Dispatch", () => {
 
     expect(res.status).toBe(200);
     expect(webhookHandlers.handleInboundMessage).not.toHaveBeenCalled();
+    expect(reconcilePinnedDeliveryEvent).toHaveBeenCalledWith(payload, undefined, undefined);
     expect(reconcileTemplateDeliveryEvent).toHaveBeenCalledWith(payload);
     expect(reconcileAudioDeliveryEvent).toHaveBeenCalledWith(payload);
   });
@@ -234,6 +244,7 @@ describe("Zavu Webhook Dispatch", () => {
       data: { source: 'whatsapp_business_app', channel: 'whatsapp', direction: 'outbound', messageId: 'provider' } };
     expect((await POST(createRequest(payload))).status).toBe(200);
     expect(handleWhatsAppAppEcho).toHaveBeenCalledWith(payload);
+    expect(reconcilePinnedDeliveryEvent).not.toHaveBeenCalled();
     expect(reconcileTemplateDeliveryEvent).not.toHaveBeenCalled();
     expect(reconcileAudioDeliveryEvent).not.toHaveBeenCalled();
     expect(webhookHandlers.handleInboundMessage).not.toHaveBeenCalled();
@@ -283,7 +294,7 @@ describe("Zavu Webhook Dispatch", () => {
       "evt_failed",
       "claim-token",
       "failed",
-      "database unavailable",
+      "Webhook processing did not complete",
     );
   });
 });

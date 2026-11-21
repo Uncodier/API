@@ -22,6 +22,7 @@ import { requirementsTool } from '@/app/api/agents/tools/requirements/assistantP
 import type { RequirementCommandSource } from '@/lib/services/requirement-command';
 import { assertStandaloneCommandPlan } from './command-plan-guard';
 import { leadsTool } from '@/app/api/agents/tools/leads/assistantProtocol';
+import { leadBulkOperationsTool } from '@/app/api/agents/tools/leads_bulk_operations/assistantProtocol';
 import { catalogCommerceTool } from '@/app/api/agents/tools/catalog_commerce/assistantProtocol';
 import { reservationSchedulesTool } from '@/app/api/agents/tools/reservation_schedules/assistantProtocol';
 import { calendarBlocksTool } from '@/app/api/agents/tools/calendar_blocks/assistantProtocol';
@@ -322,10 +323,18 @@ export async function getInstanceAssistantTools(
   connectorAgentId?: string,
   connectorIdHint?: string,
   sourceDigest?: string,
+  leadBulkUserSession?: true,
+  catalogUserSession?: true,
 ) {
-  const connectorContext = assistantConnectorContext({ siteId, userId, instanceId, host: connectorHost, agentId: connectorAgentId, requestId: commandSource?.actionId, sourceDigest, connectorIdHint });
-  const instanceTools = [...customTools.filter(tool => tool?.name !== 'use_composio_tools'),
-    composioActionTool(connectorContext)];
+  const connectorContext = assistantConnectorContext({ siteId, userId, instanceId, host: connectorHost, agentId: connectorAgentId, requestId: commandSource?.actionId, sourceDigest, connectorIdHint, ...(catalogUserSession === true && connectorHost === 'assistant' && { catalogUserSession: true as const }) });
+  const instanceTools = [
+    ...customTools.filter(tool => !['use_composio_tools', 'leads_bulk_operations'].includes(tool?.name)),
+    composioActionTool(connectorContext),
+    // Bulk CRM writes need a verified interactive action, not an actor supplied by a background job.
+    ...(leadBulkUserSession === true && connectorHost === 'assistant' && commandSource && commandSource.siteId === siteId
+      && commandSource.userId === userId && commandSource.instanceId === instanceId
+      ? [leadBulkOperationsTool(commandSource)] : []),
+  ];
 
   return getAssistantTools(
     siteId,

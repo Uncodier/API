@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { invalidateCampaignPromptProjection } from '@/lib/services/campaign-prompt-cache';
 import { trySyncConnectedCustomerSupportVoiceAgent } from '@/lib/services/zavu/voice-sync';
 
 const CreateCampaignSchema = z.object({
@@ -56,6 +57,7 @@ export async function createCampaignCore(input: any) {
   if (error) {
     throw new Error(error.message);
   }
+  if (campaign.status === 'active') await invalidateCampaignPromptProjection(validated.site_id);
   await trySyncConnectedCustomerSupportVoiceAgent(validated.site_id);
   return campaign;
 }

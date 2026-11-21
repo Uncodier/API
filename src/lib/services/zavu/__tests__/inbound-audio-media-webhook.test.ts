@@ -1,3 +1,4 @@
+jest.mock('@/lib/services/channels/saved-channel-outcome', () => ({ readSavedChannelOutcome: async () => ({state:'draft',stage:'delivery',reason:'approval_required'}) }));
 import { handleInboundMessage } from '../webhook-handlers';
 import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { admitZavuInboundAutomation } from '../inbound-message-license';

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { CommandFactory } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { invalidateCampaignPromptProjection } from '@/lib/services/campaign-prompt-cache';
 import { isValidUUID, getCommandService, waitForCommandCompletion } from '@/lib/helpers/command-utils';
 import { findTaskManagerAgent, findGrowthMarketerAgent, getPendingCampaigns } from '@/lib/helpers/agent-finder';
 
@@ -182,6 +183,7 @@ export async function createRequirementsFromResults(campaignsWithRequirements: a
                 .from('campaigns')
                 .select('*')
                 .eq('id', campaignId)
+                .eq('site_id', siteId)
                 .single();
             if (campaignError || !existingCampaign) {
                 console.log(`⚠️ Campaña no encontrada: ${campaignId}`);
@@ -237,9 +239,11 @@ export async function createRequirementsFromResults(campaignsWithRequirements: a
                     .from('campaigns')
                     .update({ status: 'pending' })
                     .eq('id', campaignId)
+                    .eq('site_id', siteId)
                     .select('*')
                     .single();
                 if (!updateError && updatedCampaign) {
+                    await invalidateCampaignPromptProjection(siteId);
                     console.log(`✅ Campaña ${campaignId} actualizada a estado 'pending'`);
                     updatedCampaigns.push({
                         ...updatedCampaign,

@@ -7,10 +7,12 @@ import { resolveClientTimezone } from '@/lib/timezone';
 
 export { getAssistantToolDefinitions, getAssistantTools, getInstanceAssistantTools } from './assistant-tools';
 
-/**
- * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
+type AssistantAgentRow = {
+  id: string; name: string; description: string; capabilities?: string[];
+  backstory?: string; system_prompt?: string; agent_prompt?: string;
+};
 
- */
+/** Standalone callers still resolve the agent within their own site. */
 export async function fetchMemoriesContext(
   site_id: string,
   user_id: string | undefined,
@@ -20,10 +22,7 @@ export async function fetchMemoriesContext(
   try {
     const agent = await findGrowthRobotAgent(site_id);
     if (!agent) return '';
-    return getContextMemories(agent.agentId, user_id, {
-      instance_id,
-      limit: 15,
-    });
+    return await getContextMemories(agent.agentId, user_id, { instance_id, limit: 15 });
   } catch (err) {
     console.error('[Assistant] Error fetching memories context:', err);
     return '';
@@ -39,6 +38,22 @@ export async function generateAgentBackground(siteId: string, userId?: string): 
 
 /** The prompt and connector identity are one server selection, never instance metadata. */
 export async function generateAssistantAgentIdentity(siteId: string, userId?: string): Promise<{ background: string; agentId?: string }> {
+  const agent = await loadActiveAssistantAgent(siteId);
+  return agent ? buildAssistantIdentity(agent, siteId, userId) : { background: '' };
+}
+
+/** Validate the selected row once, then use the same active agent for both reads. */
+export async function loadAssistantAgentContext(siteId: string, userId: string, instanceId: string) {
+  const agent = await loadActiveAssistantAgent(siteId);
+  if (!agent) return { background: '', agentId: undefined, memoriesContext: '' };
+  const [identity, memoriesContext] = await Promise.all([
+    buildAssistantIdentity(agent, siteId, userId),
+    userId ? getContextMemories(agent.id, userId, { instance_id: instanceId, limit: 15 }) : '',
+  ]);
+  return { ...identity, memoriesContext };
+}
+
+async function loadActiveAssistantAgent(siteId: string): Promise<AssistantAgentRow | null> {
   try {
     console.log(`🧩 [Assistant] Generating agent background for site: ${siteId}`);
     
@@ -46,7 +61,7 @@ export async function generateAssistantAgentIdentity(siteId: string, userId?: st
     const robotAgent = await findGrowthRobotAgent(siteId);
     if (!robotAgent) {
       console.log(`⚠️ [Assistant] No Growth Robot agent found for site: ${siteId}`);
-      return { background: '' };
+      return null;
     }
     
     console.log(`✅ [Assistant] Found Growth Robot agent: ${robotAgent.agentId}`);
@@ -60,17 +75,26 @@ export async function generateAssistantAgentIdentity(siteId: string, userId?: st
     
     if (agentError || !agentData) {
       console.error(`❌ [Assistant] Error fetching agent data:`, agentError);
-      return { background: '' };
+      return null;
     }
-    
-    // Get site information and campaigns
-    const siteInfo = await DataFetcher.getSiteInfo(siteId);
-    const activeCampaigns = await DataFetcher.getActiveCampaigns(siteId);
+    return agentData;
+  } catch {
+    console.error('[Assistant] Active agent lookup unavailable');
+    return null;
+  }
+}
+
+async function buildAssistantIdentity(agentData: AssistantAgentRow, siteId: string, userId?: string): Promise<{ background: string; agentId?: string }> {
+  try {
+    const [siteInfo, activeCampaigns, timezone] = await Promise.all([
+      DataFetcher.getSiteInfo(siteId),
+      DataFetcher.getActiveCampaigns(siteId),
+      resolveClientTimezone({ userId, siteId }),
+    ]);
     
     console.log(`🔍 [Assistant] Site info available: ${siteInfo ? 'YES' : 'NO'}`);
     console.log(`🔍 [Assistant] Active campaigns: ${activeCampaigns?.length || 0}`);
     
-    const timezone = await resolveClientTimezone({ userId, siteId });
     const background = BackgroundBuilder.buildAgentPrompt(
       agentData.id,
       agentData.name,

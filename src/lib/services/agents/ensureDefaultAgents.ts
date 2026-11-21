@@ -1,3 +1,4 @@
+import { LEGACY_DEFAULT_AGENT_FILTER } from './legacy-default-filter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { buildActivitiesConfig, DEFAULT_AGENT_TEMPLATES } from './default-agent-templates';
 
@@ -40,6 +41,7 @@ export async function findActiveAgentForRole(
     .eq('site_id', siteId)
     .eq('role', role)
     .eq('status', 'active')
+    .or(LEGACY_DEFAULT_AGENT_FILTER)
     .order('created_at', { ascending: false })
     .limit(1);
 
@@ -78,7 +80,8 @@ export async function ensureDefaultAgents(
   const { data: existingAgents, error } = await supabaseAdmin
     .from('agents')
     .select('id, role, status, user_id')
-    .eq('site_id', siteId);
+    .eq('site_id', siteId)
+    .or(LEGACY_DEFAULT_AGENT_FILTER);
 
   if (error) {
     console.error(`[ensureDefaultAgents] Failed to load agents for site ${siteId}:`, error);
