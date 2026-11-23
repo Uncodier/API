@@ -15,6 +15,8 @@ const patch = query.extend({expected_revision:expected, expected_direct_revision
 const receipt = z.object({authority_kind:z.literal('connected_account').optional(),connector_id:uuid, revision, direct_revision:revision, enabled:z.boolean(), attested:z.boolean(),
   setup_pending:z.boolean(), bound_supabase_ref:z.unknown().optional()}).strict();
 const memberStatus = receipt.extend({authorization_mode:z.literal('member_policy'),explicitly_disabled:z.boolean()}).strict();
+const hostStatus = receipt.extend({authorization_mode:z.literal('host_policy'),assistant_allowed:z.boolean()}).strict();
+const currentStatus = z.union([hostStatus,memberStatus]);
 type Context = { params:Promise<{id:string}> };
 
 async function snapshot(args:{p_site_id:string;p_actor_id:string;p_connector_id:string}, change?:z.infer<typeof patch>) {
@@ -27,15 +29,21 @@ async function snapshot(args:{p_site_id:string;p_actor_id:string;p_connector_id:
   const {data,error}=result;
   if (error?.code==='P0D01') throw new ConnectorError('DIRECT_ATTESTATION_REQUIRED','This connection is not verified for Ask.',409);
   if (error) connectorDatabaseError(error);
-  const saved=change || legacy ? receipt.safeParse(data) : memberStatus.safeParse(data);
-  if (saved.success && 'explicitly_disabled' in saved.data && saved.data.explicitly_disabled && saved.data.enabled) {
+  const saved=(legacy ? receipt : change ? z.union([hostStatus,receipt]) : currentStatus).safeParse(data);
+  if (saved.success && saved.data.enabled && (
+    ('explicitly_disabled' in saved.data && saved.data.explicitly_disabled) ||
+    ('assistant_allowed' in saved.data && !saved.data.assistant_allowed))) {
     throw new ConnectorError('STORAGE_UNAVAILABLE','Contradictory connector policy state.',503);
   }
   const ordinary=saved.success && saved.data.authority_kind==='connected_account';
+  const correctMutation = saved.success && change && saved.data.direct_revision===change.expected_direct_revision+1 && !saved.data.setup_pending &&
+    ('assistant_allowed' in saved.data
+      ? !change.enabled && !saved.data.assistant_allowed && !saved.data.enabled && saved.data.revision===change.expected_revision+1
+      : saved.data.enabled===change.enabled && saved.data.revision===change.expected_revision);
   // A delegated account can have a project reference without having a resource attestation.
   // The RPC owns authorization; the legacy reference is metadata and is never returned.
   if (!saved.success || (ordinary && (saved.data.attested || saved.data.setup_pending)) || saved.data.connector_id!==args.p_connector_id || (saved.data.enabled && ((!saved.data.attested && !ordinary) || saved.data.setup_pending)) ||
-    (change && (saved.data.revision!==change.expected_revision || saved.data.direct_revision!==change.expected_direct_revision+1 || saved.data.enabled!==change.enabled || saved.data.setup_pending))) {
+    (change && !correctMutation)) {
     throw new ConnectorError('STORAGE_UNAVAILABLE','Ask access could not be confirmed. Reload before retrying.',503);
   }
   return saved.data;

@@ -56,6 +56,8 @@ and [access model](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/C
 - Search pages use `connector_cursor` / `connector_next_cursor`, with optional
   exact `connector_id`; all pages recheck member/agent policy, never cursor authority.
 
+After `20261123165000_connector_ask_host_policy.sql`, the saved `assistant` host is the only manual Ask switch. Existing explicit opt-outs are moved to that host setting without enabling any account. The regular policy save can turn it on without an execution grant; discovery is metadata-only until the normal account checks authorize execution. The offline stop action changes the same host policy. Deploy the compatible API and web before applying this migration.
+
 ### Contract checks for Robots tool calls
 
 For private provider actions, Robots checks the current member, agent, account

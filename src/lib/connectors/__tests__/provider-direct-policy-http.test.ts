@@ -19,6 +19,24 @@ it('authenticates both routes independently and requires manager access before c
     expect(access).toHaveBeenCalledWith(site,actor,true);expect(rpc).not.toHaveBeenCalled();
   }
 });
+
+it('reports host permission independently of execution and validates the single-policy revocation receipt', async()=>{
+  const current={...stored,authorization_mode:'host_policy',assistant_allowed:true,enabled:false,attested:false};
+  const {bound_supabase_ref,...visible}=current;
+  rpc.mockReturnValueOnce(reply(current));
+  const read=await GET(req(query),context); expect(read.status).toBe(200); expect(await read.json()).toEqual(visible);
+  const stopped={...current,revision:patch.expected_revision+1,assistant_allowed:false};
+  const {bound_supabase_ref: _private,...stoppedVisible}=stopped;
+  const stop=()=>PATCH(req('',{...patch,enabled:false}),context);
+  rpc.mockReturnValueOnce(reply(stopped));
+  const res=await stop(); expect(res.status).toBe(200); expect(await res.json()).toEqual(stoppedVisible);
+  for(const bad of [{...stopped,assistant_allowed:true},{...stopped,revision:patch.expected_revision},
+    {...stopped,setup_pending:true},{...stopped,direct_revision:patch.expected_direct_revision}]) {
+    rpc.mockReturnValueOnce(reply(bad)); expect((await stop()).status).toBe(503);
+  }
+  rpc.mockReturnValueOnce(reply({...current,enabled:true,attested:true,assistant_allowed:false}));
+  expect((await GET(req(query),context)).status).toBe(503);
+});
 it('forwards only server actor, bound IDs, revision and manager consent; responds with private non-cacheable DTO',async()=>{
   rpc.mockReturnValueOnce(reply({...stored,authorization_mode:'member_policy',explicitly_disabled:false}));
   const read=await GET(req(query),context);expect(await read.json()).toEqual({...status,authorization_mode:'member_policy',explicitly_disabled:false});expect(read.headers.get('cache-control')).toBe('private, no-store');
