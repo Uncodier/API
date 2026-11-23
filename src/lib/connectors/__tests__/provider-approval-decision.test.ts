@@ -25,9 +25,10 @@ const fetchBefore = global.fetch, originBefore = process.env.CONNECTORS_WEB_ORIG
 beforeEach(() => { jest.resetAllMocks(); global.fetch = http; process.env.CONNECTORS_WEB_ORIGIN = byokOrigin; });
 afterEach(() => { global.fetch = fetchBefore; if (originBefore === undefined) delete process.env.CONNECTORS_WEB_ORIGIN; else process.env.CONNECTORS_WEB_ORIGIN = originBefore; });
 const denied = () => new ConnectorError('ACCESS_CHANGED', 'Not available.', 403);
-async function fixture(bound = false) {
+async function fixture(bound = false, operation: 'GET_PROJECT' | 'LIST_TABLES' = 'GET_PROJECT') {
   const site = randomUUID(), agent = randomUUID(), actor = randomUUID(), id = randomUUID();
-  const project='b'.repeat(20), kit = bound?'supabase':'orderdesk', slug = bound?'SUPABASE_GET_PROJECT':'ORDERDESK_CREATE_ORDER';
+  const project='b'.repeat(20), kit = bound?'supabase':'orderdesk', slug = bound?`SUPABASE_${operation}`:'ORDERDESK_CREATE_ORDER';
+  const refField=operation==='GET_PROJECT'?'ref':'project_ref';
   const expiry=new Date(Date.now()+60000).toISOString();
   const connector = { ...connectorFixture(), site_id: site, id: randomUUID(), toolkit_slug: kit };
   const provider = { ...providerFixture(), site_id: site, provider_user_id: site, credential_revision: secret() };
@@ -51,7 +52,7 @@ async function fixture(bound = false) {
   const tool = { ...toolFixture(), slug, toolkit: { slug: kit }, input_parameters: { type: 'object', properties: { quantity: { type: 'integer', minimum: 1 } } } };
   const account = { ...accountFixture(), user_id: site, toolkit: { slug: kit }, state: { authScheme: 'OAUTH2', val: { scope: 'orders' } } };
   if(bound) {
-    Object.assign(tool,{tags:['readOnlyHint'],input_parameters:{type:'object',properties:{ref:{type:'string'}},required:['ref']}});
+    Object.assign(tool,{tags:['readOnlyHint'],input_parameters:{type:'object',properties:{[refField]:{type:'string'}},required:[refField]}});
     Object.assign(account,{state:{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}}});
   }
   const posts = jest.fn((_body: unknown) => jsonResponse({ successful: true, error: null, data: { customer: 'private business record', ...(bound && {id:project,ref:project}) } }));
@@ -135,7 +136,7 @@ test.each(['before dispatch', 'after dispatch'])('revocation %s cannot release a
   expect(store.finishRow).toHaveBeenCalledWith(row.site_id, row.id, row.actor_user_id, timing === 'before dispatch' ? 'failed' : 'succeeded');
 });
 
-test('a manager review of shared project metadata cannot change project, read rows, or return downstream data',async()=>{
+test('a manager review of shared project metadata cannot replace its project or described action, or return downstream data',async()=>{
   const {row,target,site,posts,list,decide}=await fixture(true);
   row.action.arguments={ref:'c'.repeat(20)};
   expect((await list()).items).toEqual([]);await expect(decide()).rejects.toThrow();
@@ -150,4 +151,14 @@ test('a manager review of shared project metadata cannot change project, read ro
   await expect(decide()).resolves.toEqual({id:row.id,status:'completed',result_omitted:true});
   expect(posts.mock.calls).toEqual([[{connected_account_id:target.connector.provider_account_id,user_id:site,
     version:row.action.version,arguments:{ref:target.connector.supabase_project_ref}}]]);
+});
+
+test('a manager can approve a selected table-listing action on the shared project without releasing the result',async()=>{
+  const {row,target,site,agent,actor,posts,list,decide}=await fixture(true,'LIST_TABLES');
+  expect((await list()).items).toHaveLength(1);
+  expect(posts).not.toHaveBeenCalled();
+  await expect(decide()).resolves.toEqual({id:row.id,status:'completed',result_omitted:true});
+  expect(genericReviewTarget).toHaveBeenCalledWith(site,agent,target.connector.id,'SUPABASE_LIST_TABLES',actor,'reviewer');
+  expect(posts.mock.calls).toEqual([[{connected_account_id:target.connector.provider_account_id,user_id:site,
+    version:row.action.version,arguments:{project_ref:target.connector.supabase_project_ref}}]]);
 });

@@ -5,6 +5,7 @@ type AccountPin = {
 };
 export type DirectProof = (
   | { kind?: 'attested'; attestationId: string; expiresAt: string; resourceBoundary: string }
+  | { kind: 'verified_connection'; connectionAttemptId: string }
   | ({ kind: 'connected_account'; authorizationId: string } & (
     | {authScheme?: undefined; boundProjectRef?: undefined}
     | {authScheme: 'OAUTH2'|'API_KEY'; boundProjectRef: string|null}
@@ -13,8 +14,16 @@ export type DirectProof = (
 
 export type DirectAuthority = AccountPin & DirectProof;
 
+export function connectionAttempt(d: DirectProof) {
+  return d.kind === 'verified_connection' ? d.connectionAttemptId : d.kind === 'connected_account' ? d.authorizationId : undefined;
+}
+
+export function projectScopedConnection(d: DirectProof) {
+  return d.kind === 'connected_account' || d.kind === 'verified_connection';
+}
+
 export function authorityStamp(d: DirectAuthority) {
-  return [d.kind ?? 'attested', d.kind === 'connected_account' ? d.authorizationId : d.attestationId,
+  return [d.kind ?? 'attested', d.kind === 'attested' || d.kind === undefined ? d.attestationId : connectionAttempt(d),
     d.directRevision, d.siteId, d.connectorId, d.providerId, d.toolkitSlug, d.projectId, d.accountId, d.authConfigId, d.credentialRevision,
     ...(d.kind==='connected_account' && d.authScheme ? [d.authScheme,d.boundProjectRef] : [])];
 }
@@ -25,24 +34,21 @@ export function projectMetadataAction(kit:string, slug:string) {
   return slug.startsWith(prefix) && /^(GET|FETCH|RETRIEVE)_PROJECT(_(METADATA|DETAILS|STATUS))?$/.test(slug.slice(prefix.length));
 }
 
-export function projectActionAllowed(kit:string, slug:string, projectRef:string|null|undefined, delegated:boolean, localRef:string|null|undefined) {
-  if (!projectRef) return true;
-  if (delegated && localRef && localRef!==projectRef) return true;
-  return (!delegated && !/(?:^|_)PROJECTS?(?:_|$)/.test(slug.slice(kit.length+1))) || projectMetadataAction(kit,slug);
+const projectRef = (v:unknown) => typeof v==='string' && v.length===20 && /^[a-z]+$/.test(v);
+
+export function verifiedConnectionReady(connector:{toolkit_slug:string;supabase_project_ref?:string|null}) {
+  return connector.toolkit_slug==='supabase' ? projectRef(connector.supabase_project_ref) : connector.supabase_project_ref==null;
 }
 
 /** The RPC must explicitly name both the customer-authorized scheme and the
  * selected project (null for unbound). No wire marker means legacy consent. */
 export function connectedAccountReady(proof:Extract<DirectProof,{kind:'connected_account'}>,
-  connector:{toolkit_slug:string; supabase_project_ref?:string|null; granted_scopes:string[]}, localRef:string|null|undefined) {
+  connector:{toolkit_slug:string; supabase_project_ref?:string|null; granted_scopes:string[]}) {
   const project=connector.supabase_project_ref;
   if (!proof.authScheme) return proof.boundProjectRef===undefined && project===null && isOrdinaryBusinessGrant(connector.toolkit_slug,connector.granted_scopes);
   if (!['OAUTH2','API_KEY'].includes(proof.authScheme) || project!==proof.boundProjectRef) return false;
   if (connector.toolkit_slug==='supabase' && (!project || proof.authScheme!=='API_KEY')) return false;
-  // The application installation still receives only project metadata. Never interpret
-  // a different ref as proof a project contains data from just this tenant.
-  const ref=(v:unknown)=>typeof v==='string' && v.length===20 && /^[a-z]+$/.test(v);
-  return project===null || (ref(project) && ref(localRef));
+  return project===null || projectRef(project);
 }
 
 // Screen ACLs, not toolkit eligibility for new customer delegations.

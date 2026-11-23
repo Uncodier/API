@@ -77,6 +77,16 @@ test.each(['search','list'])('an explicit account %s never invokes native discov
   expect(nativeRouter.execute).not.toHaveBeenCalled();
 });
 
+test('does not suggest a policy toggle for an operation reserved by the provider', async () => {
+  runtime.search.mockResolvedValueOnce({ tools: [{ ...candidate, availability: 'manual_only', unavailability_reason: 'reserved_provider_action' }] });
+  const router = toolsRouterTool([native, connectorGateway(async () => context)], scope);
+  const result = await router.execute({ action: 'list', tool_origin: 'provider' });
+  expect(result.hint).toContain('the provider reserves this operation; connection policy cannot make it executable');
+  expect(result.hint).not.toContain('the connection did not pass execution verification');
+  expect(runtime.describe).not.toHaveBeenCalled();
+  expect(runtime.call).not.toHaveBeenCalled();
+});
+
 test('invalid connector JSON returns a safe pre-dispatch correction without inspecting credentials or replaying',async()=>{
   const router=toolsRouterTool([native,connectorGateway(async()=>context)],scope);
   const privateText=randomUUID();

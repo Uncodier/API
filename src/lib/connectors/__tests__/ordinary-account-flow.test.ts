@@ -1,5 +1,7 @@
 import {randomUUID} from 'node:crypto';
-import {createProviderDirectRuntime} from '../provider-direct-runtime';
+import {authorizedProviderRow,verifyProviderAccounts} from '../provider-direct-policy';
+import {claimDirectDispatch,storeDirectResult} from '../provider-direct-receipt';
+import {describeDirectTool,executeDirectTool} from '../provider-direct-transport';
 import {accountFixture,connectorFixture,providerFixture,toolFixture,toolkitFixture,secret,jsonResponse} from './composio-fixtures';
 import {loadConnectorCredential} from '../account-access';
 import {readTokenProviderBinding} from '../provider-project-binding';
@@ -26,7 +28,6 @@ it.each(['valid','OAuth grant changed','key instead of OAuth','shared account','
   const reply=(data:unknown)=>({abortSignal:async()=>({data,error:null})});
   const journal:string[]=[];
   mockRpc.mockImplementation((name:string,args:Record<string,unknown>)=>{
-    if(name==='connector_direct_accounts_v2')return reply([row]);
     expect(args).toMatchObject({p_connector_id:id,p_authorization_id:attempt,p_request_id:ctx.requestId,p_tool:slug});expect(args).not.toHaveProperty('p_attestation_id');
     if(name==='claim_connector_account_dispatch'){journal.push('claim');return reply(claim);}
     if(name==='store_connector_account_result'){expect(args.p_claim_id).toBe(claim);journal.push('store');return reply(receipt);}
@@ -45,14 +46,21 @@ it.each(['valid','OAuth grant changed','key instead of OAuth','shared account','
       journal.push('POST');return jsonResponse({successful:true,error:null,data:{count:3}});
     }throw Error('Unexpected provider operation');
   });
-  const run=createProviderDirectRuntime(async()=>ctx);const {tools}=await run.search({catalog_query:slug});
-  expect(tools).toMatchObject([{name:`connector:${id}:${slug}`,availability:'describe_required'}]);
-  const d=await run.describe(tools[0].name);expect(JSON.stringify(d)).not.toContain(attempt);
+  // Legacy delegated callers retain the original stricter transport checks.
+  const [target]=await verifyProviderAccounts(site,[authorizedProviderRow.parse(row)],null,id,slug);
+  const credential={apiKey:key,revision:p.credential_revision};
+  const d=await describeDirectTool(target,credential,slug);expect(JSON.stringify(d)).not.toContain(attempt);
   if(variant==='OAuth grant changed')live.state.val.scope+=' https://mail.google.com/';
   if(variant==='key instead of OAuth')live.state.authScheme='API_KEY';
   if(variant==='shared account')live.experimental.account_type='SHARED';
   if(variant==='custom endpoint')live.data.base_url='https://other.example.test';
-  const call=run.call(d.name,{version:d.version,schema_hash:d.schema_hash,arguments:{limit:3}});
-  if(variant==='valid'){await expect(call).resolves.toMatchObject({success:true,receipt:{url:`/connectors/results/${receipt}`}});expect(journal).toEqual(['claim','POST','store']);}
+  const call=executeDirectTool(target,credential,slug,{version:d.version,schema_hash:d.schemaHash,arguments:{limit:3}},async()=>{
+    expect(await claimDirectDispatch(ctx,target,slug,d.version,d.schemaHash,'a'.repeat(64))).toBe(claim);
+  });
+  if(variant==='valid'){
+    await expect(call).resolves.toEqual({data:{count:3}});
+    expect(await storeDirectResult(ctx,target,slug,d.version,d.schemaHash,{title:'List labels',note:'',columns:['Count'],rows:[['3']]},claim)).toBe(receipt);
+    expect(journal).toEqual(['claim','POST','store']);
+  }
   else {await expect(call).rejects.toMatchObject({executed:false});expect(journal).toEqual([]);}
 });

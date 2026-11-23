@@ -1,7 +1,8 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import {connectedAccountReady, projectActionAllowed, projectMetadataAction} from './provider-direct-authority';
+import {connectedAccountReady, connectionAttempt, projectMetadataAction, projectScopedConnection,
+  verifiedConnectionReady} from './provider-direct-authority';
 import type { DirectAuthorizedConnector } from './provider-direct-policy';
 import { readTokenProviderBinding } from './provider-project-binding';
 import { verifyAccountIdentity, verifyDirectAccountIdentity } from './composio-accounts';
@@ -47,8 +48,10 @@ function current(expiresAt: string) {
 function verifyLocal(target: DirectAuthorizedConnector, credential: DirectCredential, slug: string) {
   const { connector:c, provider:p, directProof:d, policy } = target;
   if (!d) notReady();
-  if (d.kind === 'connected_account') {
-    if (!z.string().uuid().safeParse(d.authorizationId).success || !connectedAccountReady(d,c,target.localProjectRef)) notReady();
+  if (d.kind === 'verified_connection') {
+    if (!z.string().uuid().safeParse(d.connectionAttemptId).success || !verifiedConnectionReady(c)) notReady();
+  } else if (d.kind === 'connected_account') {
+    if (!z.string().uuid().safeParse(d.authorizationId).success || !connectedAccountReady(d,c)) notReady();
   } else if (!z.string().uuid().safeParse(d.attestationId).success || typeof d.resourceBoundary !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(d.resourceBoundary)) notReady();
   if (!d.siteId || d.siteId !== c.site_id || d.connectorId !== c.id || d.providerId !== p.id || d.projectId !== p.project_id ||
     d.accountId !== c.provider_account_id || d.toolkitSlug !== c.toolkit_slug || d.authConfigId !== c.auth_config_id || d.credentialRevision !== credential.revision ||
@@ -60,12 +63,11 @@ function verifyLocal(target: DirectAuthorizedConnector, credential: DirectCreden
     !(policy.tool_access_mode === 'all' || (policy.tool_access_mode === 'selected' && policy.allowed_tools?.includes(slug)))) {
     throw new ConnectorError('CONNECTOR_TOOL_DENIED', 'The current policy does not allow direct execution of this action.', 403);
   }
-  if (d.kind!=='connected_account') current(d.expiresAt);
-  if (d.kind!=='connected_account' && c.supabase_project_ref && (!/^[a-z]{20}$/.test(c.supabase_project_ref) || c.supabase_project_ref !== d.resourceBoundary ||
+  if (d.kind===undefined || d.kind==='attested') current(d.expiresAt);
+  if ((d.kind===undefined || d.kind==='attested') && c.supabase_project_ref && (!/^[a-z]{20}$/.test(c.supabase_project_ref) || c.supabase_project_ref !== d.resourceBoundary ||
     !target.localProjectRef || !/^[a-z]{20}$/.test(target.localProjectRef) || c.supabase_project_ref === target.localProjectRef)) notReady();
   inputValue(toolSlug, slug);
-  if (/[^A-Z0-9_]/.test(slug) || !slug.startsWith(`${c.toolkit_slug.toUpperCase().replace(/-/g,'_')}_`) ||
-      !projectActionAllowed(c.toolkit_slug,slug,c.supabase_project_ref,d.kind==='connected_account',target.localProjectRef)) unsupportedDirectTool();
+  if (/[^A-Z0-9_]/.test(slug) || !slug.startsWith(`${c.toolkit_slug.toUpperCase().replace(/-/g,'_')}_`)) unsupportedDirectTool();
 }
 
 async function prepare(target: DirectAuthorizedConnector, credential: DirectCredential, client: ComposioClient, slug: string, version?: string) {
@@ -81,13 +83,13 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
   if (tool.slug !== slug || tool.toolkit.slug !== connector.toolkit_slug || (version !== undefined && version !== tool.version)) changed();
   const {parameters, injected} = directParameterPlan(tool.input_parameters, connector.supabase_project_ref ?? undefined);
   const project = connector.supabase_project_ref;
-  const projectMetadataOnly = Boolean(project && directProof.kind==='connected_account' && projectMetadataAction(connector.toolkit_slug,slug));
+  const projectMetadataRead = Boolean(project && projectScopedConnection(directProof) && projectMetadataAction(connector.toolkit_slug,slug));
   const effect = directEffect(effectTags.parse(tool.tags), connector.toolkit_slug, slug);
   if (project) {
     const fields=['project_ref','ref'].filter(k=>injected[k]===project);
-    if (fields.length!==1 || (directProof.kind==='connected_account' &&
+    if (fields.length!==1 || (projectScopedConnection(directProof) &&
         (!Array.isArray(tool.input_parameters.required) || !tool.input_parameters.required.includes(fields[0])))) unsupportedDirectTool();
-    if (projectMetadataOnly) {
+    if (projectMetadataRead) {
       // Inspect the underlying provider tool, not just its narrowed public projection.
       const {properties,required}=tool.input_parameters;
       if (!properties || typeof properties!=='object' || Object.keys(properties).length!==1 ||
@@ -111,13 +113,13 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
       !(directProof.authScheme==='API_KEY' ? account.apiKeyAuth : account.oauth2)) notReady();
   if (project && connector.toolkit_slug==='supabase' && !account.hostedSupabasePat) notReady();
   if (account.accountType !== 'PRIVATE' || (!account.oauth2 && !account.apiKeyAuth)) notReady();
-  if (directProof.kind!=='connected_account') current(directProof.expiresAt);
+  if (directProof.kind===undefined || directProof.kind==='attested') current(directProof.expiresAt);
   // Only the app decides its grants. The pin binds the execution contract to
   // this verified authority; it is not a cache of provider permission reports.
   // Projection must not expose server secrets/bindings even if upstream metadata
   // repeats them inside a seemingly ordinary field name or enum literal.
   const visible = JSON.stringify(parameters);
-  if ([credential.apiKey, project, directProof.kind==='connected_account' ? directProof.authorizationId : directProof.resourceBoundary, connector.provider_account_id, connector.auth_config_id].some(privateValue =>
+  if ([credential.apiKey, project, connectionAttempt(directProof), 'resourceBoundary' in directProof ? directProof.resourceBoundary : undefined, connector.provider_account_id, connector.auth_config_id].some(privateValue =>
     privateValue && (visible.includes(JSON.stringify(privateValue)) || (privateValue.length >= 12 && visible.includes(privateValue))))) unsupportedDirectTool();
   const schemaHash = hashConnectorSchema({ mode:'direct-account-v3', slug, toolkit:toolkit.slug, version:tool.version,
     input:hashConnectorSchema(directSchemaContract(tool.input_parameters)),
@@ -154,7 +156,7 @@ export async function executeDirectTool(target: DirectAuthorizedConnector, crede
     assertDirectArguments(descriptor.parameters, pin.arguments);
     const body = {connected_account_id:accountId, user_id:userId, version:descriptor.version, arguments:{...pin.arguments,...injected}};
     await beforeDispatch();
-    if (snapshot.directProof.kind!=='connected_account') current(snapshot.directProof.expiresAt);
+    if (snapshot.directProof.kind===undefined || snapshot.directProof.kind==='attested') current(snapshot.directProof.expiresAt);
     dispatched = true;
     const response = await client.request(`/tools/execute/${slug}`, {method:'POST', body});
     // A provider hint does not independently establish absence of an effect. Never
@@ -162,9 +164,9 @@ export async function executeDirectTool(target: DirectAuthorizedConnector, crede
     assertProviderToolSucceeded(response, {effect:'unknown', toolkit:snapshot.connector.toolkit_slug});
     const success = providerValue(z.object({successful:z.literal(true), error:z.null(), data:z.unknown()}), response, true);
     if (!Object.hasOwn(success, 'data')) invalidProviderResponse(true);
-    if (snapshot.directProof.kind==='connected_account' && snapshot.directProof.boundProjectRef && projectMetadataAction(snapshot.connector.toolkit_slug,slug)) {
+    if (projectScopedConnection(snapshot.directProof) && snapshot.connector.supabase_project_ref && projectMetadataAction(snapshot.connector.toolkit_slug,slug)) {
       // Even metadata tools may return organization details, URLs or unrelated fields.
-      const ref=snapshot.directProof.boundProjectRef;
+      const ref=snapshot.connector.supabase_project_ref;
       const result=z.object({ref:z.literal(ref),id:z.literal(ref)}).safeParse(success.data);
       if (!result.success) invalidProviderResponse(true);
       // Release only a small status vocabulary, never free-form project names,

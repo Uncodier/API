@@ -113,24 +113,28 @@ it('finds a delegated project’s table-listing tool as a candidate for schema v
     {name:`connector:${account.connector.id}:${slug}`,availability:'describe_required'}]);
 });
 
-it('distinguishes approved project metadata from blocked operations on a delegated shared project',async()=>{
+it.each(['connected_account','verified_connection'] as const)('uses all/selected rather than project locality on a %s',async kind=>{
   const account=target(), ref='abcdefghijklmnopqrst';
   account.localProjectRef=ref;account.connector.toolkit_slug='supabase';account.connector.supabase_project_ref=ref;
-  account.directProof={...account.directProof,toolkitSlug:'supabase',kind:'connected_account',authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:ref};
-  const blocked=['SUPABASE_LIST_TABLES','SUPABASE_RUN_READ_ONLY_QUERY','SUPABASE_ALPHA_CREATE_API_KEY'];
-  const slugs=['SUPABASE_GET_PROJECT',...blocked];
+  const d=account.directProof;
+  if(!('attestationId' in d))throw Error('Expected attested fixture');
+  const {attestationId,expiresAt,resourceBoundary,...pin}=d;
+  account.directProof={...pin,toolkitSlug:'supabase',...(kind==='verified_connection' ? {kind,connectionAttemptId:randomUUID()}
+    : {kind,authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:ref})};
+  const slugs=['SUPABASE_GET_PROJECT','SUPABASE_LIST_TABLES','SUPABASE_RUN_READ_ONLY_QUERY','SUPABASE_ALPHA_CREATE_API_KEY'];
   list.mockResolvedValue({items:slugs.map(item),next_cursor:null,total:slugs.length});
-  const {tools}=await searchDirectTools(ctx,{},[account]);
-  expect(tools).toMatchObject([
-    {name:`connector:${account.connector.id}:SUPABASE_GET_PROJECT`,availability:'describe_required'},
-    ...blocked.map(slug=>({name:`connector:${account.connector.id}:${slug}`,availability:'manual_only',unavailability_reason:'project_restricted'})),
-  ]);
-  expect(tools[0]).not.toHaveProperty('unavailability_reason');
+  const tools=(await searchDirectTools(ctx,{},[account])).tools;
+  expect(tools).toMatchObject(slugs.map(slug=>({name:`connector:${account.connector.id}:${slug}`,availability:'describe_required'})));
+  expect(tools.every(tool=>tool.unavailability_reason===undefined)).toBe(true);
+  account.policy.tool_access_mode='selected';account.policy.allowed_tools=['SUPABASE_LIST_TABLES'];
+  selected.mockImplementation(async(_c,_k,ids)=>({items:ids.map(item),missing:false}));
+  expect((await searchDirectTools(ctx,{},[account])).tools).toEqual([tools[1]]);
+  expect(selected.mock.calls.map(args=>args[2])).toEqual([['SUPABASE_LIST_TABLES']]);
 });
 
 it('invalidates an ordinary continuation on reauthorization or change of authority kind, even at the same revision',async()=>{
   const account=target(), d=account.directProof;
-  if(d.kind==='connected_account')throw Error('Expected attested fixture');
+  if(!('attestationId' in d))throw Error('Expected attested fixture');
   const {attestationId,expiresAt,resourceBoundary,...pin}=d;
   const ordinary={...account,directProof:{...pin,kind:'connected_account' as const,authorizationId:attestationId}};
   list.mockResolvedValue({items:Array.from({length:8},(_,i)=>item(`NOVELCLOUD_UPDATE_ITEM_${i}`)),next_cursor:null,total:8});

@@ -20,6 +20,7 @@ export function firstAskInstanceId(siteId: string, userId: string, internal: boo
 type SubmissionInput = {
   instanceId: string; siteId: string; userId: string; principal: ToolRequestPrincipal;
   observeFirstSend?: boolean;
+  connectionPolicy: boolean;
   body: { message: string; request_id?: string; [field: string]: unknown }; details: Record<string, unknown>;
 };
 
@@ -31,7 +32,7 @@ export class AskSubmissionError extends Error {
 }
 
 export async function claimAskSubmission(input: SubmissionInput) {
-  const { body, instanceId, siteId, userId, principal } = input;
+  const { body, instanceId, siteId, userId, principal, connectionPolicy } = input;
   // The route passes only the validated/defaulted schema. Omit addressing:
   // bearer user_id is ignored; site, actor and actual instance scope the PK.
   const { request_id: requestId, site_id: _site, user_id: _actor, instance_id: _instance, ...content } = body;
@@ -47,7 +48,9 @@ export async function claimAskSubmission(input: SubmissionInput) {
   if (!input.observeFirstSend) {
     try {
       await insertUserActionLog({ instanceId, siteId, userId, message: body.message, actionId,
-        details: { ...input.details, request_id: requestId, ask_request_sha256: digest } });
+        details: { ...input.details, request_id: requestId, ask_request_sha256: digest,
+          // Snapshot the server-selected contract at insertion, never from the request body.
+          ask_connection_policy: connectionPolicy } });
       return { id: actionId, replay: false };
     } catch (error) {
       if ((error as { code?: string })?.code !== '23505') {

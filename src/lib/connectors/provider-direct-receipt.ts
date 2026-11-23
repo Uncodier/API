@@ -4,6 +4,7 @@ import {supabaseAdmin} from '@/lib/database/supabase-client';
 import {ConnectorError, type ConnectorContext} from './types';
 import type {DirectAuthorizedConnector} from './provider-direct-policy';
 import type {DirectReport} from './provider-direct-output';
+import {connectionAttempt,projectScopedConnection} from './provider-direct-authority';
 
 const uuid=z.string().uuid();
 const denied=()=>new ConnectorError('ACCESS_CHANGED','The original connector admission is no longer current.',403);
@@ -11,7 +12,7 @@ const unconfirmed=()=>new ConnectorError('DIRECT_RESULT_UNCONFIRMED','Private st
 function binding(ctx:ConnectorContext,a:DirectAuthorizedConnector,tool:string,version:string,hash:string) {
   const proof=a.directProof;
   if (!proof) throw denied();
-  const authority=proof.kind==='connected_account'?{p_authorization_id:proof.authorizationId}:{p_attestation_id:proof.attestationId};
+  const authority='attestationId' in proof ? {p_attestation_id:proof.attestationId} : {p_authorization_id:connectionAttempt(proof)};
   if (ctx.host!=='assistant' || ctx.catalogUserSession!==true || !a.directProof || a.requestOnly ||
       !z.number().int().positive().max(2_147_483_647).safeParse(a.directProof.directRevision).success ||
       ctx.siteId!==a.connector.site_id || (ctx.connectorIdHint!==undefined && ctx.connectorIdHint!==a.connector.id) ||
@@ -24,7 +25,7 @@ function binding(ctx:ConnectorContext,a:DirectAuthorizedConnector,tool:string,ve
 export async function claimDirectDispatch(ctx:ConnectorContext,a:DirectAuthorizedConnector,tool:string,version:string,hash:string,digest:string):Promise<string> {
   const args=binding(ctx,a,tool,version,hash);
   let response;
-  try { response=await supabaseAdmin.rpc(a.directProof.kind==='connected_account'?'claim_connector_account_dispatch':'claim_connector_direct_dispatch',{...args,p_arguments_digest:digest}).abortSignal(AbortSignal.timeout(5000)); }
+  try { response=await supabaseAdmin.rpc(projectScopedConnection(a.directProof)?'claim_connector_account_dispatch':'claim_connector_direct_dispatch',{...args,p_arguments_digest:digest}).abortSignal(AbortSignal.timeout(5000)); }
   catch { throw new ConnectorError('DIRECT_DISPATCH_UNCONFIRMED','The dispatch reservation could not be confirmed.',503); }
   if (response.error?.code==='P0D03') throw new ConnectorError('DIRECT_DISPATCH_ALREADY_CLAIMED','This action has already been reserved for the request.',409);
   if (response.error?.code==='42501') throw denied();
@@ -40,7 +41,7 @@ export async function storeDirectResult(ctx:ConnectorContext,a:DirectAuthorizedC
   const payload={...args,p_claim_id:claimId,p_report:structuredClone(report)};
   for (let attempt=0;attempt<2;attempt++) {
     let response;
-    try { response=await supabaseAdmin.rpc(a.directProof.kind==='connected_account'?'store_connector_account_result':'store_connector_direct_result',payload).abortSignal(AbortSignal.timeout(5000)); }
+    try { response=await supabaseAdmin.rpc(projectScopedConnection(a.directProof)?'store_connector_account_result':'store_connector_direct_result',payload).abortSignal(AbortSignal.timeout(5000)); }
     catch { continue; }
     if (!response.error && uuid.safeParse(response.data).success) return response.data;
     // postgrest-js normally returns transport failures as status 0 instead

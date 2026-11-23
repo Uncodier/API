@@ -107,6 +107,13 @@ it('requires a request ID for all interactive direct-capable turns; unkeyed serv
   expect(db.query("SELECT details ? 'ask_request_sha256' FROM instance_logs")).toBe('f');
 });
 
+it('marks only interactive direct submissions for the new connector contract', async () => {
+  expect((await post({ ...base, execution_mode: 'direct' })).status).toBe(200);
+  expect((await post({ ...base, request_id: 'harness', execution_mode: 'harness', ask_connection_policy: true })).status).toBe(200);
+  expect(db.query("SELECT details->>'ask_connection_policy' FROM instance_logs WHERE details->>'request_id'='request-1'")).toBe('true');
+  expect(db.query("SELECT details->>'ask_connection_policy' FROM instance_logs WHERE details->>'request_id'='harness'")).toBe('false');
+});
+
 it('only reads a replay after the current row check, including a first-send parent collision', async () => {
   const body = { ...base, instance_id: undefined };
   expect((await post(body)).status).toBe(200);

@@ -177,22 +177,6 @@ test('after authorization a wedged lookup has a wall-clock deadline and cannot s
   expect(await f.check()).toEqual(noProof); expect(mockCname).toHaveBeenCalledTimes(2);
 });
 
-test('private direct evidence is bound to its own predicate, not interchangeable with legacy actor responses', async () => {
-  const f = load(alias); gateway(ref);
-  const {withDirectActorEvidence} = require('@/lib/database/hosted-project-identity') as typeof import('@/lib/database/hosted-project-identity');
-  const direct = async () => {
-    const {data,error} = await f.admin.rpc('connector_direct_actor',args);
-    if (error || typeof data !== 'boolean') throw new Error('Direct actor check failed');
-    return data;
-  };
-  expect(await withDirectActorEvidence(f.read)).toEqual(noProof);
-  expect(await f.capture(direct)).toEqual(noProof);
-  expect(await withDirectActorEvidence(direct)).toEqual(proven);
-  expect(http.mock.calls.at(-1)?.[1]).toMatchObject({method:'POST',cache:'no-store',redirect:'error'});
-  gateway(ref,'false'); expect(await withDirectActorEvidence(direct)).toEqual({allowed:false,localProjectRef:null});
-  gateway(ref,'true'); expect(await withDirectActorEvidence(async ()=>(await direct()) && (await direct()))).toEqual(noProof);
-});
-
 test('Support account evidence cannot be borrowed from a different host RPC',async()=>{
   const f=load(canonical);
   const {withSupportAccountEvidence}=require('@/lib/database/hosted-project-identity') as typeof import('@/lib/database/hosted-project-identity');
@@ -202,5 +186,7 @@ test('Support account evidence cannot be borrowed from a different host RPC',asy
   };
   expect(await withSupportAccountEvidence(f.read)).toEqual(noProof);
   gateway(ref,'[{}]');expect(await withSupportAccountEvidence(read)).toEqual(proven);
+  expect(http.mock.calls.at(-1)?.[1]).toMatchObject({method:'POST',cache:'no-store',redirect:'error'});
+  expect(await withSupportAccountEvidence(async ()=>(await read()) && (await read()))).toEqual(noProof);
   gateway(ref,'[]');expect(await withSupportAccountEvidence(read)).toEqual({allowed:false,localProjectRef:null});
 });

@@ -18,16 +18,15 @@ afterEach(() => {
   jest.resetAllMocks();
 });
 
-it.each((['attested','delegated'] as const).flatMap(authority=>(['OAUTH2','API_KEY'] as const).flatMap(scheme=>
-  (['http','downstream'] as const).map(denial=>({authority,scheme,denial})))))(
-  'uses provider permissions, not Makinari all mode, for $authority $scheme and $denial 403', async ({scheme,denial,authority}) => {
+it.each((['OAUTH2','API_KEY'] as const).flatMap(scheme=>
+  (['http','downstream'] as const).map(denial=>({scheme,denial}))))(
+  'uses provider permissions, not Makinari all mode, for $scheme and $denial 403', async ({scheme,denial}) => {
   // A different provider action at each run cannot have a compiled-in adapter.
   const site = randomUUID(), kit = 'planning', slug = `PLANNING_CREATE_BOOKING_${randomUUID().replaceAll('-','').toUpperCase()}`;
   const transportKey = secret(), rev = secret(), receipt = randomUUID();
   const provider = {...providerFixture(),id:randomUUID(),site_id:site,provider_user_id:site,credential_revision:rev};
   function row() {
-    return {...(authority==='attested' ? {attestation_id:randomUUID(),expires_at:new Date(Date.now()+3600000).toISOString(),
-      local_installation_ref:null,resource_boundary:'dedicated-site'} : {authority_kind:'connected_account',authorization_id:randomUUID(),auth_scheme:scheme,bound_project_ref:null}),
+    return {authority_kind:'verified_connection',connection_attempt_id:randomUUID(),
       direct_revision:2,provider,connector:{...connectorFixture(),id:randomUUID(),site_id:site,provider_id:provider.id,
         toolkit_slug:kit,provider_account_id:`ca_${randomUUID()}`,revocation_dispatched:false,supabase_project_ref:null,access_mode:'workspace',created_by:randomUUID()},
       // Allows a request from a principal lacking use; it is not a per-write approval.
@@ -47,10 +46,10 @@ it.each((['attested','delegated'] as const).flatMap(authority=>(['OAUTH2','API_K
   mockRpc.mockImplementation((name:string, args:Record<string,string>) => {
     if (name === byokRpc) return attestedProject(provider)(name,args);
     const id = args.p_connector_id;
-    if (name === 'connector_direct_accounts_v2') return reply(rows.filter(r=>enabled.has(r.connector.id) && (!id || r.connector.id===id) &&
+    if (name === 'connector_ask_connections') return reply(rows.filter(r=>enabled.has(r.connector.id) && (!id || r.connector.id===id) &&
       (r.policy.tool_access_mode==='all' || r.policy.allowed_tools.includes(args.p_slug))));
-    if (name === (authority==='attested'?'claim_connector_direct_dispatch':'claim_connector_account_dispatch')) { claims.push(id); return reply(randomUUID()); }
-    if (name === (authority==='attested'?'store_connector_direct_result':'store_connector_account_result')) { stored.push(id); return reply(receipt); }
+    if (name === 'claim_connector_account_dispatch') { claims.push(id); return reply(randomUUID()); }
+    if (name === 'store_connector_account_result') { stored.push(id); return reply(receipt); }
     throw new Error('Unexpected RPC');
   });
   const fetch = jest.fn(async (url:string, init:RequestInit) => {
@@ -97,7 +96,7 @@ it.each((['attested','delegated'] as const).flatMap(authority=>(['OAUTH2','API_K
   expect(posted).toEqual([a.connector.provider_account_id,b.connector.provider_account_id]);
   expect(accounts).toEqual([b.connector.provider_account_id]);
   expect(claims).toEqual([a.connector.id,b.connector.id]); expect(stored).toEqual([a.connector.id]);
-  // On the very same descriptor, a local exclusion or enrollment revocation must
+  // On the very same descriptor, a local exclusion or connection revocation must
   // stop before even a metadata GET, not just before the provider POST.
   fetch.mockClear(); b.policy.tool_access_mode='selected'; b.policy.allowed_tools=['PLANNING_LIST_BOOKINGS'];
   await expect(run.call(ref(b),bPin)).rejects.toMatchObject({code:'DIRECT_POLICY_REQUIRED',executed:false});

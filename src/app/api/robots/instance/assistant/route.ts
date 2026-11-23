@@ -203,7 +203,7 @@ export async function POST(request: NextRequest) {
       }
     }
     if (!userId) return NextResponse.json({ error: 'Assistant actor unavailable' }, { status: 403 });
-    const userAction = await claimAskSubmission({ instanceId, siteId, userId, principal, body: parsedBody, observeFirstSend,
+    const userAction = await claimAskSubmission({ instanceId, siteId, userId, principal, body: parsedBody, observeFirstSend, connectionPolicy: catalogUserSession,
       details: { ...leadBulkAdmission, ...(providedInstanceId ? { instance_status: instanceStatus } : { is_creation: true }),
         status: 'running', instance_node_id: providedNodeId, execution_mode: executionMode } });
     const turn = { instance_id: instanceId, user_log_id: userAction.id };

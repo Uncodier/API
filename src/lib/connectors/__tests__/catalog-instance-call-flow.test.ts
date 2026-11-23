@@ -8,7 +8,6 @@ import { accountFixture, connectorFixture, providerFixture, toolkitFixture, tool
 const mockRpc = jest.fn(), mockFrom = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (...args:unknown[]) => mockRpc(...args), from: (table:string) => mockFrom(table) } }));
 jest.mock('../account-access', () => ({ requireConnectorSiteAccess:jest.fn(), getVisibleConnector:jest.fn(), listVisibleConnectors:jest.fn(), getConnectorProvider:jest.fn(), loadConnectorCredential:jest.fn() }));
-jest.mock('@/lib/database/hosted-project-identity',()=>({withDirectActorEvidence:jest.fn()}));
 jest.mock('@/app/api/agents/tools/router/screen-access', () => ({ ...jest.requireActual('@/app/api/agents/tools/router/screen-access'),
   assertToolScreenAccess: jest.fn(), loadToolScreenAccess: jest.fn(async () => ({isAdmin:true,blockedScreens:[]})) }));
 jest.mock('@/lib/services/embeddings-service', () => ({ EmbeddingsService:{generateEmbeddings:jest.fn(async () => {throw new Error('offline');})} }));
@@ -49,7 +48,7 @@ it.each([
       expect(paramsForActor(args)).toEqual([ctx.siteId,ctx.userId,ctx.instanceId,ctx.agentId]);
       return {abortSignal:async()=>({data:true,error:null})};
     }
-    expect(name).toBe('connector_direct_accounts_v2');
+    expect(name).toBe('connector_ask_connections');
     expect(args.p_connector_id).toBe(pinned || args.p_slug ? connectorId : null);
     return {abortSignal:async()=>({data:[],error:null})};
   });
@@ -67,6 +66,8 @@ it.each([
   expect(inventory).toMatchObject({success:true,connector_next_cursor:null,tools:actions.map(slug=>({
     name:`connector:${connectorId}:${slug}`,availability:'manual_only',unavailability_reason:'account_execution_not_authorized',
   }))});
+  expect(inventory.hint).toContain('the saved policy already allows Ask');
+  expect(inventory.hint).toContain('Do not tell the user to enable Ask or Legacy catalogue reads');
   expect(JSON.stringify(inventory)).not.toContain(apiKey);
   expect(http).toHaveBeenCalledTimes(1);
   for(const slug of actions) {
@@ -93,7 +94,7 @@ it.each(['all','selected'] as const)('dispatches a new %s-mode action on the cho
   const provider={...providerFixture(),id:randomUUID(),site_id:siteId,provider_user_id:siteId,credential_revision:revision};
   const dbRow={connector:{...connectorFixture(),id:connectorId,site_id:siteId,toolkit_slug:toolkit,provider_id:provider.id,
       access_mode:'workspace',supabase_project_ref:null,revocation_dispatched:false,created_by:ctx.userId},provider,
-    attestation_id:randomUUID(),direct_revision:3,expires_at:new Date(Date.now()+3600000).toISOString(),resource_boundary:'isolated-warehouse',local_installation_ref:null,
+    authority_kind:'verified_connection',connection_attempt_id:randomUUID(),direct_revision:3,
     policy:{revision:1,tool_access_mode:mode,allowed_tools:mode==='selected'?[slug]:[],allowed_hosts:['assistant'],require_approval:true}};
   process.env.CONNECTORS_WEB_ORIGIN='https://app.example.test';
   jest.mocked(loadConnectorCredential).mockResolvedValue({apiKey,revision,source:'byok'});
@@ -108,12 +109,12 @@ it.each(['all','selected'] as const)('dispatches a new %s-mode action on the cho
   let dispatches=0; const receiptId=randomUUID(); const privateRow=73605391;
   mockRpc.mockImplementation((name,args)=>{
     if(name===byokRpc) return attestedProject(provider)(name,args);
-    if(name==='connector_direct_accounts_v2') {
+    if(name==='connector_ask_connections') {
       expect(paramsForActor(args)).toEqual([ctx.siteId,ctx.userId,ctx.instanceId,ctx.agentId]);
       return {abortSignal:async()=>({data:[dbRow],error:null})};
     }
-    if(name==='claim_connector_direct_dispatch' || name==='store_connector_direct_result') {
-      expect(args).toMatchObject({p_tool:slug,p_request_id:ctx.requestId,p_attestation_id:dbRow.attestation_id});
+    if(name==='claim_connector_account_dispatch' || name==='store_connector_account_result') {
+      expect(args).toMatchObject({p_tool:slug,p_request_id:ctx.requestId,p_authorization_id:dbRow.connection_attempt_id});
       return {abortSignal:async()=>({data:receiptId,error:null})};
     }
     throw new Error('Unexpected reporting or storage operation');
@@ -149,7 +150,7 @@ it.each(['all','selected'] as const)('dispatches a new %s-mode action on the cho
   const ok=await router.execute({action:'call',name,args});
   expect(ok).toEqual({success:true,receipt:{status:'private_result_ready',url:`/connectors/results/${receiptId}`},guidance:expect.stringContaining('cannot inspect or summarize')});
   expect(JSON.stringify(ok)).not.toContain(String(privateRow)); expect(JSON.stringify(ok)).not.toContain(apiKey);
-  expect(mockRpc).toHaveBeenCalledWith('store_connector_direct_result',expect.objectContaining({p_user_id:ctx.userId,
+  expect(mockRpc).toHaveBeenCalledWith('store_connector_account_result',expect.objectContaining({p_user_id:ctx.userId,
     p_report:expect.objectContaining({rows:[['$.items[0].id',String(privateRow)]]})}));
   expect(dispatches).toBe(2);
 });

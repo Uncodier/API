@@ -396,27 +396,29 @@ it('describes Stripe promotion-code retrieval by stored ID, not executable code'
   noPost();
 });
 
-it('dispatches LIST_TABLES once with the delegated external project and account, not a caller-supplied ref',async()=>{
+it.each(['connected_account','verified_connection'] as const)('dispatches LIST_TABLES once through a %s on the saved project, not a caller-supplied ref',async kind=>{
   const f=fixture('supabase','LIST_TABLES'),project='b'.repeat(20);
-  Object.assign(f.target,{localProjectRef:'a'.repeat(20),directProof:{...f.target.directProof,kind:'connected_account',
-    authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:project}});
+  const {attestationId,expiresAt,resourceBoundary,...pin}=f.target.directProof;
+  Object.assign(f.target,{localProjectRef:project,directProof:{...pin,...(kind==='verified_connection' ? {kind,connectionAttemptId:randomUUID()}
+    : {kind,authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:project})}});
   Object.assign(f.target.policy,{tool_access_mode:'all',allowed_tools:[]});Object.assign(f.target.connector,{supabase_project_ref:project});
   Object.assign(f.account.state,{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}});
   Object.assign(f.tool,{input_parameters:{type:'object',required:['project_ref'],properties:{project_ref:{type:'string',pattern:'^[a-z]+$'},
     schemas:{type:'array',items:{type:'string'}},include_metadata:{type:'boolean',default:true},include_views:{type:'boolean',default:true},
     include_system_schemas:{type:'boolean',default:false}}}});
-  const d=await f.describe(),pin={version:d.version,schema_hash:d.schemaHash,arguments:{}};
-  f.queue(f.tool,f.toolkit,f.account);await expect(f.call({...pin,arguments:{project_ref:'c'.repeat(20)}})).rejects.toMatchObject({executed:false});noPost();
+  const d=await f.describe(),call={version:d.version,schema_hash:d.schemaHash,arguments:{}};
+  f.queue(f.tool,f.toolkit,f.account);await expect(f.call({...call,arguments:{project_ref:'c'.repeat(20)}})).rejects.toMatchObject({executed:false});noPost();
   const data={tables:[{name:'orders'}]};f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data});
-  await expect(f.call(pin)).resolves.toEqual({data});const posts=http.mock.calls.filter(([,o])=>o.method==='POST');expect(posts).toHaveLength(1);
+  await expect(f.call(call)).resolves.toEqual({data});const posts=http.mock.calls.filter(([,o])=>o.method==='POST');expect(posts).toHaveLength(1);
   expect(posts[0][0]).toMatch(/\/tools\/execute\/SUPABASE_LIST_TABLES$/);expect(JSON.parse(posts[0][1].body)).toMatchObject({
     connected_account_id:f.target.connector.provider_account_id,arguments:{project_ref:project}});
 });
 
-it('executes provider SQL on the delegated external project while keeping the project ref server-owned',async()=>{
+it.each(['connected_account','verified_connection'] as const)('executes provider SQL through a %s without relying on installation identity',async kind=>{
   const f=fixture('supabase','RUN_READ_ONLY_QUERY'), project='b'.repeat(20);
-  Object.assign(f.target,{localProjectRef:'a'.repeat(20),directProof:{...f.target.directProof,kind:'connected_account',
-    authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:project}});
+  const {attestationId,expiresAt,resourceBoundary,...accountPin}=f.target.directProof;
+  Object.assign(f.target,{directProof:{...accountPin,...(kind==='verified_connection' ? {kind,connectionAttemptId:randomUUID()}
+    : {kind,authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:project})}});
   Object.assign(f.target.connector,{supabase_project_ref:project});
   Object.assign(f.account.state,{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}});
   Object.assign(f.tool,{input_parameters:{type:'object',required:['project_ref','query'],properties:{project_ref:{type:'string'},query:{type:'string'}}}});
@@ -428,14 +430,17 @@ it('executes provider SQL on the delegated external project while keeping the pr
   await expect(f.call(pin)).resolves.toEqual({data:{rows:[]}});
   expect(http).toHaveBeenCalledTimes(4);
   expect(JSON.parse(http.mock.calls[3][1].body)).toMatchObject({connected_account_id:f.account.id,arguments:{...args,project_ref:project}});
-  http.mockReset();Object.assign(f.target,{localProjectRef:project});
-  await expect(f.call(pin)).rejects.toMatchObject({code:'TOOL_UNREVIEWED',executed:false});expect(http).not.toHaveBeenCalled();
+  http.mockReset();Object.assign(f.target.policy,{allowed_tools:['SUPABASE_LIST_TABLES']});
+  await expect(f.call(pin)).rejects.toMatchObject({code:'CONNECTOR_TOOL_DENIED',executed:false});expect(http).not.toHaveBeenCalled();
 });
 
-it.each(['shared','external'])('injects the sole project ref for a delegated %s database metadata read and withholds other fields', async location=>{
+it.each(['shared','external'].flatMap(location=>['connected_account','verified_connection'].map(kind=>({location,kind}))))(
+  'injects the sole project ref for $kind on a $location project and withholds other fields', async ({location,kind})=>{
   const f=fixture('supabase','GET_PROJECT'), project='b'.repeat(20);
-  Object.assign(f.target,{localProjectRef:location==='shared'?project:'a'.repeat(20),directProof:{...f.target.directProof,
-    kind:'connected_account',authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:project}});
+  const {attestationId,expiresAt,resourceBoundary,...accountPin}=f.target.directProof;
+  const directProof={...accountPin,...(kind==='verified_connection' ? {kind,connectionAttemptId:randomUUID()}
+    : {kind,authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:project})};
+  Object.assign(f.target,{localProjectRef:location==='shared'?project:'a'.repeat(20),directProof});
   Object.assign(f.target.connector,{supabase_project_ref:project});
   const schema={type:'object',required:['ref'],properties:{ref:{type:'string'}}};
   Object.assign(f.tool,{input_parameters:schema});Object.assign(f.account.state,{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}});

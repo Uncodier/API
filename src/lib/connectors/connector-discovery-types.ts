@@ -4,5 +4,5 @@ export type ConnectorCandidate = {
   tool_origin?: ToolOrigin; account_label?: string;
   name: string; description: string; category: string; domains: string[];
   connector_id: string; toolkit: string; availability: 'describe_required' | 'manual_only'; request_only?: true;
-  unavailability_reason?: 'account_execution_not_authorized' | 'project_restricted' | 'reserved_provider_action';
+  unavailability_reason?: 'account_execution_not_authorized' | 'reserved_provider_action';
 };

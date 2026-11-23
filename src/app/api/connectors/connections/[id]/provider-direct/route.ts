@@ -40,7 +40,7 @@ async function snapshot(args:{p_site_id:string;p_actor_id:string;p_connector_id:
     ('assistant_allowed' in saved.data
       ? !change.enabled && !saved.data.assistant_allowed && !saved.data.enabled && saved.data.revision===change.expected_revision+1
       : saved.data.enabled===change.enabled && saved.data.revision===change.expected_revision);
-  // A delegated account can have a project reference without having a resource attestation.
+  // A verified connection can carry a project reference without a resource attestation.
   // The RPC owns authorization; the legacy reference is metadata and is never returned.
   if (!saved.success || (ordinary && (saved.data.attested || saved.data.setup_pending)) || saved.data.connector_id!==args.p_connector_id || (saved.data.enabled && ((!saved.data.attested && !ordinary) || saved.data.setup_pending)) ||
     (change && !correctMutation)) {

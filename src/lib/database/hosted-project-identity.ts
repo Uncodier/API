@@ -1,5 +1,5 @@
 import { Resolver } from 'node:dns/promises';
-import { captureCatalogActorReply, captureDirectActorReply, captureSupportAccountReply } from './supabase-admin';
+import { captureCatalogActorReply, captureSupportAccountReply } from './supabase-admin';
 
 const hosted = /^([a-z]{20})\.supabase\.co$/;
 const label = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -48,5 +48,4 @@ async function withActorEvidence(capture: typeof captureCatalogActorReply, check
   return { allowed, localProjectRef };
 }
 export const withCatalogActorEvidence = (check: () => Promise<boolean>) => withActorEvidence(captureCatalogActorReply, check);
-export const withDirectActorEvidence = (check: () => Promise<boolean>) => withActorEvidence(captureDirectActorReply, check);
 export const withSupportAccountEvidence = (check: () => Promise<boolean>) => withActorEvidence(captureSupportAccountReply, check);

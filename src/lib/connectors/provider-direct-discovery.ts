@@ -1,4 +1,4 @@
-import {authorityStamp,projectActionAllowed} from './provider-direct-authority';
+import {authorityStamp} from './provider-direct-authority';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {loadConnectorCredential} from './account-access';
@@ -90,15 +90,12 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
         const reserved=i.slug.startsWith('COMPOSIO_');
         const name=reserved?`connector:${target.connector.id}:${i.slug}`:connectorToolRef(target.connector.id,i.slug);
         if (!matches(i,kit,name,filters)) continue;
-        const reason=reserved ? 'reserved_provider_action' : 'catalogOnly' in target ? 'account_execution_not_authorized'
-          : !projectActionAllowed(kit,i.slug,target.connector.supabase_project_ref,target.directProof.kind==='connected_account',target.localProjectRef)
-            ? 'project_restricted' : undefined;
+        const reason=reserved ? 'reserved_provider_action' : 'catalogOnly' in target ? 'account_execution_not_authorized' : undefined;
         tools.push({name,toolkit:kit,tool_origin:'provider',...modelAccountIdentity(target.connector.id),domains,category,
           availability:reason?'manual_only':'describe_required',...(reason && {unavailability_reason:reason}),description:!reason
             ? `${i.slug.replaceAll('_',' ')}. Describe to verify the provider schema.`
             : reason==='reserved_provider_action' ? 'Reserved Composio operation; unavailable through a connected account.'
-            : reason==='account_execution_not_authorized' ? 'Catalog metadata only. This connection is not authorized to describe or execute provider actions in Ask.'
-            : 'The connection’s project binding does not allow this operation. No execution request was sent.'});
+            : 'Catalog metadata only. This connection is not authorized to describe or execute provider actions in Ask.'});
       }
       observed = offset<items.length?fingerprint:'';
       if (!observed) {
