@@ -87,7 +87,7 @@ it.each([['OAUTH2','http'],['OAUTH2','downstream'],['API_KEY','http'],['API_KEY'
   expect(aPin.schema_hash).not.toBe(bPin.schema_hash);
   await expect(run.call(ref(b),aPin)).rejects.toMatchObject({code:'CONNECTOR_SCHEMA_CHANGED',executed:false});
   expect(posted).toHaveLength(0); expect(claims).toHaveLength(0);
-  expect((await run.call(ref(a),aPin)).receipt.url).toBe(`/connectors/results/${receipt}`);
+  expect(await run.call(ref(a),aPin)).toMatchObject({receipt:{url:`/connectors/results/${receipt}`}});
   accounts.length=0;
   const rejected = await run.call(ref(b),bPin).catch(failureForAgent);
   expect(rejected).toMatchObject({success:false,automatic_retry:false,code:denial==='http'?'PROVIDER_FORBIDDEN':'APP_RESOURCE_DENIED'});

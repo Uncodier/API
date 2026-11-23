@@ -5,7 +5,7 @@ import { OutstandLeadIdentityError } from '@/lib/services/leads/outstand-comment
 import { WhatsAppLeadService } from '@/lib/services/whatsapp/WhatsAppLeadService';
 import { ConversationService } from '@/lib/services/conversation-service';
 import { visitorAuthorizationErrorResponse } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
-import { isValidUUID, findActiveCustomerSupportAgent, getAgentInfo } from './agent-data';
+import { isValidUUID, findActiveCustomerSupportAgent, supportThreadAgent, getAgentInfo } from './agent-data';
 import { memberConversationHost } from '@/lib/connectors/channel-member-host';
 import { supportConnectorRequestHost } from './connector-request-host';
 import { readSupportRequest } from './request';
@@ -66,7 +66,7 @@ async function handleSupportRequest(request: Request) {
                     code: 'INVALID_REQUEST', message: (error as Error).message,
                 } }, { status: 400, headers: corsHeaders(request) });
         }
-        let effectiveSiteId = site_id;
+        const effectiveSiteId = site_id;
         if (effectiveSiteId) {
             console.log(`📍 Using provided site_id: ${effectiveSiteId}`);
         }
@@ -180,39 +180,24 @@ async function handleSupportRequest(request: Request) {
         else if (!effectiveConversationId && leadOrigin === 'website_chat') {
             console.log(`🌐 Para website_chat sin conversation_id, siempre se creará una nueva conversación`);
         }
-        let effectiveAgentId = agentId;
-        let agentUserId: string | null = null;
-        let agentDisabled = false;
-        if (!effectiveAgentId) {
-            if (effectiveSiteId) {
-                const foundAgent = await findActiveCustomerSupportAgent(effectiveSiteId);
-                if (foundAgent) {
-                    effectiveAgentId = foundAgent.agentId;
-                    agentUserId = foundAgent.userId;
-                    console.log(`🤖 Usando agente de soporte al cliente encontrado: ${effectiveAgentId} (user_id: ${agentUserId})`);
-                }
-                else {
-                    effectiveAgentId = 'default_customer_support_agent';
-                    agentDisabled = true;
-                    console.log(`⚠️ No se encontró un agente activo, usando valor predeterminado: ${effectiveAgentId}`);
-                }
-            }
-            else {
-                effectiveAgentId = 'default_customer_support_agent';
-                console.log(`⚠️ No se puede buscar un agente sin site_id, usando valor predeterminado: ${effectiveAgentId}`);
-            }
-        }
-        else if (isValidUUID(effectiveAgentId)) {
-            const agentInfo = await getAgentInfo(effectiveAgentId);
-            if (agentInfo) {
-                agentUserId = agentInfo.user_id;
-                agentDisabled = !!agentInfo.status && agentInfo.status !== 'active';
-                if (!effectiveSiteId && agentInfo.site_id) {
-                    effectiveSiteId = agentInfo.site_id;
-                    console.log(`📍 Usando site_id del agente: ${effectiveSiteId}`);
-                }
-            }
-        }
+        effectiveConversationId = await resolveSnoozeConversation({
+            siteId: effectiveSiteId, conversationId: effectiveConversationId,
+            metadata: inboundCustomData ? { ...inboundCustomData, channel: effectiveOrigin } : undefined,
+        });
+        const webOnly = !!browserIdentity || visitorTurn !== undefined || effectiveOrigin === 'website_chat';
+        const assignedAgent = await supportThreadAgent(effectiveSiteId, effectiveConversationId, webOnly);
+        const unavailableAgent = () => NextResponse.json({ success: false, error: {
+            code: 'AGENT_UNAVAILABLE', message: 'The assigned support agent is unavailable.',
+        } }, { status: 409 });
+        // An explicit ID is a concurrency assertion, never a selector. The Support
+        // generator cannot run a Sales or other role under Support instructions.
+        const assigned = assignedAgent ? await getAgentInfo(assignedAgent, effectiveSiteId) : null;
+        if (assignedAgent && !assigned) return unavailableAgent();
+        const legacy = assignedAgent ? null : await findActiveCustomerSupportAgent(effectiveSiteId);
+        const effectiveAgentId = assignedAgent ?? legacy?.agentId ?? 'default_customer_support_agent';
+        if (agentId != null && agentId !== effectiveAgentId) return unavailableAgent();
+        const agentUserId = assigned?.user_id ?? legacy?.userId ?? null;
+        const agentDisabled = assigned ? assigned.status !== 'active' : !legacy;
         if (inboundCustomData?.source === 'comment' && isValidUUID(effectiveAgentId)) {
             await bindCommentAgent(effectiveSiteId, effectiveConversationId, effectiveAgentId);
         }
@@ -222,10 +207,6 @@ async function handleSupportRequest(request: Request) {
             return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Unable to determine a valid user_id for the command' } }, { status: 400 });
         }
         console.log(`Creando comando para agente: ${effectiveAgentId}, usuario: ${effectiveUserId}, site: ${effectiveSiteId || 'N/A'}`);
-        effectiveConversationId = await resolveSnoozeConversation({
-            siteId: effectiveSiteId, conversationId: effectiveConversationId,
-            metadata: inboundCustomData ? { ...inboundCustomData, channel: effectiveOrigin } : undefined,
-        });
         let persistedInboundId: string | undefined;
         let automationStartedAt = requestTimestamp;
         if (!agentDisabled && inboundCustomData?.source === 'zavu_inbound_message' && origin_message_id) {
@@ -281,7 +262,7 @@ async function handleSupportRequest(request: Request) {
         if (deniedZavu)
             return deniedZavu;
         const connectorHost = await supportConnectorRequestHost({ request, browserIdentity, siteId: effectiveSiteId,
-            agentId: effectiveAgentId, conversationId: effectiveConversationId, suppliedAgentId: agentId,
+            agentId: effectiveAgentId, conversationId: effectiveConversationId,
             requestedConversationId: conversationId, origin: leadOrigin, channelDelivery: channel_delivery, visitorTurn, message, originMessageId: origin_message_id, metadata: inboundCustomData, inboundId: persistedInboundId })
             ?? (!browserIdentity && visitorTurn === undefined && !inboundCustomData && !lead_id && !visitor_id && !website_chat_origin
                 && !channel_delivery && (!origin || origin === 'chat') && conversationId === effectiveConversationId
@@ -324,6 +305,8 @@ async function handleSupportRequest(request: Request) {
                 } }, { status: 422, headers: corsHeaders(request) });
         }
         const responseMedia = await validateSupportResponseMedia(resolved.responseMedia, effectiveOrigin || 'chat', responseFormat, inboundCustomData?.source === 'comment');
+        const currentAssignment = await supportThreadAgent(effectiveSiteId, effectiveConversationId, webOnly);
+        if ((assignedAgent || currentAssignment) && currentAssignment !== effectiveAgentId) return unavailableAgent();
         let savedMessages;
         try {
             savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, effectiveConversationId, conversationTitle, effectiveLeadId || undefined, visitor_id, effectiveAgentId, effectiveSiteId, (effectiveDbUuid && isValidUUID(effectiveDbUuid)) ? effectiveDbUuid : undefined, effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined), isRobot, isTransactionalMessage, isErratic, origin_message_id, channel_delivery === true, require_approval === true, { ...(inboundCustomData && typeof inboundCustomData === 'object' ? inboundCustomData : {}),
@@ -366,33 +349,8 @@ async function handleSupportRequest(request: Request) {
         if (!savedMessages) {
             console.error(`❌ Error al guardar mensajes en la base de datos`);
             console.error(`❌ Context: command_id=${effectiveDbUuid}, lead_id=${effectiveLeadId}, conversation_id=${effectiveConversationId}`);
-            return NextResponse.json({
-                success: false,
-                error: {
-                    code: 'DATABASE_ERROR',
-                    message: 'The command completed successfully but the messages could not be saved to the database. This may be due to a foreign key constraint failure, missing required data, or database connection issue. Check server logs for details.',
-                    details: 'saveMessages() returned null instead of saved messages. Possible causes: invalid foreign key references (command_id, lead_id, conversation_id), database constraint violations, or connection errors.'
-                },
-                data: {
-                    command_id: effectiveDbUuid,
-                    message: assistantMessage,
-                    conversation_title: conversationTitle,
-                    lead_id: effectiveLeadId || null,
-                    conversation_id: effectiveConversationId || null
-                },
-                debug: {
-                    agent_id: effectiveAgentId,
-                    user_id: effectiveUserId,
-                    agent_user_id: agentUserId,
-                    site_id: effectiveSiteId,
-                    is_robot: isRobot,
-                    is_transactional: isTransactionalMessage,
-                    is_erratic: isErratic
-                }
-            }, {
-                status: 500,
-                headers: corsHeaders(request)
-            });
+            return NextResponse.json({ success:false,error:{code:'DATABASE_ERROR',message:'Message persistence could not be confirmed.'} },
+                {status:500,headers:corsHeaders(request)});
         }
         return NextResponse.json({
             success: true,

@@ -20,8 +20,9 @@ it('authenticates both routes independently and requires manager access before c
   }
 });
 it('forwards only server actor, bound IDs, revision and manager consent; responds with private non-cacheable DTO',async()=>{
-  const read=await GET(req(query),context);expect(await read.json()).toEqual(status);expect(read.headers.get('cache-control')).toBe('private, no-store');
-  expect(rpc).toHaveBeenCalledWith('connector_ask_policy_status',{p_site_id:site,p_actor_id:actor,p_connector_id:id});
+  rpc.mockReturnValueOnce(reply({...stored,authorization_mode:'member_policy',explicitly_disabled:false}));
+  const read=await GET(req(query),context);expect(await read.json()).toEqual({...status,authorization_mode:'member_policy',explicitly_disabled:false});expect(read.headers.get('cache-control')).toBe('private, no-store');
+  expect(rpc).toHaveBeenCalledWith('connector_instance_policy_status',{p_site_id:site,p_actor_id:actor,p_connector_id:id});
   const save=await PATCH(req('',patch),context);expect(await save.json()).toEqual(status);
   expect(rpc).toHaveBeenCalledWith('connector_set_ask_policy',{p_site_id:site,p_actor_id:actor,p_connector_id:id,p_expected_revision:8,p_expected_direct_revision:11,p_enabled:true});
   rpc.mockReturnValue(reply({...stored,private_evidence:'forbidden'}));expect((await GET(req(query),context)).status).toBe(503);
@@ -29,6 +30,7 @@ it('forwards only server actor, bound IDs, revision and manager consent; respond
 it('reports pending setup as unavailable, never returns a project reference, and confirms cancel only after both states clear',async()=>{
   const pending={...stored,attested:false,enabled:false,setup_pending:true,bound_supabase_ref:'a'.repeat(20)};
   rpc.mockReturnValue(reply(pending));
+  rpc.mockReturnValueOnce(reply(null,{code:'PGRST202'}));
   const view=await GET(req(query),context); expect(await view.json()).toEqual({...status,attested:false,enabled:false,setup_pending:true});
   expect((await PATCH(req('',{...patch,enabled:false}),context)).status).toBe(503);
   rpc.mockReturnValue(reply({...pending,setup_pending:false})); expect((await PATCH(req('',{...patch,enabled:false}),context)).status).toBe(200);

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { POST } from '../message/route';
 import { manageLeadCreation } from '@/lib/services/leads/lead-service';
 import { OutstandLeadIdentityError } from '@/lib/services/leads/outstand-comment-identity';
@@ -5,6 +6,10 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ConversationService } from '@/lib/services/conversation-service';
 import { visitorSessionAuthorizationService } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
 
+const serviceKey = randomBytes(32).toString('hex');
+const oldKey = process.env.SERVICE_API_KEY;
+beforeAll(() => { process.env.SERVICE_API_KEY = serviceKey; });
+afterAll(() => { if (oldKey === undefined) delete process.env.SERVICE_API_KEY; else process.env.SERVICE_API_KEY = oldKey; });
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), schema: jest.fn() } }));
 jest.mock('@/lib/services/leads/lead-service', () => ({ manageLeadCreation: jest.fn() }));
 jest.mock('@/lib/services/social-comments/persistence', () => ({ findCommentProposal: jest.fn().mockResolvedValue(null) }));
@@ -47,7 +52,7 @@ describe('Customer Support Outstand lead boundary (offline)', () => {
 
   it('passes the new contract to lead management and aborts on a DB identity error', async () => {
     const response = await POST(new Request('http://localhost/api/agents/customerSupport/message', {
-      method: 'POST', body: JSON.stringify({ site_id: siteId, message: 'Comment', origin: 'linkedin', custom_data: contract }),
+      method: 'POST', headers: {'x-api-key':serviceKey}, body: JSON.stringify({ site_id: siteId, message: 'Comment', origin: 'linkedin', custom_data: contract }),
     }));
     expect(manageLeadCreation).toHaveBeenCalledWith(expect.objectContaining({
       siteId, origin: 'linkedin', socialCommentData: contract,
@@ -63,7 +68,7 @@ describe('Customer Support Outstand lead boundary (offline)', () => {
 
   it('continues forwarding legacy handles without opting them in to the new contract', async () => {
     await POST(new Request('http://localhost/api/agents/customerSupport/message', {
-      method: 'POST', body: JSON.stringify({ site_id: siteId, message: 'DM', origin: 'instagram',
+      method: 'POST', headers: {'x-api-key':serviceKey}, body: JSON.stringify({ site_id: siteId, message: 'DM', origin: 'instagram',
         custom_data: { account_username: 'legacy-handle' } }),
     }));
     expect(manageLeadCreation).toHaveBeenCalledWith(expect.objectContaining({

@@ -126,6 +126,14 @@ describe('durable Zavu message identity', () => {
     await expect(saveZavuSupportMessages({ ...input, assistantMessage: 'Different' })).rejects.toThrow('SCOPE_CONFLICT');
   });
 
+  it('never resumes an inbound-only turn using a replacement agent, even after the thread is reassigned', async () => {
+    const first = await saveZavuSupportMessages({...input,inboundOnly:true});
+    tables.conversations.get(first.conversationId).agent_id = 'replacement';
+    await expect(saveZavuSupportMessages({...input,agentId:'replacement'})).rejects.toThrow('INBOUND_SCOPE_CONFLICT');
+    await expect(saveZavuSupportMessages(input)).rejects.toThrow('CONVERSATION_SCOPE_CONFLICT');
+    expect(tables.messages.size).toBe(1);
+  });
+
   it('cannot attribute a saved reply to a replacement agent or a different inbound message on retry', async () => {
     const saved = await saveZavuSupportMessages(input);
     await expect(saveZavuSupportMessages({ ...input, agentId: 'other-agent' })).rejects.toThrow('SCOPE_CONFLICT');

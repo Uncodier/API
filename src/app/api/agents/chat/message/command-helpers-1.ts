@@ -1,10 +1,4 @@
-import { NextResponse } from 'next/server';
-import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
-import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { v4 as uuidv4 } from 'uuid';
-import { getCommerceReservationsPolicy } from '@/app/api/agents/customerSupport/support-policies';
-import { buildChatMessageTools } from './tools';
 
 export function isValidUUID(uuid: string): boolean {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -12,47 +6,10 @@ export function isValidUUID(uuid: string): boolean {
 }
 export const ANONYMOUS_USER_ID = "00000000-0000-0000-0000-000000000000";
 export async function getCommandDbUuid(internalId: string, commandService: any): Promise<string | null> {
-    try {
-        const command = await commandService.getCommandById(internalId);
-        if (command && command.metadata && command.metadata.dbUuid) {
-            if (isValidUUID(command.metadata.dbUuid)) {
-                console.log(`🔑 UUID encontrado en metadata: ${command.metadata.dbUuid}`);
-                return command.metadata.dbUuid;
-            }
-        }
-        try {
-            const idMap = (commandService as any).idTranslationMap;
-            if (idMap && idMap.get && idMap.get(internalId)) {
-                const mappedId = idMap.get(internalId);
-                if (isValidUUID(mappedId)) {
-                    console.log(`🔑 UUID encontrado en mapa interno: ${mappedId}`);
-                    return mappedId;
-                }
-            }
-        }
-        catch (err) {
-            console.log('No se pudo acceder al mapa de traducción interno');
-        }
-        if (command) {
-            const { data, error } = await supabaseAdmin
-                .from('commands')
-                .select('id')
-                .eq('task', command.task)
-                .eq('user_id', command.user_id)
-                .eq('status', command.status)
-                .order('created_at', { ascending: false })
-                .limit(1);
-            if (!error && data && data.length > 0) {
-                console.log(`🔑 UUID encontrado en búsqueda directa: ${data[0].id}`);
-                return data[0].id;
-            }
-        }
-        return null;
-    }
-    catch (error) {
-        console.error('Error al obtener UUID de base de datos:', error);
-        return null;
-    }
+    if (isValidUUID(internalId)) return internalId;
+    const command = await commandService.getCommandById(internalId, {fresh:true});
+    const id = command?.metadata?.dbUuid;
+    return isValidUUID(id) ? id : null;
 }
 export async function waitForCommandCompletion(commandId: string, commandService: any, maxAttempts = 100, delayMs = 1000) {
     let executedCommand = null;

@@ -89,7 +89,7 @@ export function formatConversationHistoryForContext(messages: Array<{
     formattedHistory += '```';
     return formattedHistory;
 }
-export async function getAgentInfo(agentId: string): Promise<{
+export async function getAgentInfo(agentId: string, siteId: string): Promise<{
     user_id: string;
     site_id?: string;
     tools?: any[];
@@ -104,7 +104,7 @@ export async function getAgentInfo(agentId: string): Promise<{
         const { data, error } = await supabaseAdmin
             .from('agents')
             .select('id, user_id, site_id, configuration')
-            .eq('id', agentId)
+            .eq('id', agentId).eq('site_id', siteId).eq('status', 'active')
             .single();
         if (error) {
             console.error('Error al obtener información del agente:', error);

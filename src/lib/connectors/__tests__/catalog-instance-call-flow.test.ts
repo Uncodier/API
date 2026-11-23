@@ -47,8 +47,8 @@ it.each([true,false])('keeps shared-account connector discovery metadata-only wi
   else expect(inventory).toMatchObject({success:false,tools:[],connector_error:'DIRECT_POLICY_REQUIRED'});
   expect(http).toHaveBeenCalledTimes(allowed?1:0);http.mockClear();jest.mocked(loadConnectorCredential).mockClear();
   const providerRef=`connector:${connectorId}:SUPABASE_RUN_READ_ONLY_QUERY`;
-  expect(await router.execute({action:'describe',name:providerRef})).toMatchObject({success:false,code:'DIRECT_POLICY_REQUIRED'});
-  expect(await router.execute({action:'call',name:providerRef,args:JSON.stringify({version:'20261116_00',schema_hash:'0'.repeat(64),arguments:{scope:'workspace',query:'select count(*) from analytics.paid_sales'}})})).toMatchObject({success:false,code:'DIRECT_POLICY_REQUIRED',executed:false});
+  expect(await router.execute({action:'describe',name:providerRef})).toMatchObject({success:false,code:'NOT_FOUND'});
+  expect(await router.execute({action:'call',name:providerRef,args:JSON.stringify({version:'20261116_00',schema_hash:'0'.repeat(64),arguments:{scope:'workspace',query:'select count(*) from analytics.paid_sales'}})})).toMatchObject({success:false,code:'DIRECT_ACTION_UNSUPPORTED',executed:false});
   expect(mockRpc).not.toHaveBeenCalledWith('connector_instance_scoped_read',expect.anything());
   mockRpc.mockClear();
   for(const connector_id of [connectorId,undefined]) {

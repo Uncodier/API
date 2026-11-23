@@ -11,6 +11,7 @@ const executionReceipt = z.object({ success: z.literal(true), dry_run: z.literal
 
 const rejected = {
   access_denied: 'Lead bulk operation is not permitted for this user or session.',
+  invalid_assignee: 'No changes applied. Choose a team member with active access to this site.',
   invalid_preview: 'Preview not found, expired, or does not match this exact batch. If a previous write outcome is unknown, reconcile before starting a new preview.',
   selection_changed: 'No changes applied. The selected leads or their revisions changed. Preview and review again.',
   confirmation_required: 'Ask the user to review the preview and send its exact confirmation message in the same chat.',
@@ -24,7 +25,9 @@ export async function executeLeadBulkOperation(host: RequirementCommandSource, i
   const previewId = input.preview_id?.toLowerCase();
   const { action, dry_run } = input;
   const payload = action === 'create' ? { leads: input.leads }
-    : { lead_ids: [...(input.lead_ids ?? [])].sort(), ...(action === 'change_status' ? { status: input.status } : {}) };
+    : { lead_ids: [...(input.lead_ids ?? [])].sort(),
+      ...(action === 'change_status' ? { status: input.status } : {}),
+      ...(action === 'assign_to_member' ? { assignee_id: input.assignee_id } : {}) };
   const unavailable = () => dry_run
     ? noWrite('LEAD_BULK_UNAVAILABLE', 'The preview is unavailable. No lead write was requested.')
     : { success: false, code: 'LEAD_BULK_OUTCOME_UNKNOWN', preview_id: previewId,
@@ -48,10 +51,12 @@ export async function executeLeadBulkOperation(host: RequirementCommandSource, i
     }
     if (dry_run) {
       const receipt = previewReceipt.safeParse(data);
-      return receipt.success ? receipt.data : unavailable();
+      return receipt.success && (action !== 'assign_to_member' || receipt.data.assignee_id === input.assignee_id)
+        ? receipt.data : unavailable();
     }
     const receipt = executionReceipt.safeParse(data);
     return receipt.success && receipt.data.preview_id === previewId && receipt.data.affected_count === input.expected_count
+      && (action !== 'assign_to_member' || receipt.data.assignee_id === input.assignee_id)
       && new Set(receipt.data.affected_lead_ids).size === receipt.data.affected_count ? receipt.data : unavailable();
   } catch {
     return unavailable();

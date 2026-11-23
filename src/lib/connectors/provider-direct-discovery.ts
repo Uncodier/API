@@ -10,8 +10,10 @@ import {CONNECTOR_DOMAINS, getToolkitDomains} from './domains';
 import {ConnectorError, type ConnectorContext} from './types';
 import type {ConnectorFilters, ConnectorCandidate} from './connector-discovery-types';
 import type {DirectAuthorizedConnector} from './provider-direct-policy';
-import type {CatalogOnlyAccount} from './selected-catalog-account';
+import {selectedCatalogAccount,type CatalogOnlyAccount} from './selected-catalog-account';
 import {directActionNameSafe} from './provider-direct-guards';
+
+import {selectedQueryProbeEligible, SELECTED_QUERY_PROBE} from './selected-query-probe-policy';
 
 // Cursors refer to metadata positions only, never authorization. Resume a bounded page using
 // the provider's page/limit cursor format, not an arbitrary query/path supplied by a model.
@@ -70,7 +72,19 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
       const ids=[...new Set(target.policy.allowed_tools)].sort();
       const batch=all?[]:ids.slice((page-1)*12,page*12);
       if (!all && !batch.length) throw stale();
-      const result=all?await listToolkitToolMetadata(client,kit,catalogPageCursor(page,TOOL_CATALOG_LIMIT))
+      const probe:Item={slug:SELECTED_QUERY_PROBE,name:'Test connection',description:'Test connectivity with SELECT 1; no table reads on this shared credential.',action_types:[]};
+      let canProbe=false;
+      if (ctx.connectorIdHint===target.connector.id && kit==='supabase' && ctx.agentId && target.connector.supabase_project_ref) {
+        try {
+          canProbe=selectedQueryProbeEligible('catalogOnly' in target ? target : await selectedCatalogAccount(ctx,target.connector.id,true));
+        } catch (error) {
+          if (!(error instanceof ConnectorError) || !['DIRECT_POLICY_REQUIRED','NOT_FOUND','ACCESS_DENIED'].includes(error.code)) throw error;
+        }
+      }
+      const query=(filters.catalog_query ?? filters.query ?? '').trim();
+      const probeLookup=canProbe && (query===probe.slug || query===connectorToolRef(target.connector.id,probe.slug) ||
+        /^(?:test connection|connection test|test connectivity|select 1|probar conexi[oó]n)$/i.test(query));
+      const result=probeLookup?await listSelectedCatalogMetadata(client,kit,[probe.slug]):all?await listToolkitToolMetadata(client,kit,catalogPageCursor(page,TOOL_CATALOG_LIMIT))
         :await listSelectedCatalogMetadata(client,kit,batch);
       if ('missing' in result && result.missing) partial_error='CATALOG_SELECTION_CHANGED';
       const items=result.items, fingerprint=digest(items.map(i=>[i.slug,i.name,i.description]));
@@ -79,14 +93,15 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
         const i=items[offset];
         if (i.slug.startsWith('COMPOSIO_')) continue;
         const name=connectorToolRef(target.connector.id,i.slug);
-        if (!matches(i,kit,name,filters)) continue;
+        const isProbe=canProbe && i.slug===probe.slug;
+        if (!matches(isProbe ? {...i,description:`${probe.name}. ${probe.description} Probar conexión. ${i.description}`} : i,kit,name,filters)) continue;
         tools.push({name,toolkit:kit,tool_origin:'provider',...modelAccountIdentity(target.connector.id),
-          domains,category,availability:'directProof' in target && directActionNameSafe(kit,i.slug)?'describe_required':'manual_only',
-          description:'directProof' in target ? `${i.slug.replaceAll('_',' ')}. Catalog metadata is not authorization.` : 'Provider catalog only. This account has no direct execution admission; do not call or substitute another tool.'});
+          domains,category,availability:isProbe || ('directProof' in target && directActionNameSafe(kit,i.slug))?'describe_required':'manual_only',
+          description:isProbe ? `${probe.description} Never substitute SELECT 1 for a data request.` : 'directProof' in target ? `${i.slug.replaceAll('_',' ')}. Catalog metadata is not authorization.` : 'Provider catalog only. This account has no direct execution admission; do not call or substitute another tool.'});
       }
       observed = offset<items.length?fingerprint:'';
       if (!observed) {
-        const more='next_cursor' in result ? !!result.next_cursor : ids.length>page*12;
+        const more=!probeLookup && ('next_cursor' in result ? !!result.next_cursor : ids.length>page*12);
         offset=0;
         if (more && page<100_000) page++; else {account++;page=1;}
       }

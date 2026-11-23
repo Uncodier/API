@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { loadToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
-import { requireConnectorSiteAccess, resolveConnectorAction, requireConnectorAgent, resolveConnectorPolicy, connectorDatabaseError, resolveUsableAccount } from './access';
+import { requireConnectorSiteAccess, getVisibleConnector, getMemberGrant, requireConnectorAgent, resolveConnectorPolicy, connectorDatabaseError } from './access';
+import { effectiveMemberGrant } from './grant-resolution';
 import { assertScopes, scopesAllowed, screenAllowed } from './action-policy';
 import { canRequestFromConversation, getReviewedTool, policyReviewedTools } from './reviewed-tools';
 import { loadSupportPublication, publicationWindow } from './support-runtime-publication';
@@ -17,16 +18,33 @@ const signal = () => AbortSignal.timeout(5000);
 const memberContext = (scope: Extract<SupportConnectorScope, { audience: 'member' }>): ConnectorContext =>
   ({ siteId: scope.siteId, agentId: scope.agentId, userId: scope.userId, host: 'assistant' });
 
+type MemberScope = Extract<SupportConnectorScope, { audience: 'member' }>;
+
+// The member must be allowed to see this account. The assigned agent's grant
+// authorizes dispatch; only the member's own use grant authorizes raw results.
+async function memberAccount(scope: MemberScope, id: string) {
+  const connector = await getVisibleConnector(scope.siteId, scope.userId, id);
+  if (connector.id !== id || connector.site_id !== scope.siteId) throw denied();
+  const row = await getMemberGrant(scope.siteId, scope.userId, id);
+  const member = effectiveMemberGrant(connector, row);
+  if (row !== null && !member.can_view) throw denied(); // Manager visibility never overrides an explicit restriction.
+  const agentUse = await requireConnectorAgent(connector, scope.agentId, true);
+  const access = await resolveConnectorPolicy(connector, 'assistant');
+  if (!agentUse && !access.policy.require_approval) throw denied();
+  return {access: agentUse ? access : {...access, requestOnly: true as const}, releaseMemberResult: member.can_use};
+}
+
 export async function authorizeSupportAction(scope: SupportConnectorScope, connectorId: string, slug: string) {
   if (scope.audience === 'member') {
     if (!canRequestFromConversation(slug)) throw denied(); // Same channel ceiling for discovery, direct execution and review.
     const tool = getReviewedTool(slug);
     const context = memberContext(scope);
-    const access = await resolveConnectorAction(context, connectorId, slug, true);
+    const { access, releaseMemberResult } = await memberAccount(scope, connectorId);
+    if (!policyReviewedTools(access.connector, access.policy).some(entry => entry.slug === slug)) throw denied();
     if (access.connector.site_id !== scope.siteId || access.connector.id !== connectorId ||
         access.connector.toolkit_slug !== tool.toolkit || !screenAllowed(tool, await loadToolScreenAccess(context))) throw denied();
     assertScopes(access, tool);
-    return { tool, access, publication: null };
+    return { tool, access, publication: null, releaseMemberResult };
   }
   if (slug !== PUBLIC_TOOL) throw denied();
   const publication = await loadSupportPublication(scope.siteId, connectorId, scope.audience, scope.agentId);
@@ -49,11 +67,11 @@ export function supportInventory(scope: SupportConnectorScope) {
   const context = scope.audience === 'member' ? memberContext(scope) : null;
   let screens: ReturnType<typeof loadToolScreenAccess> | undefined;
   return async (id: string) => {
-    if (!context) {
+    if (scope.audience !== 'member' || !context) {
       const { tool } = await authorizeSupportAction(scope, id, PUBLIC_TOOL);
       return { tools: [{ ...tool, description: publicDescription, slug: PUBLIC_TOOL }], label: undefined };
     }
-    const [access, allowedScreens] = await Promise.all([resolveUsableAccount(context, id, true), screens ??= loadToolScreenAccess(context)]);
+    const [{access}, allowedScreens] = await Promise.all([memberAccount(scope, id), screens ??= loadToolScreenAccess(context)]);
     if (access.connector.id !== id || access.connector.site_id !== scope.siteId) throw denied();
     const tools = policyReviewedTools(access.connector, access.policy).filter(tool =>
       canRequestFromConversation(tool.slug) && screenAllowed(tool, allowedScreens) && scopesAllowed(access.connector, tool));

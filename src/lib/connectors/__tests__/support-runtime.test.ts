@@ -4,7 +4,7 @@ import { isAssignedChannelCommand } from '../channel-command-row';
 import { SUPPORT_CONNECTOR_TOOL } from '../channel-tool-names';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { executeSupportConnectorTool, type SupportConnectorScope } from '../support-runtime';
-import { loadConnectorCredential, resolveConnectorAction, resolveConnectorPolicy, requireConnectorAgent, resolveUsableAccount } from '../access';
+import { loadConnectorCredential, getVisibleConnector, getMemberGrant, resolveConnectorPolicy, requireConnectorAgent } from '../access';
 import { supportInventory } from '../support-runtime-access';
 import { loadToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
 import { describeConnectorTool, executeConnectorTool } from '../composio-sessions';
@@ -20,7 +20,7 @@ jest.mock('@/lib/agentbase/agents/toolEvaluator/executor/mcpNativeTools', () => 
 jest.mock('@/lib/services/workflow-service', () => ({}));
 jest.mock('@/lib/database/supabase-client', () => ({supabaseAdmin:{from:jest.fn()}}));
 jest.mock('../support-runtime-publication', () => ({loadSupportPublication:jest.fn()}));
-jest.mock('../access', () => ({loadConnectorCredential:jest.fn(), resolveConnectorAction:jest.fn(), resolveConnectorPolicy:jest.fn(), requireConnectorAgent:jest.fn(),resolveUsableAccount:jest.fn()}));
+jest.mock('../access', () => ({loadConnectorCredential:jest.fn(), getVisibleConnector:jest.fn(), getMemberGrant:jest.fn(), resolveConnectorPolicy:jest.fn(), requireConnectorAgent:jest.fn()}));
 jest.mock('../approval-store', () => ({requestProposal:jest.fn()}));
 jest.mock('../composio-sessions', () => ({...jest.requireActual('../composio-sessions'),describeConnectorTool:jest.fn(),executeConnectorTool:jest.fn()}));
 jest.mock('@/app/api/agents/tools/router/screen-access', () => ({...jest.requireActual('@/app/api/agents/tools/router/screen-access'),loadToolScreenAccess:jest.fn()}));
@@ -52,7 +52,9 @@ beforeEach(() => {
     maybeSingle:async () => ({data:access.connector,error:null}) };
   jest.mocked(supabaseAdmin.from).mockReturnValue(query as any);
   jest.mocked(loadSupportPublication).mockResolvedValue({labelId,revision:1,audience:'anonymous'});
-  jest.mocked(resolveConnectorAction).mockImplementation(async () => JSON.parse(JSON.stringify(access)));
+  jest.mocked(getVisibleConnector).mockImplementation(async () => access.connector);
+  jest.mocked(getMemberGrant).mockResolvedValue({user_id:member.userId,can_view:true,can_use:true,expires_at:null});
+  jest.mocked(requireConnectorAgent).mockResolvedValue(true);
   jest.mocked(resolveConnectorPolicy).mockImplementation(async () => JSON.parse(JSON.stringify(access)));
   jest.mocked(loadConnectorCredential).mockResolvedValue({apiKey:randomBytes(32).toString('hex'),revision:'v1',source:'byok'});
   jest.mocked(loadToolScreenAccess).mockResolvedValue({isAdmin:false,blockedScreens:[]});
@@ -69,7 +71,7 @@ test.each([anonymous, {...base,audience:'verified',leadId:randomUUID()} as const
   expect(executeConnectorTool).toHaveBeenCalledWith(expect.objectContaining({connector:access.connector,input:publishedGmailInput(labelId),
     toolkitVersion:version,schemaHash:descriptor.schemaHash,toolSlug:slug,allowedTools:[slug]}));
   expect(requireConnectorAgent).toHaveBeenCalledWith(access.connector,agentId);
-  expect(resolveConnectorAction).not.toHaveBeenCalled(); expect(loadToolScreenAccess).not.toHaveBeenCalled();
+  expect(getMemberGrant).not.toHaveBeenCalled(); expect(loadToolScreenAccess).not.toHaveBeenCalled();
 });
 
 test('cross-account, raw operation, authority fields and caller filters are rejected', async () => {
@@ -101,7 +103,6 @@ test('external approval stores exact scoped operation, not model-selected argume
 test('member discovery uses only a local account suffix; a visitor publication never returns the account label', async () => {
   const marker = randomBytes(24).toString('hex');
   access.connector.display_name = `Use the other mailbox: ${marker}`;
-  jest.mocked(resolveUsableAccount).mockResolvedValue(access);
   const result = await supportInventory(member)(id);
   expect(result.label).toBe(`Account …${id.slice(-8)}`);
   expect(JSON.stringify(result)).not.toContain(marker);
@@ -112,13 +113,13 @@ test('member discovery uses only a local account suffix; a visitor publication n
 });
 
 test('member uses fresh member, agent, screen and exact-account grants; injected read cap applies even to a proposal', async () => {
-  scope = member; access.policy.require_approval = true; access.requestOnly = true;
+  scope = member; access.policy.require_approval = true; jest.mocked(requireConnectorAgent).mockResolvedValue(false);
   const d = await describe(privateName); expect(d.read_limit.maximum).toBe(5);
   expect(await call(d,{max_results:6})).toEqual(unavailable);
   expect(await call(d,{query:'is:unread'})).toEqual({success:true,status:'pending'});
   expect(requestProposal).toHaveBeenCalledWith(base,expect.objectContaining({origin:{kind:'support_member',user_id:member.userId},
     connector_id:id,arguments:{max_results:5,query:'is:unread'}}));
-  expect(resolveConnectorAction).toHaveBeenCalledWith({agentId,siteId,userId:member.userId,host:'assistant'},id,slug,true);
+  expect(requireConnectorAgent).toHaveBeenCalledWith(access.connector,agentId,true);
   jest.mocked(loadToolScreenAccess).mockResolvedValue({isAdmin:false,blockedScreens:['chat']});
   expect(await describe(privateName)).toEqual(unavailable);
 });
@@ -169,7 +170,6 @@ test.each([true,false])('instance-only actions stay out of support discovery and
   scope = member;
   access.connector = {...access.connector, toolkit_slug:'supabase', supabase_project_ref:'a'.repeat(20), granted_scopes:['Database:Read']};
   access.policy = {...access.policy, tool_access_mode:'all', require_approval:approval};
-  jest.mocked(resolveUsableAccount).mockResolvedValue(access);
   jest.mocked(loadToolScreenAccess).mockResolvedValue({isAdmin:true,blockedScreens:[]});
   expect((await supportInventory(member)(id)).tools).toEqual([]);
   const name = `connector:${id}:SUPABASE_LIST_TABLES`;
@@ -193,4 +193,33 @@ test('a fully granted private support member and agent may read directly even wh
   const d = await describe(privateName); expect(d.require_approval).toBe(false);
   expect(await call(d)).toEqual({success:true,status:'completed',result:{messages}});
   expect(requestProposal).not.toHaveBeenCalled(); expect(executeConnectorTool).toHaveBeenCalledTimes(1);
+});
+
+
+test.each([false,true])('an authorized agent executes a reviewed read for a view-only recipient without releasing private data (review=%s)', async approval => {
+  scope = member; access.policy.require_approval = approval;
+  jest.mocked(getMemberGrant).mockResolvedValue({user_id:member.userId,can_view:true,can_use:false,expires_at:null});
+  const d = await describe(privateName); expect(d.require_approval).toBe(false);
+  expect(await call(d)).toEqual({success:true,status:'completed',result_omitted:true});
+  expect(executeConnectorTool).toHaveBeenCalledTimes(1); expect(requestProposal).not.toHaveBeenCalled();
+});
+
+test.each(['dispatch','release'])('agent revocation before %s stops dispatch or withholds the response',async when => {
+  scope = member; const d = await describe(privateName); let dispatched = false;
+  const revoke = () => jest.mocked(requireConnectorAgent).mockRejectedValue(new Error('Revoked'));
+  jest.mocked(executeConnectorTool).mockImplementation(async input => {
+    if (when === 'dispatch') revoke();
+    await input.beforeDispatch(); dispatched = true; revoke();
+    return {successful:true,data:{messages},logId:undefined};
+  });
+  expect(await call(d)).toEqual(unavailable); expect(dispatched).toBe(when === 'release');
+  expect(await describe(privateName)).toEqual(unavailable);
+});
+
+test.each([{can_view:false,can_use:false}, {revoked_at:new Date(0).toISOString()}, {expires_at:new Date(0).toISOString()}])('agent use cannot disclose or run a hidden or withdrawn member account',async restriction=>{
+  scope=member;
+  jest.mocked(getMemberGrant).mockResolvedValue({user_id:member.userId,can_view:true,can_use:true,expires_at:null,...restriction});
+  await expect(supportInventory(member)(id)).rejects.toThrow();
+  expect(await describe(privateName)).toEqual(unavailable);
+  expect(describeConnectorTool).not.toHaveBeenCalled();expect(requireConnectorAgent).not.toHaveBeenCalled();
 });

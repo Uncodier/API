@@ -58,7 +58,7 @@ export async function executeSupportConnectorTool(host: SupportConnectorHost, na
     const fixed = publication ? publishedGmailInput(publication.labelId) : null;
     if (fixed) validateConnectorInput(reviewed, fixed);
     // The exposed hash also pins the selected account, publication label, approval state and policy revisions.
-    const schemaHash = hashConnectorSchema([request.name, descriptor.schemaHash, descriptor.toolkitVersion, access, publication]);
+    const schemaHash = hashConnectorSchema([request.name, descriptor.schemaHash, descriptor.toolkitVersion, access, publication, initial.releaseMemberResult ?? null]);
     // The only public read is the existing explicitly published, label-bound title projection.
     // It is not permission to run a private operation on behalf of a visitor.
     if (scope.audience !== 'member' && !publication) throw denied();
@@ -95,6 +95,7 @@ export async function executeSupportConnectorTool(host: SupportConnectorHost, na
       input, allowedTools: [tool.slug], requiredScopes: tool.requiredScopes, beforeDispatch: reauthorize });
     await reauthorize(); // Revocation or reassignment after provider dispatch must withhold the response.
     if (publication) return {success:true,status:'completed',result:publishedGmailResult(result, publication.labelId)};
+    if (!initial.releaseMemberResult) return {success: true, status: 'completed', result_omitted: true};
     return {success: true, status: 'completed', ...(Buffer.byteLength(JSON.stringify(result.data)) <= 8192 ?
       {result: result.data} : {result_omitted: true})};
   } catch {

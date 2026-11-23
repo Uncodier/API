@@ -3,7 +3,7 @@ import { buildSupportContext } from '../context';
 import { generateSupportReply } from '../generate';
 import { saveMessages } from '../save-messages';
 import { getCommandById } from '@/lib/database/command-db';
-import { getAgentInfo, findActiveCustomerSupportAgent } from '../agent-data';
+import { getAgentInfo, supportThreadAgent, findActiveCustomerSupportAgent } from '../agent-data';
 import { readSupportSnooze, saveSnoozedSupportInput } from '../snooze';
 import { saveZavuSupportMessages } from '../save-zavu-messages';
 import { reconcileConversationHumanEvents } from '@/lib/services/zavu/conversation-automation-contact';
@@ -38,6 +38,7 @@ jest.mock('../snooze', () => ({
 jest.mock('../disabled-support', () => ({ disabledSupportNote: async () => 'Agente deshabilitado. No se generó respuesta.' }));
 jest.mock('../agent-data', () => ({
   isValidUUID: (id: string) => /^[0-9a-f-]{36}$/.test(id),
+  supportThreadAgent: jest.fn(),
   getAgentInfo: jest.fn(async () => ({ user_id: 'user', status: 'active' })),
   findActiveCustomerSupportAgent: jest.fn(async () => null),
 }));
@@ -72,6 +73,7 @@ describe('support route persistence boundary', () => {
     jest.mocked(readSupportSnooze).mockReset().mockResolvedValue(null);
     jest.mocked(reconcileConversationHumanEvents).mockReset().mockResolvedValue(undefined);
     saveInboundMock.mockReset().mockImplementation(async input => inboundResult(input.conversationId!));
+    jest.mocked(supportThreadAgent).mockResolvedValue(agentId);
     jest.mocked(getAgentInfo).mockResolvedValue({ user_id: 'user', status: 'active' });
     jest.mocked(findActiveCustomerSupportAgent).mockResolvedValue(null);
     jest.mocked(generateSupportReply).mockResolvedValue({
@@ -130,7 +132,24 @@ describe('support route persistence boundary', () => {
     expect(generateSupportReply).not.toHaveBeenCalled();
   });
 
+  it.each(['different assignment', 'unsupported role'])('does not substitute another Support agent: %s',async scenario => {
+    if (scenario === 'different assignment') jest.mocked(supportThreadAgent).mockResolvedValue('00000000-0000-4000-8000-000000000003');
+    else jest.mocked(getAgentInfo).mockResolvedValue(null);
+    expect((await POST(request())).status).toBe(409);
+    expect(findActiveCustomerSupportAgent).not.toHaveBeenCalled();
+    expect(generateSupportReply).not.toHaveBeenCalled(); expect(saveMessages).not.toHaveBeenCalled();
+  });
+
+  it('withholds a generated response after the conversation is reassigned',async () => {
+    jest.mocked(getCommandById).mockResolvedValue(fresh as any);
+    jest.mocked(supportThreadAgent).mockResolvedValueOnce(agentId).mockResolvedValueOnce(null);
+    const response = await POST(request());
+    expect(response.status).toBe(409); expect(await response.text()).not.toContain('bienvenido');
+    expect(saveMessages).not.toHaveBeenCalled();
+  });
+
   it('does not classify an active-agent database failure as disabled', async () => {
+    jest.mocked(supportThreadAgent).mockResolvedValueOnce(null);
     jest.mocked(findActiveCustomerSupportAgent).mockRejectedValueOnce(new Error('database unavailable'));
     const response = await POST(new Request('https://example.test/api/agents/customerSupport/message', {
       method: 'POST', body: JSON.stringify({ userId: 'user', site_id: 'site',

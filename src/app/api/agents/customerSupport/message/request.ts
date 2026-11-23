@@ -1,3 +1,5 @@
+import { extractApiKeyCredential, isServiceApiKeyCredential } from '@/lib/security/api-key-credential';
+import { authorizeChatTurn } from '@/app/api/agents/chat/message/authorize-turn';
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { visitorSessionAuthorizationService } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
@@ -7,7 +9,11 @@ import { isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 import { commentConversationId, commentMetadata, SocialCommentError } from '@/lib/services/social-comments/metadata';
 import { findCommentProposal } from '@/lib/services/social-comments/persistence';
 export async function readSupportRequest(request: Request) {
-    const body = await request.json();
+    let body = await request.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.message !== 'string'
+        || !body.message.trim() || body.message.length > 20000) {
+      return NextResponse.json({success:false,error:{code:'INVALID_REQUEST',message:'A valid message is required.'}}, {status:400});
+    }
     // Private handoff must never enter a prompt, message, log or customer response.
     const visitorTurn = body.custom_data?.connector_visitor_turn;
     if (visitorTurn !== undefined) {
@@ -23,6 +29,11 @@ export async function readSupportRequest(request: Request) {
     });
     if (browserIdentity) {
       body.site_id = browserIdentity.siteId;
+      delete body.agentId;
+      body.origin = 'website_chat';
+      body.channel_delivery = false;
+      delete body.custom_data;
+      delete body.channel_guidance_run_plan_ids;
       body.visitor_id = browserIdentity.visitorId;
       body.lead_id = browserIdentity.leadId;
       body.userId = undefined;
@@ -30,6 +41,16 @@ export async function readSupportRequest(request: Request) {
       body.email = undefined;
       body.phone = undefined;
       body.origin_message_id = crypto.randomUUID();
+    } else if (!await isServiceApiKeyCredential(extractApiKeyCredential(request))) {
+      // A member session is not a provider, visitor, or internal workflow. Only
+      // accept the same RLS-authorized internal turn as the workspace proxy.
+      const turn = await authorizeChatTurn(request, body);
+      if (turn instanceof Response) return turn;
+      if (turn.lead_id || turn.visitor_id || visitorTurn !== undefined || body.custom_data || body.channel_delivery ||
+          (body.origin && body.origin !== 'chat')) {
+        return NextResponse.json({success:false,error:{code:'INVALID_MEMBER_CHANNEL',message:'Internal member chat required.'}}, {status:403});
+      }
+      body = {...turn, userId: turn.team_member_id, origin:'chat'};
     }
 
     console.log('[CustomerSupport] Request accepted', {

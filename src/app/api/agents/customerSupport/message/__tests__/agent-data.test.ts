@@ -4,7 +4,7 @@ for (const method of ['schema', 'from', 'select', 'eq', 'or', 'order']) {
   mockQuery[method] = jest.fn(() => mockQuery);
 }
 mockQuery.limit = mockResult;
-mockQuery.single = mockResult;
+mockQuery.maybeSingle = mockResult;
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: { schema: () => mockQuery },
 }));
@@ -15,7 +15,7 @@ describe('support agent lookup failures', () => {
   it.each([findActiveCustomerSupportAgent, getAgentInfo])('propagates database errors %#', async lookup => {
     const error = new Error('database unavailable');
     mockResult.mockResolvedValueOnce({ data: null, error });
-    await expect(lookup(id)).rejects.toBe(error);
+    await expect(lookup(id, id)).rejects.toBe(error);
   });
   it('returns null only for a successful empty active-agent lookup', async () => {
     mockResult.mockResolvedValueOnce({ data: [], error: null });

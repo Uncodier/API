@@ -11,8 +11,9 @@ export function leadBulkOperationsTool(host: RequirementCommandSource) {
   return {
     name: 'leads_bulk_operations',
     description: [
-      'Bulk CRM lead operations: create leads, assign selected leads to the current user, change their status, or delete them. Up to 50 per call.',
+      'Bulk CRM lead operations: create leads, assign selected leads to the current user or a teammate, change their status, or delete them. Up to 50 per call.',
       'For existing leads, use leads(list) to resolve the exact UUIDs; never guess, infer all leads from a partial page, or silently narrow a requested selection.',
+      'For assign_to_member, resolve the teammate in the current site with calendars(list, query), and use team_members[].user_id as assignee_id. If there is no unambiguous match, ask the user. Do not guess an ID.',
       'Preview first (dry_run=true, the default). Apply the exact same batch with dry_run=false, preview_id from the preview, and expected_count from matched_count. Resolve missing IDs before applying.',
       'Delete permanently removes leads and may remove linked records. Only owners/admins can delete. Show the preview to the user and ask them to send its exact confirmation_message as a new chat message before applying. Do not confirm on their behalf.',
       'Report actual affected_count. If a write result is unknown, replay only the same preview_id and parameters to recover its receipt; never start a new preview to retry that write. Use sendBulkMessages for messaging, not this tool.',

@@ -1,5 +1,4 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { ConversationService } from '@/lib/services/conversation-service';
 import { isValidUUID, validateLeadExists } from './agent-data';
 import { saveCommentMessages } from '@/lib/services/social-comments/persistence';
 import { usableSupportContent } from './response-content';
@@ -39,7 +38,7 @@ export async function saveMessages(userId: string, userMessage: string, assistan
     // Validar que el lead existe si se proporciona un leadId
     let validatedLeadId: string | undefined = leadId;
     if (leadId) {
-      const leadExists = await validateLeadExists(leadId);
+      const leadExists = await validateLeadExists(leadId, siteId);
       if (!leadExists) {
         console.log(`⚠️ Lead ${leadId} no existe en la base de datos. Continuando sin lead_id para evitar error de foreign key.`);
         validatedLeadId = undefined;
@@ -63,15 +62,20 @@ export async function saveMessages(userId: string, userMessage: string, assistan
       const { data: existingConversation, error: checkError } = await supabaseAdmin
         .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
           .from('conversations')
-        .select('id, user_id, lead_id, visitor_id, agent_id, site_id, custom_data')
+        .select('id, user_id, lead_id, visitor_id, agent_id, site_id, channel, custom_data')
         .eq('id', conversationId)
         .single();
       
-      if (checkError || !existingConversation) {
+      if (checkError && checkError.code !== 'PGRST116') throw new Error('CUSTOMER_SUPPORT_CONVERSATION_LOOKUP_FAILED');
+      if (!existingConversation) {
         console.log(`⚠️ Conversación no encontrada en la base de datos, creando nueva: ${conversationId}`);
         // Si la conversación no existe aunque tengamos un ID, crearemos una nueva
         effectiveConversationId = undefined;
       } else {
+        if ((siteId && existingConversation.site_id !== siteId) || existingConversation.channel === 'internal_review' ||
+            (existingConversation.agent_id && existingConversation.agent_id !== agentId)) {
+          throw new Error('CUSTOMER_SUPPORT_CONVERSATION_SCOPE_CONFLICT');
+        }
         console.log(`✅ Conversación existente confirmada: ${conversationId}`);
         console.log(`📊 Datos de conversación existente:`, JSON.stringify(existingConversation));
       }
@@ -79,35 +83,7 @@ export async function saveMessages(userId: string, userMessage: string, assistan
     
     // Crear una nueva conversación si no existe
     if (!effectiveConversationId) {
-      // Late re-check: try to find an existing conversation again to avoid race conditions (especially for WhatsApp)
-      // Skip late re-check for website_chat origin - always create new conversations
-      if (origin !== 'website_chat') {
-        try {
-          if (siteId && (validatedLeadId || visitorId)) {
-            const lateOrigin = origin || undefined;
-            const lateExistingConversationId = await ConversationService.findExistingConversation(
-              validatedLeadId,
-              visitorId,
-              siteId,
-              lateOrigin,
-              undefined,
-              undefined
-            );
-            if (lateExistingConversationId) {
-              effectiveConversationId = lateExistingConversationId;
-              console.log(`♻️ Late re-check found existing conversation: ${effectiveConversationId}`);
-            }
-          }
-        } catch (lateErr) {
-          console.log('⚠️ Late re-check for existing conversation failed:', lateErr);
-        }
-      } else {
-        console.log(`🌐 Skipping late re-check for website_chat origin - will create new conversation`);
-      }
-
-      // If still no conversation, create a new one
-      if (!effectiveConversationId) {
-      // Crear una nueva conversación
+      // Never retarget a generated reply to a different, later-discovered thread.
       const conversationData: any = {
         // Añadir user_id obligatoriamente
         user_id: userId
@@ -155,12 +131,10 @@ export async function saveMessages(userId: string, userMessage: string, assistan
       
       effectiveConversationId = conversation.id;
       console.log(`🗣️ Nueva conversación creada con ID: ${effectiveConversationId}`);
-      }
-    } else if (conversationTitle || siteId || validatedLeadId || origin || channelDelivery) {
+    } else if (conversationTitle || validatedLeadId || origin || channelDelivery) {
       // Actualizar la conversación existente si se proporciona un nuevo título, site_id, lead_id o origin
       const updateData: any = {};
       if (conversationTitle) updateData.title = conversationTitle;
-      if (siteId) updateData.site_id = siteId;
       if (validatedLeadId) updateData.lead_id = validatedLeadId;
       
       if (origin || channelDelivery) {
@@ -201,9 +175,6 @@ export async function saveMessages(userId: string, userMessage: string, assistan
       } else {
         if (conversationTitle) {
           console.log(`✏️ Título de conversación actualizado: "${conversationTitle}"`);
-        }
-        if (siteId) {
-          console.log(`🔗 Site ID de conversación actualizado: "${siteId}"`);
         }
         if (validatedLeadId) {
           console.log(`👤 Lead ID de conversación actualizado: "${validatedLeadId}"`);

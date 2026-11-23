@@ -1,5 +1,11 @@
 # Provider-direct connector execution in private Robots turns
 
+## Current local contract (not deployed)
+
+After `20261123110000_connector_instance_member_policy.sql`, private Instance execution uses the signed-in member’s use grant, the site’s selected connection and its assistant/tool policy. A current site-isolated downstream binding is sufficient for supported generic actions; a second enrollment record is not required for a fresh turn. Explicit disables remain vetoes. Historical receipts keep their prior authority. Support uses the assigned agent and enforces its output policy for the audience; Support is not a gateway for arbitrary provider actions.
+
+For a host-selected, bound Supabase connection, `SUPABASE_RUN_READ_ONLY_QUERY` also supports an exact `SELECT 1` connectivity check without generic downstream data access. This calls the actual provider action and returns confirmation only. It is **not** a table read, a general SQL capability, a KPI report or evidence that a provider accepted a live production request. No caller-supplied SQL is sent to a shared administrative credential. A provider rejection is final; the runtime does not try a different credential.
+
 ## Decisions and ownership
 
 The unit of authorization is a **site-owned connected account**, not a toolkit,
@@ -10,7 +16,7 @@ registered for each catalog entry.
 
 | Layer | Responsibility |
 | --- | --- |
-| Direct policy | Current nonanonymous direct Ask session, parent owned by the user, the signed-in member’s connector-use grant, allowed host, local/account/provider state, exact resource binding and current enrollment. The same-site active prompt agent is pinned to the turn, **not** a second connector-grant principal. `all` or exact `selected` (empty means none). |
+| Direct policy | Current nonanonymous direct Ask session, parent owned by the user, the signed-in member’s connector-use grant, allowed host, local/account/provider state, exact resource binding and no explicit opt-out. The same-site active prompt agent is pinned to the turn, **not** a second connector-grant principal. `all` or exact `selected` (empty means none). |
 | Discovery | Query only admitted accounts' provider catalogs. Short bounded pages, no user search text or account secrets in provider search parameters. Domains are navigation metadata, not authorization. |
 | Transport | Fetch the actual action and input schema, verify the exact toolkit, private downstream account and auth configuration. Pin the live provider version/schema to this connection. Validate arguments with no credential/substitution, arbitrary fetch, proxy or code execution. Do not reconstruct data access from a list of OAuth scope names. |
 | Dispatch and delivery | Reauthorize after describe, immediately before the external effect, before storage and when opening the result. A durable request claim prevents replay of the same call in a turn. Store a bounded redacted field/value preview; the model gets a receipt, not the provider's data, credential or raw diagnostics. |
@@ -30,7 +36,7 @@ supported review flow can accept a request for that action instead. Generic
 direct actions do not automatically produce review requests. A manager's
 decision never upgrades a read-only provider credential or overrides a 403.
 
-### One manager decision in Connectors (local forward change)
+### Historical single-save contract (superseded for new turns)
 
 For a currently verified isolated account, the manager can enable Ask and save its tool policy in **one** `PATCH /api/connectors/connections/[id]/policy`. An explicit change sends `ask_access: {enabled, expected_direct_revision}` with the ordinary `expected_revision`. The server validates any selected tool IDs and sends one transaction to `connector_save_policy_with_ask`. It confirms the exact account, both advanced revisions and the resulting permission. If the transaction fails, neither decision is applied. If acknowledgement is lost, reload before acting; do not replay the save or fall back to two requests.
 
@@ -132,7 +138,7 @@ For an explicitly selected active account without direct admission, private Ask 
 
 ## Limitations
 
-**Which checks can stop `call`?** The saved member/host/tool policy (`all` or `selected`) controls who can request the operation. Separately, this runtime currently requires a verified interactive turn, a current direct enrollment and isolation proof for that exact account, a private supported auth configuration, and an immutable supported tool contract. It excludes control-plane actions, arbitrary code/SQL, network/file transports and credential or tenant selectors. These are implementation and isolation restrictions, **not** extra OAuth scopes or evidence of a provider denial. In particular, an authorized member alone cannot delegate a project-wide management PAT on the shared database. A provider rejection after dispatch is final for that account. No path should ask for a broader token to fix a local format error.
+**Which checks can stop `call`?** The saved member/host/tool policy (`all` or `selected`) controls who can request the operation. Separately, this runtime currently requires a verified interactive turn, current isolation proof for that exact account and no explicit opt-out, a private supported auth configuration, and an immutable supported tool contract. It excludes control-plane actions, arbitrary code/SQL, network/file transports and credential or tenant selectors. These are implementation and isolation restrictions, **not** extra OAuth scopes or evidence of a provider denial. In particular, an authorized member alone cannot delegate a project-wide management PAT on the shared database. A provider rejection after dispatch is final for that account. No path should ask for a broader token to fix a local format error.
 
 Optional display labels and unfamiliar effect tags are not access controls. The generic input validator accepts local `definitions` and `$defs`, closed zero-argument objects, and string formats `date`, `date-time`, `email` and `uuid`. It validates the declared arguments, never resolves external references, and does not inject report-specific arguments into provider calls.
 

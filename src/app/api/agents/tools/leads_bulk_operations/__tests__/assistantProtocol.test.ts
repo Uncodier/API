@@ -9,6 +9,7 @@ const leadId = randomUUID(), otherLeadId = randomUUID(), previewId = randomUUID(
 const execute = (args: unknown) => leadBulkOperationsTool(host).execute(args);
 const rpc = jest.mocked(supabaseAdmin.rpc);
 const change = { action: 'change_status', lead_ids: [leadId], status: 'qualified' };
+const assign = { action: 'assign_to_member', lead_ids: [leadId], assignee_id: randomUUID() };
 const apply = { ...change, dry_run: false, expected_count: 1, preview_id: previewId };
 
 function response(data: unknown, error: unknown = null) {
@@ -24,6 +25,10 @@ it.each([
   { action: 'assign_to_me', lead_ids: [leadId, leadId.toUpperCase()] },
   { action: 'assign_to_me', lead_ids: Array.from({ length: 51 }, () => randomUUID()) },
   { action: 'assign_to_me', lead_ids: [leadId], assignee_id: host.userId },
+  { ...assign, assignee_id: undefined },
+  { ...assign, assignee_id: 'not a UUID' },
+  { ...assign, status: 'qualified' },
+  { ...change, assignee_id: assign.assignee_id },
   { ...change, site_id: randomUUID() },
   { ...change, status: 'unsupported' },
   { ...change, status: undefined },
@@ -60,7 +65,25 @@ it('validates a write receipt and keeps the same RPC input when replaying it', a
   expect(await execute(apply)).toMatchObject({ success: false, code: 'LEAD_BULK_OUTCOME_UNKNOWN', preview_id: previewId });
 });
 
-it.each(['access_denied', 'invalid_preview', 'selection_changed', 'confirmation_required'])('reports %s without raw details', async code => {
+it('forwards the canonical assignee without changing the actor and checks the assignment receipt', async () => {
+  const receipt = { success: true, dry_run: true, matched_count: 1, affected_count: 0,
+    missing_lead_ids: [], preview_id: previewId, assignee_id: assign.assignee_id };
+  response(receipt);
+  expect(await execute({ ...assign, assignee_id: assign.assignee_id.toUpperCase() })).toEqual(receipt);
+  expect(rpc).toHaveBeenCalledWith('assistant_leads_bulk', expect.objectContaining({
+    p_operation: 'assign_to_member', p_user_id: host.userId,
+    p_payload: { lead_ids: [leadId], assignee_id: assign.assignee_id }, p_preview_id: null,
+  }));
+  const assignment = { ...assign, dry_run: false, preview_id: previewId, expected_count: 1 };
+  const applied = { success: true, dry_run: false, preview_id: previewId, assignee_id: assign.assignee_id,
+    affected_count: 1, affected_lead_ids: [leadId], replayed: false };
+  response(applied);
+  expect(await execute(assignment)).toEqual(applied);
+  response({ ...applied, assignee_id: randomUUID() });
+  expect(await execute(assignment)).toMatchObject({ code: 'LEAD_BULK_OUTCOME_UNKNOWN', preview_id: previewId });
+});
+
+it.each(['access_denied', 'invalid_assignee', 'invalid_preview', 'selection_changed', 'confirmation_required'])('reports %s without raw details', async code => {
   const detail = randomBytes(12).toString('hex');
   response({ success: false, code, detail });
   const result = await execute(apply);

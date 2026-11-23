@@ -6,6 +6,7 @@ In an interactive assistant conversation authenticated with a verified user sess
 | --- | --- |
 | `create` | `leads`: records with `name` and an `email` or `phone`; optional `company`, `position`, `notes`, `origin` and `status`. This is insert-only, not an upsert or deduplicating import. |
 | `assign_to_me` | `lead_ids`: select exact lead UUIDs and assign them to the current user. |
+| `assign_to_member` | `lead_ids` and `assignee_id`: assign all selected leads to one teammate with active access to the site. Find their user UUID in `team_members` using `calendars` with `action: "list"` and their name or email as `query`. Use `user_id`, not the membership record ID. |
 | `change_status` | `lead_ids` and `status`: `new`, `contacted`, `qualified`, `converted`, `lost`, `cold`, or `not_qualified`. |
 | `delete` | `lead_ids`. Owners/admins only; the user must confirm the exact preview in chat. Deletion is permanent and can also remove linked records. |
 
@@ -13,6 +14,8 @@ Each call accepts 1–50 records. Use `leads` with `action: "list"` to find the 
 
 For deletion, show the preview and ask the user to send the returned `confirmation_message` exactly as a new message in the same conversation. The assistant cannot supply the confirmation as a tool argument. If the selection or a lead's revision changes, preview and confirm again.
 
+For `assign_to_member`, keep the same `assignee_id` when applying. The database rechecks that the assignee still has access to the site. If they no longer qualify, the entire batch is rejected and no lead is reassigned.
+
 Use `affected_count` and `affected_lead_ids` to report what happened. If the result is `LEAD_BULK_OUTCOME_UNKNOWN`, reuse the same preview ID and batch, not a new preview. The database commits the write and its receipt together and returns the same receipt on replay, even after the original preview expires. A new create preview in the same turn for the exact same input returns the original preview ID.
 
-Deploy `supabase/migrations/20261120233000_assistant_lead_bulk_operations.sql` before publishing the assistant change. The RPC is service-only; receipts keep hashes and IDs, not contact data.
+Deploy the bulk operations migration (`20261120233000`) and the team assignment migration (`20261123120000`) before publishing the assistant change. The RPC is service-only; receipts keep hashes and IDs, not contact data.

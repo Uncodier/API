@@ -24,9 +24,9 @@ export function createInstanceConnectorDispatcher<D,R>(resolve:ConnectorContextR
       // A catalog-only target never grants execution.
       const targets=await listDirectAccounts(narrow).catch(async error=>{
         if(!account || !(error instanceof ConnectorError) || error.code!=='DIRECT_POLICY_REQUIRED')throw error;
-        return [await selectedCatalogAccount(narrow,account)];
+        return [await selectedCatalogAccount(narrow,account,ctx.connectorIdHint===account)];
       });
-      return generic.search(narrow,filter,targets);
+      return generic.search(ctx,filter,targets);
     },
     async describe(name:string) {
       parseConnectorToolRef(name);

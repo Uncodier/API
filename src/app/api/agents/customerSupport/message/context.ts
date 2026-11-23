@@ -43,7 +43,7 @@ const { request, message, name, email, phone, requestTimestamp, clientIP, userAg
     // Obtener y añadir información completa del lead al contexto si está disponible
     if (effectiveLeadId) {
       console.log(`📋 Obteniendo información completa del lead para el contexto: ${effectiveLeadId}`);
-      const leadInfo = await getLeadInfo(effectiveLeadId);
+      const leadInfo = await getLeadInfo(effectiveLeadId, effectiveSiteId);
       
       if (leadInfo) {
         leadLanguage = leadInfo.language;

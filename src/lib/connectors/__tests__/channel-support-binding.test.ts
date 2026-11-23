@@ -121,7 +121,7 @@ it('requires a website turn and website thread, even for the current canonical l
   query.maybeSingle.mockResolvedValueOnce({ data: { ...thread, channel: null, custom_data: { channel: 'web' } } });
   expect(await host?.resolve()).toMatchObject({ audience: 'verified', leadId: identified.leadId });
   for (const change of [{ channel: 'email' }, { channel: null }, { custom_data: { channel: 'sms' } },
-    { custom_data: { channel_delivery: true } }, { custom_data: { source: 'comment' } }, { custom_data: { voice_mode: 'agent_call' } }]) {
+    { custom_data: { channel_delivery: true } }, { custom_data: { source: 'comment' } }, { custom_data: { is_private: true } }, { custom_data: { voice_mode: 'agent_call' } }]) {
     query.maybeSingle.mockResolvedValue({ data: { ...thread, ...change } });
     expect(await host?.resolve()).toBeNull();
   }

@@ -8,7 +8,7 @@ export function database() {
     const filters: Array<(row: Row) => boolean> = [];
     let operation = 'select'; let payload: any; let max = Infinity; let single = false;
     const query: any = {
-      select: () => query,
+      select: () => query, abortSignal: () => query,
       eq: (key: string, value: any) => {
         filters.push(row => {
           const current = key.includes('->>') ? row[key.split('->>')[0]]?.[key.split('->>')[1]] : row[key];

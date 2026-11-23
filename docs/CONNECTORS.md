@@ -105,7 +105,9 @@ operator steps. Do not interpret a missing migration as approval or retry execut
 The stored `require_approval` bit allows eligible missing-use requests; it does not gate fully authorized interactive calls. A persisted request returns `status: pending`, not tool output. Conversation
 hosts have a request-only service with a trusted conversation/agent binding. An
 ambiguous account, explicit restriction, unreviewed tool or unsupported input fails closed.
-A visible view-only member or active agent without an explicit use grant can
+In an owned private Support thread, the assigned agent’s current use grant authorizes only reviewed Gmail and HubSpot reads on a member-visible account. Member screen restrictions still apply. Without independent member use permission the gateway returns completion only, never provider data. The public audience still requires its separate publication. Private Robots provider-direct descriptors, arbitrary SQL, code and network requests have no channel dispatch or output contract.
+
+On request-only paths, a visible view-only member or active agent without an explicit use grant can
 request when opted in. A hidden, disabled, revoked or expired restriction is never
 a request grant. A manager checks and executes the pinned read with their own
 account-use permission; the proposing actor and agent are separately revalidated.

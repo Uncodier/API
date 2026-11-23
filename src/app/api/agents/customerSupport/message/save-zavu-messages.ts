@@ -48,22 +48,24 @@ export async function saveZavuSupportMessages(input: Input): Promise<{
   const assistantId = supportRecordId(['support-reply-v1', ...scope]);
   // Prefer a previously saved inbound (including pre-fix records) over a new conversation.
   const { data: previous, error: lookupError } = await db().from('messages')
-    .select('id, conversation_id, content, created_at, custom_data, conversations!inner(site_id)')
+    .select('id, agent_id, conversation_id, content, created_at, custom_data, conversations!inner(site_id)')
     .eq('conversations.site_id', input.siteId).eq('role', 'user')
     .eq('custom_data->>connection_id', connection)
     .eq('custom_data->>origin_message_id', input.originMessageId)
     .order('created_at', { ascending: true }).limit(1).maybeSingle();
   if (lookupError) throw new Error('CUSTOMER_SUPPORT_INBOUND_LOOKUP_FAILED');
-  if (previous && (previous.content !== input.userMessage
+  if (previous && (previous.content !== input.userMessage || (previous.agent_id != null && previous.agent_id !== input.agentId)
+      || (input.conversationId && input.conversationId !== previous.conversation_id)
       || previous.custom_data?.zavu_sender_id !== sender || previous.custom_data?.zavu_from !== from)) {
     throw new Error('CUSTOMER_SUPPORT_INBOUND_SCOPE_CONFLICT');
   }
   const conversationId = previous?.conversation_id || input.conversationId
     || supportRecordId(['support-conversation-v1', input.siteId, connection, from]);
   const { data: existingConversation, error: conversationError } = await db().from('conversations')
-    .select('id, site_id').eq('id', conversationId).maybeSingle();
+    .select('id, site_id, agent_id').eq('id', conversationId).maybeSingle();
   if (conversationError) throw new Error('CUSTOMER_SUPPORT_CONVERSATION_LOOKUP_FAILED');
-  if (existingConversation && existingConversation.site_id !== input.siteId) {
+  if (existingConversation && (existingConversation.site_id !== input.siteId ||
+      (existingConversation.agent_id != null && existingConversation.agent_id !== input.agentId))) {
     throw new Error('CUSTOMER_SUPPORT_CONVERSATION_SCOPE_CONFLICT');
   }
   if (!existingConversation) {
@@ -77,8 +79,8 @@ export async function saveZavuSupportMessages(input: Input): Promise<{
     if (error) {
       if (error.code !== '23505') throw new Error('CUSTOMER_SUPPORT_CONVERSATION_SAVE_FAILED');
       const { data: winner, error: readError } = await db().from('conversations')
-        .select('site_id').eq('id', conversationId).maybeSingle();
-      if (readError || winner?.site_id !== input.siteId) throw new Error('CUSTOMER_SUPPORT_CONVERSATION_SCOPE_CONFLICT');
+        .select('site_id, agent_id').eq('id', conversationId).maybeSingle();
+      if (readError || winner?.site_id !== input.siteId || (winner.agent_id ?? null) !== (input.agentId ?? null)) throw new Error('CUSTOMER_SUPPORT_CONVERSATION_SCOPE_CONFLICT');
     }
   }
   const inboundId = previous?.id || userId;
@@ -108,8 +110,8 @@ export async function saveZavuSupportMessages(input: Input): Promise<{
     if (readError || !existing || existing.role !== row.role || existing.conversation_id !== conversationId
         || existing.content !== row.content || existing.custom_data?.connection_id !== connection
         || existing.custom_data?.origin_message_id !== input.originMessageId
-        || (row.role === 'assistant' && ((existing.agent_id ?? null) !== (input.agentId ?? null)
-          || existing.custom_data?.reply_to_message_id !== inboundId
+        || (existing.agent_id ?? null) !== (input.agentId ?? null)
+        || (row.role === 'assistant' && (existing.custom_data?.reply_to_message_id !== inboundId
           || (existing.custom_data?.response_format || 'text') !== (input.responseFormat || 'text')
           || (['message_type', 'media_url', 'mime_type'] as const)
             .some(key => existing.custom_data?.[key] !== media?.[key])))) {

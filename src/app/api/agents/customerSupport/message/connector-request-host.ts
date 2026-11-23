@@ -1,3 +1,4 @@
+import { webChannels, websiteThread } from './web-thread';
 import { sourceDigest } from '@/lib/connectors/approval-source';
 import { verifyVisitorTurn } from '@/lib/connectors/channel-visitor-turn';
 import { randomUUID } from 'node:crypto';
@@ -11,14 +12,6 @@ import { commentConversationId, sameCommentScope } from '@/lib/services/social-c
 import { commentMessageIds } from '@/lib/services/social-comments/persistence';
 
 const uuid = (v: unknown): v is string => z.string().uuid().safeParse(v).success;
-
-const webChannels = new Set(['website_chat', 'website', 'web', 'chat']);
-function websiteThread(channel: string | null, data: Record<string, unknown> | null) {
-  // Historical rows can store the channel in custom_data. Neither field may contradict web delivery.
-  const channels = [channel, data?.channel].filter(value => value != null);
-  return channels.length > 0 && channels.every(value => typeof value === 'string' && webChannels.has(value))
-    && !data?.channel_delivery && !data?.voice_mode && !data?.source;
-}
 
 /** Called after visitor ownership / provider admission, before command submission. Never select a replacement agent. */
 export async function supportConnectorRequestHost(input: {

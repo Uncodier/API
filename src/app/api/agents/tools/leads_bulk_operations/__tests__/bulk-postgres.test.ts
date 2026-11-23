@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { freshPostgres, postgresBinDirectory } from '@/lib/procurement/__tests__/fixtures/workflow-postgres';
 
 const migration = '20261120233000_assistant_lead_bulk_operations.sql';
+const assignmentMigration = '20261123120000_assistant_lead_bulk_team_assignment.sql';
 const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
 const site = randomUUID(), otherSite = randomUUID(), instance = randomUUID(), otherInstance = randomUUID();
 const owner = randomUUID(), member = randomUUID(), memberId = randomUUID();
@@ -103,6 +104,7 @@ beforeAll(() => {
     CREATE TRIGGER record_lead_event AFTER INSERT OR UPDATE OR DELETE ON leads FOR EACH ROW EXECUTE FUNCTION record_lead_event();
   `);
   db.migrate(migration);
+  db.migrate(assignmentMigration);
 }, 30000);
 
 beforeEach(() => {
@@ -170,6 +172,48 @@ it('does not issue a preview for foreign or unassigned rows and rechecks live ac
   expect(call('assign_to_me', batch, preview.preview_id, 1)).toMatchObject({ code: 'access_denied' });
   expect(count('lead_events')).toBe(3);
 });
+
+it('previews and atomically assigns the exact batch to one teammate, with a durable receipt', () => {
+  const operation = 'assign_to_member', batch = { ...targets, assignee_id: member };
+  const preview = call(operation, { ...batch, assignee_id: member.toUpperCase() });
+  expect(preview).toMatchObject({ success: true, matched_count: 2, affected_count: 0, assignee_id: member, preview_id: expect.any(String) });
+  expect(count('lead_events')).toBe(3);
+  expect(call(operation, { ...batch, assignee_id: owner }, preview.preview_id)).toMatchObject({ code: 'invalid_preview' });
+  const receipt = call(operation, batch, preview.preview_id);
+  expect(receipt).toMatchObject({ success: true, affected_count: 2, affected_lead_ids: [a, b].sort(), assignee_id: member, replayed: false });
+  expect(db.query(`SELECT count(*) FROM leads WHERE site_id='${site}' AND assignee_id='${member}' AND status='new' AND user_id='${owner}';`)).toBe('2');
+  db.query(`UPDATE site_members SET status='inactive' WHERE id='${memberId}';`);
+  expect(call(operation, batch, preview.preview_id)).toEqual({ ...receipt, replayed: true });
+  expect(count('lead_events')).toBe(5);
+});
+
+it('rejects nonmembers, membership IDs and unlicensed recipients before issuing a preview', () => {
+  const operation = 'assign_to_member', outsider = randomUUID();
+  db.query(`INSERT INTO site_members VALUES ('${randomUUID()}','${otherSite}','${outsider}','collaborator','active','{}',true,true);
+    UPDATE site_members SET licensed=false WHERE id='${memberId}';`);
+  for (const assignee_id of [outsider, memberId, member]) {
+    expect(call(operation, { ...targets, assignee_id })).toEqual({ success: false, code: 'invalid_assignee' });
+  }
+  expect(db.result(service(sql(operation, targets))).stderr).toContain('22023');
+  expect(count('assistant_lead_bulk_previews')).toBe(0);
+});
+
+it('keeps the existing lead selection restrictions when assigning to a teammate', () => {
+  scope = { ...scope, user: member, action: memberAction };
+  const preview = call('assign_to_member', { lead_ids: [a, b, foreign], assignee_id: owner });
+  expect(preview).toMatchObject({ matched_count: 1, missing_lead_ids: expect.arrayContaining([a, foreign]) });
+  expect(preview).not.toHaveProperty('preview_id');
+  expect(count('lead_events')).toBe(3);
+});
+
+it('rejects the entire assignment when the teammate loses access during apply', async () => {
+  const operation = 'assign_to_member', batch = { ...targets, assignee_id: member };
+  const preview = call(operation, batch);
+  const [, result] = await raceWithCommittedChange(`UPDATE site_members SET status='inactive' WHERE id='${memberId}';`,
+    service(sql(operation, batch, preview.preview_id)));
+  expect(result).toMatchObject({ success: false, code: 'invalid_assignee' });
+  expect(count('lead_events')).toBe(3);
+}, 12000);
 
 it('does not apply a stale delete when a lead changes without advancing updated_at, even if restored', () => {
   const preview = call('delete', targets);

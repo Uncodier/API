@@ -12,6 +12,8 @@ import { authorizeDirectAction } from './provider-direct-policy';
 import { claimDirectDispatch, storeDirectResult } from './provider-direct-receipt';
 import { describeDirectTool, executeDirectTool } from './provider-direct-transport';
 import { ConnectorError, type ConnectorContext } from './types';
+import { SELECTED_QUERY_PROBE } from './selected-query-probe-policy';
+import { createSelectedQueryProbeRuntime } from './selected-query-probe-runtime';
 import { createInstanceConnectorDispatcher } from './instance-connector-dispatcher';
 
 const uuid = z.string().uuid();
@@ -30,6 +32,7 @@ function interactive(context: ConnectorContext) {
 /** The host supplies identity; Policies supplies authorization. Neither search, old receipts nor
  * a provider description can grant use. The same implementation handles every provider toolkit. */
 export function createProviderDirectRuntime(resolveContext: ConnectorContextResolver) {
+  const probe = createSelectedQueryProbeRuntime(async () => interactive(await resolveContext()));
   async function admission(name: string) {
     const {connectorId,toolSlug} = parseConnectorToolRef(name);
     const context = interactive(await resolveContext());
@@ -54,6 +57,8 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
   return createInstanceConnectorDispatcher(resolveContext,interactive,{
     search:searchDirectTools,
     async describe(name: string) {
+      const ref = parseConnectorToolRef(name);
+      if (ref.toolSlug === SELECTED_QUERY_PROBE) return probe.describe(name, ref.connectorId);
       const a = await admission(name);
       const d = await describeDirectTool(a.target, await credentialFor(a), a.toolSlug);
       await recheck(name, a.stamp);
@@ -72,6 +77,9 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
         if (Buffer.byteLength(encoded) > 32_000) throw new ConnectorArgumentError({path:'arguments',rule:'bounded'});
         const envelope = pin.safeParse(snapshot);
         if (!envelope.success) throw new ConnectorError('DESCRIBE_REQUIRED','Use the current version, schema_hash and arguments envelope.',409);
+        const ref = parseConnectorToolRef(name);
+        // The probe tracks its own dispatch boundary, including provider denials.
+        if (ref.toolSlug === SELECTED_QUERY_PROBE) return probe.call(ref.connectorId, envelope.data);
         const a = await admission(name);
         if (!uuid.safeParse(a.context.requestId).success) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED','A verified human action is required for external dispatch.',403);
         const credential = await credentialFor(a);

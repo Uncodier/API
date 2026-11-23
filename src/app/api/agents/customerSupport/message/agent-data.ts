@@ -1,3 +1,4 @@
+import { websiteThread } from './web-thread';
 import { LEGACY_DEFAULT_AGENT_FILTER } from '@/lib/services/agents/legacy-default-filter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 // Función para validar UUIDs
@@ -53,50 +54,32 @@ export async function findActiveCustomerSupportAgent(siteId: string): Promise<{a
   return await findActiveAgentByRole(siteId, 'Customer Support');
 }
 
-// Función para obtener información completa del agente
-export async function getAgentInfo(agentId: string): Promise<{ user_id: string, site_id?: string, status?: string } | null> {
-  try {
-    if (!isValidUUID(agentId)) {
-      console.error(`ID de agente no válido: ${agentId}`);
-      return null;
-    }
-    
-    console.log(`🔍 Obteniendo información del agente: ${agentId}`);
-    
-    const { data, error } = await supabaseAdmin
-      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
-      .from('agents')
-      .select('id, user_id, site_id, status')
-      .eq('id', agentId)
-      .single();
-    
-    if (error) {
-      console.error('Error al obtener información del agente:', error);
-      throw error;
-    }
-    
-    if (!data) {
-      console.log(`⚠️ No se encontró el agente con ID: ${agentId}`);
-      return null;
-    }
-    
-    console.log(`✅ Información del agente recuperada: user_id=${data.user_id}, site_id=${data.site_id || 'N/A'}`);
-    
-    return {
-      user_id: data.user_id,
-      site_id: data.site_id,
-      status: data.status
-    };
-  } catch (error) {
-    console.error('Error al obtener información del agente:', error);
-    throw error;
-  }
+/** Only the stored assignment can select a non-default agent on a support turn. */
+export async function supportThreadAgent(siteId: string, conversationId?: string, webOnly = false): Promise<string | null> {
+  if (!conversationId) return null;
+  const { data, error } = await supabaseAdmin
+    .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
+    .from('conversations').select('site_id, agent_id, channel, custom_data').eq('id', conversationId)
+    .abortSignal(AbortSignal.timeout(5000)).maybeSingle();
+  if (error) throw error;
+  if (data && (data.site_id !== siteId || data.channel === 'internal_review' ||
+      (webOnly && !websiteThread(data.channel, data.custom_data)))) throw new Error('Conversation is unavailable');
+  return data?.agent_id ?? null;
+}
+
+export async function getAgentInfo(agentId: string, siteId: string): Promise<{ user_id: string, status: string } | null> {
+  const { data, error } = await supabaseAdmin
+    .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
+    .from('agents').select('id, user_id, status').eq('id', agentId).eq('site_id', siteId)
+    .eq('role', 'Customer Support').maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 // Función para obtener información completa del lead desde la base de datos
-export async function getLeadInfo(leadId: string): Promise<any | null> {
+export async function getLeadInfo(leadId: string, siteId: string): Promise<any | null> {
   try {
-    if (!isValidUUID(leadId)) {
+    if (!siteId || !isValidUUID(siteId) || !isValidUUID(leadId)) {
       console.error(`ID de lead no válido: ${leadId}`);
       return null;
     }
@@ -108,7 +91,7 @@ export async function getLeadInfo(leadId: string): Promise<any | null> {
       .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('leads')
       .select('*')
-      .eq('id', leadId)
+      .eq('id', leadId).eq('site_id', siteId)
       .single();
     
     if (error) {
@@ -143,9 +126,9 @@ export async function getLeadInfo(leadId: string): Promise<any | null> {
 }
 
 // Función para validar que un lead existe en la base de datos
-export async function validateLeadExists(leadId: string): Promise<boolean> {
+export async function validateLeadExists(leadId: string, siteId?: string): Promise<boolean> {
   try {
-    if (!isValidUUID(leadId)) {
+    if (!siteId || !isValidUUID(siteId) || !isValidUUID(leadId)) {
       console.log(`⚠️ Lead ID no válido: ${leadId}`);
       return false;
     }
@@ -154,7 +137,7 @@ export async function validateLeadExists(leadId: string): Promise<boolean> {
       .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('leads')
       .select('id')
-      .eq('id', leadId)
+      .eq('id', leadId).eq('site_id', siteId)
       .single();
     
     if (error) {

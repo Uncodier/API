@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { POST } from '@/app/api/agents/customerSupport/message/route';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { database } from './database';
@@ -7,7 +8,11 @@ import { ConversationService } from '@/lib/services/conversation-service';
 const site = '00000000-0000-4000-8000-000000000001';
 const user = '00000000-0000-4000-8000-000000000002';
 const agent = '00000000-0000-4000-8000-000000000003';
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+const serviceKey = randomBytes(32).toString('hex');
+const oldKey = process.env.SERVICE_API_KEY;
+beforeAll(() => { process.env.SERVICE_API_KEY = serviceKey; });
+afterAll(() => { if (oldKey === undefined) delete process.env.SERVICE_API_KEY; else process.env.SERVICE_API_KEY = oldKey; });
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), schema: jest.fn() } }));
 jest.mock('@/lib/services/visitor-identity/VisitorSessionAuthorizationService', () => ({
   visitorAuthorizationErrorResponse: () => null,
   visitorSessionAuthorizationService: { authorizeBrowserRequest: jest.fn().mockResolvedValue(null) },
@@ -20,6 +25,7 @@ jest.mock('@/app/api/agents/customerSupport/message/context', () => ({ buildSupp
 jest.mock('@/app/api/agents/customerSupport/message/generate', () => ({ generateSupportReply: jest.fn() }));
 jest.mock('@/app/api/agents/customerSupport/message/agent-data', () => ({
   isValidUUID: (value: string) => /^[0-9a-f-]{36}$/.test(value),
+  ...jest.requireActual('@/app/api/agents/customerSupport/message/agent-data'),
   findActiveCustomerSupportAgent: () => ({ agentId: '00000000-0000-4000-8000-000000000003', userId: '00000000-0000-4000-8000-000000000002' }),
 }));
 jest.mock('../ownership', () => ({ authorizeCommentAccount: async () => ({ username: 'owned', platformPostId: 'platform-post' }) }));
@@ -34,12 +40,14 @@ jest.mock('uuid', () => {
 it('wires ingestion, deterministic selection and AI proposal persistence without generic latest lookup', async () => {
   const db = database();
   (supabaseAdmin.from as jest.Mock).mockImplementation(db.from);
+  (supabaseAdmin.schema as jest.Mock).mockReturnValue({from:db.from});
+  db.tables.agents = [{id:agent,user_id:user,role:'Customer Support',status:'active',site_id:site}];
   db.tables.sites.push({ id: site, user_id: user });
   (generateSupportReply as jest.Mock).mockResolvedValue({
     executedCommand: { results: [{ message: { content: 'AI proposal' } }] }, effectiveDbUuid: undefined,
   });
   const request = (comment: string) => new Request('http://localhost/api/agents/customerSupport/message', {
-    method: 'POST', body: JSON.stringify({ site_id: site, message: 'Question', origin: 'instagram',
+    method: 'POST', headers: {'x-api-key':serviceKey}, body: JSON.stringify({ site_id: site, message: 'Question', origin: 'instagram',
       origin_message_id: `instagram:${comment}`, channel_delivery: true, require_approval: true,
       custom_data: { source: 'comment', author_id: 'author', author_identity_status: 'unavailable',
         publisher_account_id: 'owned-account', outstand_post_id: 'post', platform_comment_id: comment },

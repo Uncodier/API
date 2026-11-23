@@ -88,3 +88,21 @@ it('keeps distinct full local IDs when the visible account suffix collides', asy
   expect(first.connector_id).not.toBe(second.connector_id);
   expect(first.name).toBe(`connector:${a.connector.id}:${slug}`); expect(second.name).toBe(`connector:${b.connector.id}:${slug}`);
 });
+
+it('describes only the bounded query on a host-selected shared project with member and tool use',async()=>{
+  const slug='SUPABASE_RUN_READ_ONLY_QUERY';
+  const {directProof,...base}=target('selected',[slug]);
+  const shared={...base,catalogOnly:true as const,connector:{...base.connector,toolkit_slug:'supabase',supabase_project_ref:'a'.repeat(20),revocation_dispatched:false},policy:{...base.policy,catalog_reads:true}};
+  const host={...ctx,connectorIdHint:shared.connector.id};
+  selected.mockResolvedValue({items:[item(slug)],missing:false});
+  for(const query of ['test connection',slug]) {
+    const page=await searchDirectTools(host,{query},[shared]);
+    expect(page.tools).toMatchObject([{name:`connector:${shared.connector.id}:${slug}`,availability:'describe_required',description:expect.stringContaining('SELECT 1')}]);
+    expect(page.next_cursor).toBeNull();
+  }
+  const withoutPin=await searchDirectTools(ctx,{connector_id:shared.connector.id,query:slug},[shared]);
+  expect(withoutPin.tools[0].availability).toBe('manual_only');
+  selected.mockImplementation(async(_c,_k,ids)=>({items:ids.map(item),missing:false}));
+  shared.policy.allowed_tools=['SUPABASE_GET_PROJECT'];
+  expect((await searchDirectTools(host,{query:slug},[shared])).tools).toEqual([]);
+});

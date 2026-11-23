@@ -16,10 +16,12 @@ const leadDraft = z.object({
 }).strict().refine(lead => lead.email || lead.phone, 'Each lead requires an email or phone.');
 
 export const leadBulkSchema = z.object({
-  action: z.enum(['create', 'assign_to_me', 'change_status', 'delete']),
+  action: z.enum(['create', 'assign_to_me', 'assign_to_member', 'change_status', 'delete']),
   leads: z.array(leadDraft).min(1).max(MAX_LEADS).optional().describe('New lead records; only for create.'),
   lead_ids: z.array(z.string().uuid().transform(id => id.toLowerCase())).min(1).max(MAX_LEADS)
-    .optional().describe('Explicit, distinct lead UUIDs. Required for assign_to_me, change_status and delete.'),
+    .optional().describe('Explicit, distinct lead UUIDs. Required for assign_to_me, assign_to_member, change_status and delete.'),
+  assignee_id: z.string().uuid().transform(id => id.toLowerCase()).optional()
+    .describe('Site team member user UUID (not a membership record UUID); required only for assign_to_member.'),
   status: leadStatus.optional().describe('New status; required only for change_status.'),
   dry_run: z.boolean().default(true).describe('Preview by default. Send false to apply.'),
   preview_id: z.string().uuid().optional().describe('Required to apply. Use the exact preview_id returned for this batch; reuse it to reconcile a retry.'),
@@ -37,6 +39,8 @@ export const leadBulkSchema = z.object({
   }
   if (input.action === 'change_status' && !input.status) issue('status', 'status is required for change_status.');
   if (input.action !== 'change_status' && input.status) issue('status', 'status is only allowed for change_status.');
+  if (input.action === 'assign_to_member' && !input.assignee_id) issue('assignee_id', 'assignee_id is required for assign_to_member.');
+  if (input.action !== 'assign_to_member' && input.assignee_id) issue('assignee_id', 'assignee_id is only allowed for assign_to_member.');
   if (input.dry_run && input.preview_id) issue('preview_id', 'preview_id is only allowed when applying.');
   if (!input.dry_run) {
     if (!input.preview_id) issue('preview_id', 'preview_id from an actual preview is required to apply.');
