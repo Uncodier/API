@@ -127,20 +127,17 @@ transport fixtures only. Validate a redacted real result on an approved test
 account before declaring live acceptance; do not loosen the projection to
 pass through arbitrary data.
 
-### Manager-only binding for an existing Supabase PAT account
+### Supabase project metadata and Ask
 
-`POST /api/connectors/connections/{id}/bind-project` takes only `site_id`,
-`expected_revision` and a manager-entered project reference (20 lowercase letters).
-It does not use display names or recover the PAT. It checks the selected account
-and credential binding, then uses only the documented `SUPABASE_GET_PROJECT`
-metadata read (`ref`, version `20261116_00`, exact account and owner). It is not
-an assistant tool. The [toolkit](https://docs.composio.dev/toolkits/supabase.md)
-documents the operation; Supabase's [OpenAPI](https://api.supabase.com/api/v1-json)
-describes `v1-get-project`, the `projects:read` scope, and its project metadata.
-Only a successful response containing the matching canonical `ref`, matching
-legacy `id` and a nonempty `organization_id` is accepted; wrapper/schema drift,
-missing metadata or unavailable pinned versions leave the account unbound.
-No project data is returned. After proof, the local manager/revision RPC writes
-only a first binding, not a grant. An authorized metadata-only check on 2026-11-20 confirmed the masked
-account shape and successful canonical project identity proof on one existing
-account. No binding was written and no tables were read.
+The historical `POST /api/connectors/connections/{id}/bind-project` workflow
+has been removed from the API and web. It recorded a project after a metadata
+read; it did not grant Ask execution. Existing project references and saved
+delegations are not rewritten. The manager's Ask status is projected from the
+authorization RPC, regardless of whether it also returns a private project
+reference. That reference never reaches the browser. Project-scoped execution
+still checks the exact authorized project.
+
+Deploy the updated API and web before applying
+`20261123164000_retire_connector_project_binding.sql`. It removes only the
+retired writer and makes the existing references immutable; it does not reset
+Ask policy or issue an authorization.

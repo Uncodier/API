@@ -8,10 +8,11 @@ import {modelAccountIdentity} from './model-account-identity';
 import {createComposioClient} from './composio-transport';
 import {listToolkitToolMetadata, listSelectedCatalogMetadata, TOOL_CATALOG_LIMIT} from './composio-tool-metadata';
 import {CONNECTOR_DOMAINS, getToolkitDomains} from './domains';
+import type {CatalogOnlyAccount} from './provider-catalog-accounts';
 import {ConnectorError, type ConnectorContext} from './types';
 import type {ConnectorFilters, ConnectorCandidate} from './connector-discovery-types';
 import type {DirectAuthorizedConnector} from './provider-direct-policy';
-import {directActionNameSafe} from './provider-direct-guards';
+import {readTokenProviderBinding} from './provider-project-binding';
 
 // Cursors refer to metadata positions only, never authorization. Resume a bounded page using
 // the provider's page/limit cursor format, not an arbitrary query/path supplied by a model.
@@ -34,9 +35,9 @@ function matches(item:Item, kit:string, name:string, filters:ConnectorFilters) {
   return filters.catalog_query ? search.every(word=>text.includes(word)) : search.some(word=>text.includes(word));
 }
 
-/** Receives only freshly authorized accounts from Policies. No module is imported based on the
- * toolkit, name or effect. Search text stays local; selected IDs are server-saved policy data. */
-export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFilters, targets:DirectAuthorizedConnector[]) {
+/** Search text stays local and selected IDs are server-saved policy data.
+ * A catalog-only account cannot supply the proof required for describe or dispatch. */
+export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFilters, targets:(DirectAuthorizedConnector | CatalogOnlyAccount)[]) {
   const parsed = filtersSchema.safeParse(input);
   if (!parsed.success) throw new ConnectorError('INVALID_FILTER','Use bounded catalog search filters.',400);
   const {cursor,...filters} = parsed.data;
@@ -48,8 +49,9 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
       return {target,domains,category};
     }).filter(({domains,category})=>(!filters.domain || domains.includes(filters.domain)) && (!filters.category || category===filters.category))
     .sort((a,b)=>a.target.connector.id.localeCompare(b.target.connector.id));
-  const identity=digest(['catalog-inventory-v2',ctx.siteId,ctx.instanceId,ctx.userId,ctx.agentId,ctx.connectorIdHint,filters,
-    accounts.map(({target:t})=>[t.connector.id,t.connector.revision,t.provider.credential_revision,t.policy.revision,authorityStamp(t.directProof)])]);
+  const identity=digest(['catalog-inventory-v4',ctx.siteId,ctx.instanceId,ctx.userId,ctx.agentId,ctx.connectorIdHint,filters,
+    accounts.map(({target:t})=>[t.connector.id,t.connector.revision,t.provider.credential_revision,t.policy.revision,
+      'catalogOnly' in t ? 'catalog_only' : authorityStamp(t.directProof)])]);
   let account=0, page=1, offset=0, observed='';
   if (cursor !== undefined) {
     const m=/^d1:([a-f0-9]{32}):(\d{1,5}):(\d{1,6}):(\d{1,2}):(-|[a-f0-9]{32})$/.exec(cursor);
@@ -65,6 +67,9 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
     try {
       const cred=await loadConnectorCredential(ctx.siteId);
       if (cred.revision!==target.provider.credential_revision) throw new ConnectorError('STALE_CREDENTIAL','Connection verification changed.',409);
+      if ('catalogOnly' in target && (await readTokenProviderBinding(ctx.siteId,cred.revision)).projectId!==target.provider.project_id) {
+        throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED','The provider project no longer matches this connection.',409);
+      }
       const client=createComposioClient(cred.apiKey);
       const all=target.policy.tool_access_mode==='all';
       const ids=[...new Set(target.policy.allowed_tools)].sort();
@@ -85,13 +90,14 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
         const reserved=i.slug.startsWith('COMPOSIO_');
         const name=reserved?`connector:${target.connector.id}:${i.slug}`:connectorToolRef(target.connector.id,i.slug);
         if (!matches(i,kit,name,filters)) continue;
-        const callable=!reserved && directActionNameSafe(kit,i.slug) &&
-          projectActionAllowed(kit,i.slug,target.connector.supabase_project_ref,target.directProof.kind==='connected_account',target.localProjectRef);
+        const reason=reserved ? 'reserved_provider_action' : 'catalogOnly' in target ? 'account_execution_not_authorized'
+          : !projectActionAllowed(kit,i.slug,target.connector.supabase_project_ref,target.directProof.kind==='connected_account',target.localProjectRef)
+            ? 'project_restricted' : undefined;
         tools.push({name,toolkit:kit,tool_origin:'provider',...modelAccountIdentity(target.connector.id),domains,category,
-          availability:callable?'describe_required':'manual_only',description:callable
+          availability:reason?'manual_only':'describe_required',...(reason && {unavailability_reason:reason}),description:!reason
             ? `${i.slug.replaceAll('_',' ')}. Describe to verify the provider schema.`
-            : reserved ? 'Reserved Composio operation; unavailable through a connected account.'
-            : !directActionNameSafe(kit,i.slug) ? 'Makinari restricts this catalog operation by name or toolkit capability. Composio has not rejected the account.'
+            : reason==='reserved_provider_action' ? 'Reserved Composio operation; unavailable through a connected account.'
+            : reason==='account_execution_not_authorized' ? 'Catalog metadata only. This connection is not authorized to describe or execute provider actions in Ask.'
             : 'The connection’s project binding does not allow this operation. No execution request was sent.'});
       }
       observed = offset<items.length?fingerprint:'';

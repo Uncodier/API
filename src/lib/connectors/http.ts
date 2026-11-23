@@ -9,8 +9,6 @@ import { disconnectConnector, getConnectionSummary, listConnections, revisionBod
 import { createManagedOAuth } from './managed-oauth';
 import { connectSupabaseToken, supabaseTokenInput } from './supabase-token';
 
-import { bindSupabaseProject } from './supabase-project-binding';
-
 const headers = { 'Cache-Control': 'private, no-store' };
 const uuid = z.string().uuid();
 
@@ -69,7 +67,7 @@ async function body(request: Request): Promise<unknown> {
   return readCatalogJson(request, 65_536);
 }
 
-type Operation = 'connection-summary' | 'catalog' | 'detail' | 'connections' | 'access' | 'update-access' | 'policy' | 'sync' | 'disconnect' | 'managed-oauth' | 'supabase-token' | 'bind-project';
+type Operation = 'connection-summary' | 'catalog' | 'detail' | 'connections' | 'access' | 'update-access' | 'policy' | 'sync' | 'disconnect' | 'managed-oauth' | 'supabase-token';
 
 /** Every route invocation verifies a bearer actor; middleware/service headers confer no authority. */
 export async function connectorHandler(request: Request, operation: Operation, id?: string): Promise<Response> {
@@ -94,7 +92,6 @@ export async function connectorHandler(request: Request, operation: Operation, i
       return Response.json(result, { headers });
     }
     const raw = await body(request);
-    if (operation === 'bind-project') return Response.json(await bindSupabaseProject(userId, uuid.parse(id), raw), { headers });
     if (operation === 'supabase-token') {
       const input = supabaseTokenInput.parse(raw);
       await requireConnectorSiteAccess(input.site_id, userId, true);

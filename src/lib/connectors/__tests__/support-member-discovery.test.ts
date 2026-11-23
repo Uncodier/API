@@ -38,14 +38,14 @@ it('lists generic accounts once without reading catalog metadata',async()=>{
   expect(page).toMatchObject({connectors:ids.map(id=>({connector_id:id,account_label:`Account …${id.slice(-8)}`})),next_cursor:null});
   expect(metadata).not.toHaveBeenCalled();expect(JSON.stringify(page)).not.toContain(targets[0].connector.display_name);
 });
-it('pages through selected tools and accounts, including eligible formerly reviewed slugs and marking restricted names as inventory only',async()=>{
+it('pages through all selected tools and accounts without restricting executable capabilities by name',async()=>{
   const names:string[]=[];
   let cursor:string|undefined;
   for(let i=0;i<20;i++) {
     const page=await run({action:'search',query:'gmail',cursor});
     if(!('tools' in page)||!page.tools) throw new Error('Expected tools');
     expect(page.tools.length).toBeLessThanOrEqual(5);
-    for(const tool of page.tools) if(tool.name?.endsWith(':GMAIL_RUN_CODE'))expect(tool).toMatchObject({availability:'manual_only'});
+    for(const tool of page.tools) expect(tool).toMatchObject({availability:'describe_required'});
     names.push(...page.tools.map(tool=>tool.name!));
     if(!page.next_cursor) break;
     cursor=page.next_cursor;expect(cursor.length).toBeLessThanOrEqual(128);

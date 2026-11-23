@@ -93,14 +93,14 @@ it('keeps distinct full local IDs when the visible account suffix collides', asy
   expect(first.name).toBe(`connector:${a.connector.id}:${slug}`); expect(second.name).toBe(`connector:${b.connector.id}:${slug}`);
 });
 
-it.each(['all','selected'] as const)('retains locally restricted tools, including exact searches on an admitted %s-mode account',async mode=>{
+it.each(['all','selected'] as const)('makes every catalog capability describable on an admitted %s-mode account',async mode=>{
   const slugs=['NOVELCLOUD_RUN_READ_ONLY_QUERY','NOVELCLOUD_EXECUTE_CODE','NOVELCLOUD_LIST_ORDERS'];
   const account=target(mode,slugs), host={...ctx,connectorIdHint:account.connector.id};
   list.mockResolvedValue({items:slugs.map(item),next_cursor:null,total:slugs.length});
   selected.mockImplementation(async(_client,_kit,ids)=>({items:ids.map(item),missing:false}));
-  expect((await searchDirectTools(host,{},[account])).tools.map(t=>[t.name,t.availability]).sort()).toEqual(slugs.map((slug,i)=>[`connector:${account.connector.id}:${slug}`,i===2?'describe_required':'manual_only']).sort());
+  expect((await searchDirectTools(host,{},[account])).tools.map(t=>[t.name,t.availability]).sort()).toEqual(slugs.map(slug=>[`connector:${account.connector.id}:${slug}`,'describe_required']).sort());
   for (const slug of slugs.slice(0,2)) {
-    expect((await searchDirectTools(host,{catalog_query:slug},[account])).tools).toMatchObject([{name:`connector:${account.connector.id}:${slug}`,availability:'manual_only'}]);
+    expect((await searchDirectTools(host,{catalog_query:slug},[account])).tools).toMatchObject([{name:`connector:${account.connector.id}:${slug}`,availability:'describe_required'}]);
   }
 });
 
@@ -111,6 +111,21 @@ it('finds a delegated project’s table-listing tool as a candidate for schema v
   list.mockResolvedValue({items:[item(slug)],next_cursor:null,total:1});
   expect((await searchDirectTools(ctx,{catalog_query:slug},[account])).tools).toMatchObject([
     {name:`connector:${account.connector.id}:${slug}`,availability:'describe_required'}]);
+});
+
+it('distinguishes approved project metadata from blocked operations on a delegated shared project',async()=>{
+  const account=target(), ref='abcdefghijklmnopqrst';
+  account.localProjectRef=ref;account.connector.toolkit_slug='supabase';account.connector.supabase_project_ref=ref;
+  account.directProof={...account.directProof,toolkitSlug:'supabase',kind:'connected_account',authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:ref};
+  const blocked=['SUPABASE_LIST_TABLES','SUPABASE_RUN_READ_ONLY_QUERY','SUPABASE_ALPHA_CREATE_API_KEY'];
+  const slugs=['SUPABASE_GET_PROJECT',...blocked];
+  list.mockResolvedValue({items:slugs.map(item),next_cursor:null,total:slugs.length});
+  const {tools}=await searchDirectTools(ctx,{},[account]);
+  expect(tools).toMatchObject([
+    {name:`connector:${account.connector.id}:SUPABASE_GET_PROJECT`,availability:'describe_required'},
+    ...blocked.map(slug=>({name:`connector:${account.connector.id}:${slug}`,availability:'manual_only',unavailability_reason:'project_restricted'})),
+  ]);
+  expect(tools[0]).not.toHaveProperty('unavailability_reason');
 });
 
 it('invalidates an ordinary continuation on reauthorization or change of authority kind, even at the same revision',async()=>{

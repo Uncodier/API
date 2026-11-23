@@ -2,7 +2,7 @@ import companies from './fixtures/HUBSPOT_LIST_COMPANIES-20261116_01.json';
 import calendars from './fixtures/GOOGLECALENDAR_LIST_CALENDARS-20261116_00.json';
 import { createHash, randomUUID } from 'node:crypto';
 import { describeDirectTool, executeDirectTool, type DirectEnvelope } from '../provider-direct-transport';
-import { directActionNameSafe, directEffect } from '../provider-direct-guards';
+import { directEffect } from '../provider-direct-guards';
 import { ConnectorError } from '../types';
 import { accountFixture, connectorFixture, jsonResponse, providerFixture, secret, toolFixture, toolkitFixture } from './composio-fixtures';
 import { attestedProject, byokOrigin } from './byok-rpc-fixture';
@@ -69,7 +69,7 @@ it.each([['cloudplanner','SEARCH_LEASES','API_KEY'],['maildesk','CREATE_DRAFT','
     expect(http).toHaveBeenCalledTimes(4);
   });
 
-it.each(['selected','all'])('dispatches a delegated QUERY_ORDERS with structured filters under %s and rejects open query input',async mode=>{
+it.each(['selected','all'])('dispatches delegated QUERY_ORDERS with structured or text filters under %s',async mode=>{
   const f=fixture('shop','QUERY_ORDERS');Object.assign(f.target.connector,{supabase_project_ref:null});Object.assign(f.target.policy,{tool_access_mode:mode});
   Object.assign(f.target,{directProof:{...f.target.directProof,kind:'connected_account',authorizationId:randomUUID(),authScheme:'OAUTH2',boundProjectRef:null}});
   Object.assign(f.tool,{input_parameters:{type:'object',properties:{since:{type:'string',format:'date'}},required:['since']}});
@@ -78,8 +78,13 @@ it.each(['selected','all'])('dispatches a delegated QUERY_ORDERS with structured
   await expect(f.call(pin)).resolves.toEqual({data:{orders:[]}});
   const posts=http.mock.calls.filter(([,o])=>o.method==='POST');expect(posts).toHaveLength(1);
   expect(posts[0][0]).toMatch(/tools\/execute\/SHOP_QUERY_ORDERS$/);expect(JSON.parse(posts[0][1].body)).toMatchObject({connected_account_id:f.account.id,arguments:pin.arguments});
-  http.mockReset();f.queue({...f.tool,input_parameters:{type:'object',properties:{query:{type:'string'}}}});
-  await expect(f.call(pin)).rejects.toMatchObject({code:'SCHEMA_UNSUPPORTED',executed:false});noPost();
+  http.mockReset();Object.assign(f.tool,{input_parameters:{type:'object',properties:{query:{type:'string'}}}});
+  f.queue(f.tool,f.toolkit,f.account);
+  await expect(f.call(pin)).rejects.toMatchObject({code:'CONNECTOR_SCHEMA_CHANGED',executed:false});noPost();
+  const text=await f.describe(), args={query:'SELECT * FROM orders'};
+  f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{orders:[]}});
+  await expect(f.call({version:text.version,schema_hash:text.schemaHash,arguments:args})).resolves.toEqual({data:{orders:[]}});
+  expect(JSON.parse(http.mock.calls[3][1].body).arguments).toEqual(args);
 });
 
 it('treats flat/structured permissions, including missing/extra OAuth grants, as provider-owned (never grants or blockers)', async()=>{
@@ -100,9 +105,32 @@ it.each(['createHint','updateHint','destructiveHint'])('never labels a recognize
   expect(directEffect(['idempotentHint'],'test','TEST_GET_RECORDS')).toBe('unknown');
 });
 
-it.each(['RUN_READ_ONLY_QUERY','EXECUTE_SQL','RUN_CODE','PORT_SCAN','HTTP_GET','TRACEROUTE','RAW_API_REQUEST','UPLOAD_FILE','GET_CREDENTIALS','SET_WEBHOOK','UPDATE_PERMISSIONS'])('rejects non-business operation %s without fetching provider metadata', async op=>{
-  const f=fixture('drivecloud',op);await expect(f.read()).rejects.toMatchObject({code:'TOOL_UNREVIEWED'});expect(http).not.toHaveBeenCalled();
-  expect(directActionNameSafe('another',f.slug)).toBe(false);
+it.each(['selected','all'])('executes every provider capability under %s without changing accounts or replaying', async mode=>{
+  const cases=[
+    ['RUN_READ_ONLY_QUERY','query','SELECT name FROM orders'],['EXECUTE_SQL','sql','SELECT * FROM orders'],
+    ['RUN_CODE','code','print("example")'],['PORT_SCAN','host','example.invalid'],['HTTP_GET','url','https://example.invalid'],
+    ['TRACEROUTE','hostname','example.invalid'],['RAW_API_REQUEST','endpoint','/v1/orders'],
+    ['UPLOAD_FILE','filePath','/tmp/example.txt'],['GET_CREDENTIALS','id','record-7'],
+    ['SET_WEBHOOK','callback','https://example.invalid/hook'],['UPDATE_PERMISSIONS','permissions','read'],
+  ];
+  for (const [op,field,value] of cases) {
+    http.mockReset();const f=fixture('drivecloud',op);
+    Object.assign(f.target.policy,{tool_access_mode:mode,allowed_tools:mode==='all'?[]:[f.slug]});
+    Object.assign(f.target.connector,{supabase_project_ref:null});
+    Object.assign(f.target,{directProof:{...f.target.directProof,kind:'connected_account',authorizationId:randomUUID(),authScheme:'OAUTH2',boundProjectRef:null}});
+    Object.assign(f.tool,{input_parameters:{type:'object',properties:{[field]:{type:'string'}},required:[field]}});
+    const d=await f.describe(), args={[field]:value}, before=jest.fn(async()=>{});
+    f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{done:true}});
+    await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:args},before)).resolves.toEqual({data:{done:true}});
+    expect(before).toHaveBeenCalledTimes(1);expect(http).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(http.mock.calls[3][1].body)).toEqual({connected_account_id:f.account.id,user_id:f.account.user_id,version:d.version,arguments:args});
+  }
+});
+
+it.each(['OTHER_RUN_CODE','COMPOSIO_EXECUTE_TOOL','DRIVECLOUD_RUN_CODE\n','DRIVECLOUD_RUN_CODE/other'])('rejects malformed, reserved or foreign toolkit action %j before fetching metadata', async slug=>{
+  const f=fixture('drivecloud','RUN_CODE');
+  await expect(describeDirectTool(f.target,f.credential,slug)).rejects.toBeInstanceOf(ConnectorError);
+  expect(http).not.toHaveBeenCalled();
 });
 
 it.each(['tool','toolkit','version','deprecated','no_auth','custom','mcp','disabled_toolkit','account','owner','auth_config','inactive','shared','private_missing','scheme'])('denies mismatched live identity/capability: %s',async kind=>{
@@ -208,13 +236,14 @@ it('hides selectors, validates exact server bindings and accepts ordinary text/s
   Object.assign(f.target.connector,{supabase_project_ref:project});f.target.directProof.resourceBoundary=project;
   Object.assign(f.tool,{input_parameters:{type:'object',properties:{user_id:{type:'string',default:'me'},project_ref:{type:'string',pattern:'^[a-z]{20}$'},
     customAuthParams:{type:'object'},attachmentUrl:{type:'string'},text:{type:'string'}},required:['user_id','text','project_ref']}});
-  const d=await f.describe();expect(d.parameters).toMatchObject({properties:{text:{type:'string'}},required:['text']});expect(Object.keys(d.parameters.properties as object)).toEqual(['text']);
-  for (const bad of [{user_id:'foreign'},{project_ref:project},{attachmentUrl:'foreign'},{customAuthParams:{}},{text:'https://external.invalid'}]) {
+  const d=await f.describe();expect(d.parameters).toMatchObject({properties:{text:{type:'string'},attachmentUrl:{type:'string'}},required:['text']});expect(Object.keys(d.parameters.properties as object)).toEqual(['attachmentUrl','text']);
+  for (const bad of [{user_id:'foreign'},{project_ref:project},{attachmentUrl:3},{customAuthParams:{}},{text:3}]) {
     http.mockReset();f.queue(f.tool,f.toolkit,f.account);await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:{text:'ok',...bad}})).rejects.toMatchObject({effectStarted:false});noPost();
   }
   http.mockReset();f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{draft_id:'123'}});
-  await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:{text:'Schedule next week'}})).resolves.toEqual({data:{draft_id:'123'}});
-  expect(JSON.parse(http.mock.calls[3][1].body).arguments).toEqual({text:'Schedule next week',user_id:'me',project_ref:project});
+  const args={text:'Schedule next week: https://example.invalid',attachmentUrl:'https://example.invalid/attachment'};
+  await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:args})).resolves.toEqual({data:{draft_id:'123'}});
+  expect(JSON.parse(http.mock.calls[3][1].body).arguments).toEqual({...args,user_id:'me',project_ref:project});
 });
 
 const published = [
@@ -267,16 +296,21 @@ it('never publishes a private binding repeated in a provider enum, even with an 
 });
 
 it.each([['drive','LIST_FILES','folder_id'],['drive','LIST_FOLDERS','parent_folder_id'],['tracker','LIST_PROJECTS','board_id'],
-  ['planner','GET_PROJECT','id']])('uses stored business IDs with %s %s (no paths, URLs, or alternate authorities)',async (kit,op,field)=>{
+  ['planner','GET_PROJECT','id']])('uses stored business IDs and declared file paths with %s %s without changing authority',async (kit,op,field)=>{
   const f=fixture(kit,op);Object.assign(f.tool,{input_parameters:{type:'object',properties:{[field]:{type:'string'},filePath:{type:'string'}},required:[field]}});
-  const d=await f.describe(), args={[field]:'object-7'};expect(Object.keys(d.parameters.properties as object)).toEqual([field]);
+  const d=await f.describe(), args={[field]:'object-7',filePath:'/tmp/example.txt'};expect(Object.keys(d.parameters.properties as object)).toEqual([field,'filePath']);
   f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{count:2}});
   await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:args})).resolves.toEqual({data:{count:2}});
   http.mockReset();f.queue(f.tool,f.toolkit,f.account);
-  await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:{[field]:'https://example.invalid/item'}})).rejects.toMatchObject({effectStarted:false});noPost();
+  await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:{[field]:3}})).rejects.toMatchObject({effectStarted:false});noPost();
 });
-it.each(['DOWNLOAD_FROM_URL','GET_FILE_CONTENT','LIST_FILES_AND_DOWNLOAD','UPLOAD_FILE','MOVE_FILE_BY_PATH'])('still denies file capabilities %s',op=>{
-  expect(directActionNameSafe('drive',`DRIVE_${op}`)).toBe(false);
+it.each(['DOWNLOAD_FROM_URL','GET_FILE_CONTENT','LIST_FILES_AND_DOWNLOAD','UPLOAD_FILE','MOVE_FILE_BY_PATH'])('dispatches file capability %s through the selected account, never a local file loader',async op=>{
+  const f=fixture('drive',op);
+  Object.assign(f.tool,{input_parameters:{type:'object',properties:{filePath:{type:'string'},url:{type:'string'}}}});
+  const d=await f.describe(),args={filePath:'/tmp/example.txt',url:'https://example.invalid/file'};
+  f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{done:true}});
+  await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:args})).resolves.toEqual({data:{done:true}});
+  expect(JSON.parse(http.mock.calls[3][1].body).arguments).toEqual(args);
 });
 it('never enumerates or selects a different project under a database-scoped binding',async()=>{
   const f=fixture('businessdata','LIST_PROJECTS'), ref='c'.repeat(20);
@@ -356,11 +390,6 @@ it('describes Stripe promotion-code retrieval by stored ID, not executable code'
   f.queue(f.tool, f.toolkit, f.account, {successful:true,error:null,data:{active:true}});
   await expect(f.call(pin)).resolves.toEqual({data:{active:true}});
   expect(JSON.parse(http.mock.calls[3][1].body).arguments).toEqual(pin.arguments);
-  for (const op of ['RETRIEVE_CODE','RUN_CODE','RETRIEVE_PROMOTION_CODE_AND_RUN_SCRIPT']) {
-    expect(directActionNameSafe('stripe', `STRIPE_${op}`)).toBe(false);
-  }
-  expect(directActionNameSafe('other', 'OTHER_RETRIEVE_PROMOTION_CODE')).toBe(true);
-  expect(directActionNameSafe('other','OTHER_EXECUTE_PROMOTION_CODE_SCRIPT')).toBe(false);
   http.mockReset();
   f.queue(f.tool, f.toolkit, f.account);
   await expect(f.call({...pin,arguments:{...pin.arguments,code:'not an ID'}})).rejects.toMatchObject({effectStarted:false});
@@ -382,6 +411,25 @@ it('dispatches LIST_TABLES once with the delegated external project and account,
   await expect(f.call(pin)).resolves.toEqual({data});const posts=http.mock.calls.filter(([,o])=>o.method==='POST');expect(posts).toHaveLength(1);
   expect(posts[0][0]).toMatch(/\/tools\/execute\/SUPABASE_LIST_TABLES$/);expect(JSON.parse(posts[0][1].body)).toMatchObject({
     connected_account_id:f.target.connector.provider_account_id,arguments:{project_ref:project}});
+});
+
+it('executes provider SQL on the delegated external project while keeping the project ref server-owned',async()=>{
+  const f=fixture('supabase','RUN_READ_ONLY_QUERY'), project='b'.repeat(20);
+  Object.assign(f.target,{localProjectRef:'a'.repeat(20),directProof:{...f.target.directProof,kind:'connected_account',
+    authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:project}});
+  Object.assign(f.target.connector,{supabase_project_ref:project});
+  Object.assign(f.account.state,{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}});
+  Object.assign(f.tool,{input_parameters:{type:'object',required:['project_ref','query'],properties:{project_ref:{type:'string'},query:{type:'string'}}}});
+  const d=await f.describe(), args={query:'SELECT name FROM orders'}, pin={version:d.version,schema_hash:d.schemaHash,arguments:args};
+  expect(Object.keys(d.parameters.properties as object)).toEqual(['query']);
+  f.queue(f.tool,f.toolkit,f.account);
+  await expect(f.call({...pin,arguments:{...args,project_ref:'c'.repeat(20)}})).rejects.toMatchObject({executed:false});noPost();
+  http.mockReset();f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{rows:[]}});
+  await expect(f.call(pin)).resolves.toEqual({data:{rows:[]}});
+  expect(http).toHaveBeenCalledTimes(4);
+  expect(JSON.parse(http.mock.calls[3][1].body)).toMatchObject({connected_account_id:f.account.id,arguments:{...args,project_ref:project}});
+  http.mockReset();Object.assign(f.target,{localProjectRef:project});
+  await expect(f.call(pin)).rejects.toMatchObject({code:'TOOL_UNREVIEWED',executed:false});expect(http).not.toHaveBeenCalled();
 });
 
 it.each(['shared','external'])('injects the sole project ref for a delegated %s database metadata read and withholds other fields', async location=>{
@@ -408,6 +456,11 @@ it.each(['shared','external'])('injects the sole project ref for a delegated %s 
   await expect(f.call(pin)).rejects.toBeInstanceOf(ConnectorError);
 });
 
-it('refuses an executable toolkit with an opaque operation name before fetching metadata',async()=>{
-  const f=fixture('code_interpreter','RUN');await expect(f.read()).rejects.toMatchObject({code:'TOOL_UNREVIEWED'});expect(http).not.toHaveBeenCalled();
+it('executes an executable toolkit with an opaque operation using its verified provider contract',async()=>{
+  const f=fixture('code_interpreter','RUN');
+  Object.assign(f.tool,{input_parameters:{type:'object',properties:{code:{type:'string'}},required:['code']}});
+  const d=await f.describe(),args={code:'print("example")'};
+  f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{done:true}});
+  await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:args})).resolves.toEqual({data:{done:true}});
+  expect(JSON.parse(http.mock.calls[3][1].body).arguments).toEqual(args);
 });

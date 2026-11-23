@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { withDirectActorEvidence } from '@/lib/database/hosted-project-identity';
 import { connectorDatabaseError, getVisibleConnector, loadConnectorCredential, requireConnectorSiteAccess } from './account-access';
-import { directActionNameSafe } from './provider-direct-guards';
 import { readTokenProviderBinding } from './provider-project-binding';
 import { ConnectorError, type AuthorizedConnector, type ConnectorContext } from './types';
 
@@ -15,7 +14,7 @@ const uuid = z.string().uuid();
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/);
 const ref = z.string().regex(/^[a-z]{20}$/);
 const kit = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,99}$/);
-const slug = z.string().regex(/^[A-Z0-9][A-Z0-9_]{0,149}$/).refine(v => !v.startsWith('COMPOSIO_'));
+const slug = z.string().regex(/^[A-Z0-9][A-Z0-9_]{0,149}$/).refine(v => !v.startsWith('COMPOSIO_') && !/[^A-Z0-9_]/.test(v));
 const revision = z.number().int().positive(), instant = z.string().datetime({offset:true});
 const account = z.object({
   connector: z.object({id:uuid,site_id:uuid,provider_id:uuid,provider_project_id:id,toolkit_slug:kit,provider_account_id:id,
@@ -111,9 +110,9 @@ export async function verifyProviderAccounts(siteId:string, rows:z.infer<typeof 
       continue;
     }
     // A foreign, unbound or otherwise invisible account never discloses tool/authority details.
-    // On an admitted account, an unsupported capability is not missing OAuth or a manager grant.
-    if (action && (!directActionNameSafe(c.toolkit_slug,action) || !projectActionAllowed(c.toolkit_slug,action,c.supabase_project_ref,r.authority_kind==='connected_account',localRef))) throw new ConnectorError('DIRECT_ACTION_UNSUPPORTED',
-      'This action is outside the direct business-data boundary.',409);
+    if (action && (!action.startsWith(`${c.toolkit_slug.toUpperCase().replace(/-/g,'_')}_`) ||
+        !projectActionAllowed(c.toolkit_slug,action,c.supabase_project_ref,r.authority_kind==='connected_account',localRef))) throw new ConnectorError('DIRECT_ACTION_UNSUPPORTED',
+      'This action is outside the selected toolkit or project binding.',409);
     targets.push({connector:c,provider:p,policy:cp,...(c.supabase_project_ref && localRef && {localProjectRef:localRef}),
       directProof:{...proof,directRevision:r.direct_revision,siteId:c.site_id,connectorId:c.id,providerId:p.id,toolkitSlug:c.toolkit_slug,
         projectId:p.project_id,accountId:c.provider_account_id,authConfigId:c.auth_config_id,credentialRevision:p.credential_revision}});

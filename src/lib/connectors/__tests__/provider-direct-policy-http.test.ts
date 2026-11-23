@@ -61,6 +61,14 @@ it('returns clean conflicts without reflecting private DB errors; invalid receip
 it('reports connected-account authority without claiming resource attestation',async()=>{
   const dto={...stored,authority_kind:'connected_account',authorization_mode:'member_policy',explicitly_disabled:false,attested:false,enabled:true};
   rpc.mockReturnValue(reply(dto));expect(await (await GET(req(query),context)).json()).toEqual({...status,attested:false,authority_kind:'connected_account',authorization_mode:'member_policy',explicitly_disabled:false});
-  rpc.mockReturnValue(reply({...dto,bound_supabase_ref:'a'.repeat(20)}));expect((await GET(req(query),context)).status).toBe(503);
   rpc.mockReturnValue(reply({...dto,attested:true}));expect((await GET(req(query),context)).status).toBe(503);
+});
+
+it.each(['a'.repeat(20), 'a1'.repeat(10), {ref:'legacy'}, null, undefined])('projects the same delegated Ask status with or without a private project field (%j)',async ref=>{
+  const visible={...status,attested:false,authority_kind:'connected_account'};
+  const blocked={...visible,enabled:false,authorization_mode:'member_policy',explicitly_disabled:true};
+  rpc.mockReturnValueOnce(reply({...blocked,bound_supabase_ref:ref}));
+  const read=await GET(req(query),context); expect(read.status).toBe(200); expect(await read.json()).toEqual(blocked);
+  rpc.mockReturnValueOnce(reply({...visible,bound_supabase_ref:ref}));
+  const restored=await PATCH(req('',patch),context); expect(restored.status).toBe(200); expect(await restored.json()).toEqual(visible);
 });

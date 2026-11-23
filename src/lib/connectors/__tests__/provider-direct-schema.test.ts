@@ -1,6 +1,5 @@
 import { directParameterPlan, snapshotDirectJson } from '../provider-direct-schema';
 import { assertDirectArguments } from '../provider-direct-validation';
-import { directActionNameSafe } from '../provider-direct-guards';
 import { secret } from './composio-fixtures';
 
 const object = (properties:Record<string,unknown>,required:string[]=[])=>({type:'object',properties,required});
@@ -15,14 +14,13 @@ it('resolves bounded local definitions, honors nullable structured alternatives 
     {type:'object',additionalProperties:false,properties:{postal_code:{pattern:'^[0-9]{4,5}$'}}}]}}}});
   for (const args of [{...valid,choices:[{postal_code:'111111'}]},{...valid,choices:[{postal_code:'1234',unexpected:1}]},
     {...valid,choices:new Array(5).fill(null)},{...valid,label:'else'},{...valid,text:'a'},{...valid,count:1.3},{...valid,count:11},
-    {...valid,extra:true},{...valid,text:'../local.txt'},{...valid,text:'file:///local.txt'},{...valid,text:'data:text/plain;base64,zzz'},
-    {...valid,text:'SELECT name FROM private_records'},{...valid,text:'https://example.invalid/content'},{...valid,text:'x'.repeat(8001)}]) {
+    {...valid,extra:true},{...valid,text:'\u0000'},{...valid,text:'x'.repeat(8001)}]) {
     expect(()=>assertDirectArguments(schema,args)).toThrow();
   }
 });
 
-it.each(['customAuthParams','account_id','connectedAccountId','userId','workspaceId','baseURL','filePath','apiKey','api_key','access_token',
-  'credential','headers','callback','script','projectRef','url','authConfigId','command','inlineCode','sql','code','apikey','requestHeaders','accessToken','filename','endpoint','baseUrl','ClientSecret','toJSON','constructor','__proto__'])('does not expose unsafe field %s or accept it despite the pinned provider schema', name=>{
+it.each(['customAuthParams','account_id','connectedAccountId','userId','workspaceId','apiKey','api_key','access_token',
+  'credential','projectRef','authConfigId','apikey','accessToken','ClientSecret','toJSON','constructor','__proto__'])('does not expose account/auth override %s or accept it despite the pinned provider schema', name=>{
   const props=Object.fromEntries([[name,{type:'string'}],['q',{type:'string'}]]);
   // Forbidden JSON keys are rejected by validateJson before schema compilation at the REST boundary.
   const plan=()=>directParameterPlan(object(props));
@@ -33,23 +31,35 @@ it.each(['customAuthParams','account_id','connectedAccountId','userId','workspac
 });
 
 it.each([
+  ['sql','SELECT name FROM private_records'],['query','SELECT * FROM orders'],['code','print("example")'],
+  ['command','echo example'],['inlineCode','return 1;'],['filePath','../local.txt'],['url','https://example.invalid/content'],
+  ['filename','file:///local.txt'],['baseUrl','https://example.invalid'],['endpoint','/v1/orders'],
+  ['callback','https://example.invalid/callback'],['script','<script>example</script>'],['requestHeaders','accept: application/json'],
+  ['permissions','read'],['role','editor'],
+])('preserves and validates provider capability field %s instead of vetoing its name or value', (name,value)=>{
+  const plan=directParameterPlan(object({[name]:{type:'string'}},[name]));
+  expect(Object.keys(plan.parameters.properties as object)).toEqual([name]);
+  expect(()=>assertDirectArguments(plan.parameters,{[name]:value})).not.toThrow();
+  expect(()=>assertDirectArguments(plan.parameters,{[name]:3})).toThrow();
+  expect(()=>assertDirectArguments(plan.parameters,{[name]:value,unexpected:'extra'})).toThrow();
+});
+
+it.each([
   {type:'object',additionalProperties:true,properties:{}}, {type:'string',pattern:'^(a+)+$'}, {type:'number',multipleOf:3},
   {type:'object',properties:{props:{}}}, {type:'array'}, {type:'string',minLength:10001},
   {type:'string',enum:['A',{}]}, {anyOf:[{type:'null'}],const:'ignored'}, {$ref:'https://example.invalid/schema'},
-  {$ref:'#/$defs/S',maxLength:1}, {type:'string',default:'https://example.invalid/resource'},
+  {$ref:'#/$defs/S',maxLength:1},
 ])('rejects unsupported/unsafe constraints rather than ignoring or evaluating them (%#)',value=>{
   expect(()=>directParameterPlan({...object({item:value}),$defs:{S:{type:'string'}}})).toThrow();
 });
 
-it('bounds cycles, expansions, executable schema, alternate projects and defaults',()=>{
+it('bounds cycles, expansions, alternate accounts/projects and unsupported vocabulary',()=>{
   const S={$ref:'#/$defs/S'};
   for(const raw of [{...object({input:S}),$defs:{S}},object({project_ref:{type:'string',default:'foreign'}}),
-    object({user_id:{type:'string',default:'another'}}),object({base_url:{type:'string'}},['base_url']),
-    object({extension:{type:'string',default:'<script>untrusted</script>'}}),object({mode:{type:'string',enum:['provider prompt with untrusted text']}})]) {
+    object({user_id:{type:'string',default:'another'}}),object({api_key:{type:'string'}},['api_key']),
+    object({mode:{type:'string',enum:['provider prompt with untrusted text']}})]) {
     expect(()=>directParameterPlan(raw)).toThrow();
   }
-  expect(directActionNameSafe('drivecloud','DRIVECLOUD_CREATE_DELIVERABLE')).toBe(true);
-  expect(directActionNameSafe('drivecloud','DRIVECLOUD_CREATE_DELIVERABLE\n')).toBe(false);
 });
 
 it('snapshots without executing serialization hooks, coercing sparse arrays, accepting cycles or trusting unknown issue paths',()=>{

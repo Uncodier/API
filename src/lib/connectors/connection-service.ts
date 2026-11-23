@@ -40,9 +40,6 @@ export async function projectConnections(siteId: string, userId: string, connect
       provider_status: connector.provider_status, enabled: connector.enabled, revocation_pending: connector.revocation_pending,
       revocation_dispatched: connector.revocation_dispatched ?? connector.revocation_pending,
       revision: connector.revision, verified_at: connector.verified_at,
-      ...(access.can_manage && connector.toolkit_slug === 'supabase' && connector.supabase_project_ref === null
-        && connector.enabled && connector.verified_at && connector.provider_status === 'ACTIVE' && !connector.revocation_pending
-        ? { can_verify_supabase_project: true } : {}),
       // Effective human permission, not an execution claim or management bypass.
       can_use: own.can_use,
     }];

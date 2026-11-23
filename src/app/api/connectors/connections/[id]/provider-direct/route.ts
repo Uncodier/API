@@ -13,7 +13,7 @@ const revision = z.number().int().positive().max(2_147_483_647);
 const expected = revision.max(2_147_483_646);
 const patch = query.extend({expected_revision:expected, expected_direct_revision:expected, enabled:z.boolean()}).strict();
 const receipt = z.object({authority_kind:z.literal('connected_account').optional(),connector_id:uuid, revision, direct_revision:revision, enabled:z.boolean(), attested:z.boolean(),
-  setup_pending:z.boolean(), bound_supabase_ref:z.string().length(20).regex(/^[a-z]{20}$/).nullable()}).strict();
+  setup_pending:z.boolean(), bound_supabase_ref:z.unknown().optional()}).strict();
 const memberStatus = receipt.extend({authorization_mode:z.literal('member_policy'),explicitly_disabled:z.boolean()}).strict();
 type Context = { params:Promise<{id:string}> };
 
@@ -32,7 +32,9 @@ async function snapshot(args:{p_site_id:string;p_actor_id:string;p_connector_id:
     throw new ConnectorError('STORAGE_UNAVAILABLE','Contradictory connector policy state.',503);
   }
   const ordinary=saved.success && saved.data.authority_kind==='connected_account';
-  if (!saved.success || (ordinary && (saved.data.attested || saved.data.setup_pending || saved.data.bound_supabase_ref!==null)) || saved.data.connector_id!==args.p_connector_id || (saved.data.enabled && ((!saved.data.attested && !ordinary) || saved.data.setup_pending)) ||
+  // A delegated account can have a project reference without having a resource attestation.
+  // The RPC owns authorization; the legacy reference is metadata and is never returned.
+  if (!saved.success || (ordinary && (saved.data.attested || saved.data.setup_pending)) || saved.data.connector_id!==args.p_connector_id || (saved.data.enabled && ((!saved.data.attested && !ordinary) || saved.data.setup_pending)) ||
     (change && (saved.data.revision!==change.expected_revision || saved.data.direct_revision!==change.expected_direct_revision+1 || saved.data.enabled!==change.enabled || saved.data.setup_pending))) {
     throw new ConnectorError('STORAGE_UNAVAILABLE','Ask access could not be confirmed. Reload before retrying.',503);
   }

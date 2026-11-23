@@ -126,7 +126,7 @@ export function directParameterPlan(raw: unknown, projectRef?: string) {
               // not a verified account selector. Never silently switch accounts.
               unsupportedDirectSchema();
             }
-            // Omit optional fetch/credential/selector fields with no declared default.
+            // Omit optional authentication/account overrides with no declared default.
             continue;
           }
           fields[name] = project(child,depth+1);

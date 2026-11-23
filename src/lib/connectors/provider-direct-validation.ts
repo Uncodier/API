@@ -11,7 +11,6 @@ export function isDirectStringFormat(value:unknown): value is keyof typeof forma
   return typeof value==='string' && Object.hasOwn(formats,value);
 }
 const error = (issue: ToolArgumentIssue): never => {throw new ConnectorArgumentError(issue);};
-const unsafe = (): never => {throw new ConnectorError('CONNECTOR_UNSAFE_ARGUMENT','External targets, executable inputs and file paths are not supported.',409);};
 
 // Only accept ONE anchored character class (ASCII ranges/literals), with a bounded
 // repetition or +/*. No groups, alternation, escapes, lookarounds or nested quantifiers.
@@ -51,10 +50,9 @@ export function assertDirectArguments(schema: Dict, args: unknown): asserts args
       if (typeof s.maximum==='number' && v>s.maximum) error({path,rule:'maximum',bound:s.maximum});
     } else if (typeof v==='string') {
       if (v.length>CONNECTOR_MAX_STRING_UNITS) error({path,rule:'bounded'});
-      const target = v.trim();
-      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(v) ||
-        /(?:[a-z][a-z\d+.-]{0,30}:\/\/|\b(?:file|data|javascript|vbscript):|\\|^(?:~?\/|\.{1,2}\/)|(?:^|\s)\.\.\/)/i.test(target) ||
-        /<\/?script\b|^\s*(?:#!|-----BEGIN .*PRIVATE KEY-----)|\b(?:select\s+[^;]+\s+from|insert\s+into|delete\s+from|drop\s+(?:table|database)|alter\s+table)\b/i.test(v)) unsafe();
+      // Values are data for the selected provider tool, not locally fetched files or
+      // evaluated code. Validate their contract without vetoing the tool's capability.
+      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(v)) error({path,rule:'contract'});
       const n=[...v].length;
       if (s.format!==undefined && (!isDirectStringFormat(s.format) || !formats[s.format].safeParse(v).success)) error({path,rule:'contract'});
       if (typeof s.minLength==='number' && n<s.minLength) error({path,rule:'minLength',bound:s.minLength});

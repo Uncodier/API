@@ -67,6 +67,8 @@ See [provider-direct rollout and acceptance](CONNECTOR_PROVIDER_DIRECT.md).
 
 An explicit `tools` search/list with `connector_id` or `tool_origin: "provider"` returns provider inventory, not native report suggestions, even on an outage or empty page. Without either filter or a selected account, native tools can still appear alongside provider candidates. The scoped Makinari metrics report is retired. Its former origin and qualified references are rejected, including on hosts without a connector gateway. They cannot fall back to native `report`.
 
+Explicit provider inventory can show toolkit metadata from an active connection with member use, assistant host and saved tools even when direct execution is unavailable. Such entries are `manual_only`; they neither authorize `describe` nor dispatch. The response identifies the reason as `account_execution_not_authorized`, `project_restricted` or `reserved_provider_action`. Turning off or losing Ask execution does not grant metadata access to a member who lacks ordinary connector use. The inventory does not query the downstream account or expose its private schema.
+
 Provider candidates and descriptions identify their origin, local connector UUID, toolkit and safe account suffix. Ask should clarify ambiguous accounts or data sources and keep the same exact reference and scope. A different credential or a native tool is not a fallback. See [source selection and account identity](CONNECTOR_PROVIDER_DIRECT.md#choosing-the-source-and-account-in-private-ask-local-contract) for the two-account example and the offline/live verification boundary. Historical private report choices retain their original authorization path.
 
 A locally rejected call can return `INVALID_TOOL_ARGUMENTS` with `argument_issue`

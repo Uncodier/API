@@ -10,7 +10,7 @@ import { createComposioClient, invalidProviderResponse, validateJson, type Compo
 import { inputValue, providerValue, safeText, toolkitSlug, toolSlug } from './composio-validation';
 import { hashConnectorSchema } from './composio-tool-json';
 import { assertProviderToolSucceeded } from './provider-outcome';
-import { directActionNameSafe, directEffect, unsupportedDirectTool } from './provider-direct-guards';
+import { directEffect, unsupportedDirectTool } from './provider-direct-guards';
 import { assertDirectArguments } from './provider-direct-validation';
 import { directParameterPlan, directSchemaContract, snapshotDirectJson } from './provider-direct-schema';
 import { ConnectorError } from './types';
@@ -63,7 +63,9 @@ function verifyLocal(target: DirectAuthorizedConnector, credential: DirectCreden
   if (d.kind!=='connected_account') current(d.expiresAt);
   if (d.kind!=='connected_account' && c.supabase_project_ref && (!/^[a-z]{20}$/.test(c.supabase_project_ref) || c.supabase_project_ref !== d.resourceBoundary ||
     !target.localProjectRef || !/^[a-z]{20}$/.test(target.localProjectRef) || c.supabase_project_ref === target.localProjectRef)) notReady();
-  if (!directActionNameSafe(c.toolkit_slug, slug) || !projectActionAllowed(c.toolkit_slug,slug,c.supabase_project_ref,d.kind==='connected_account',target.localProjectRef)) unsupportedDirectTool();
+  inputValue(toolSlug, slug);
+  if (/[^A-Z0-9_]/.test(slug) || !slug.startsWith(`${c.toolkit_slug.toUpperCase().replace(/-/g,'_')}_`) ||
+      !projectActionAllowed(c.toolkit_slug,slug,c.supabase_project_ref,d.kind==='connected_account',target.localProjectRef)) unsupportedDirectTool();
 }
 
 async function prepare(target: DirectAuthorizedConnector, credential: DirectCredential, client: ComposioClient, slug: string, version?: string) {
@@ -78,16 +80,6 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
   const tool = providerValue(metadataSchema, raw);
   if (tool.slug !== slug || tool.toolkit.slug !== connector.toolkit_slug || (version !== undefined && version !== tool.version)) changed();
   const {parameters, injected} = directParameterPlan(tool.input_parameters, connector.supabase_project_ref ?? undefined);
-  // For delegated QUERY actions, use the published argument contract instead of a SQL word veto.
-  // Do not turn a free-text query interpreter into a catalog search capability.
-  if (directProof.kind==='connected_account' && directProof.authScheme && slug.slice(connector.toolkit_slug.length+1).split('_').includes('QUERY')) {
-    const fields=parameters.properties as Record<string, Record<string,unknown>>;
-    if (!fields || Object.values(fields).some(field=>
-      !['boolean','integer','number'].includes(String(field.type)) &&
-      !(field.type==='string' && (['date','date-time','uuid'].includes(String(field.format)) || Array.isArray(field.enum) || typeof field.const==='string')))) {
-      throw new ConnectorError('SCHEMA_UNSUPPORTED','This connection supports structured query filters, not an open query input. No execution request was sent.',409);
-    }
-  }
   const project = connector.supabase_project_ref;
   const projectMetadataOnly = Boolean(project && directProof.kind==='connected_account' && projectMetadataAction(connector.toolkit_slug,slug));
   const effect = directEffect(effectTags.parse(tool.tags), connector.toolkit_slug, slug);
@@ -127,7 +119,7 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
   const visible = JSON.stringify(parameters);
   if ([credential.apiKey, project, directProof.kind==='connected_account' ? directProof.authorizationId : directProof.resourceBoundary, connector.provider_account_id, connector.auth_config_id].some(privateValue =>
     privateValue && (visible.includes(JSON.stringify(privateValue)) || (privateValue.length >= 12 && visible.includes(privateValue))))) unsupportedDirectTool();
-  const schemaHash = hashConnectorSchema({ mode:'direct-account-v2', slug, toolkit:toolkit.slug, version:tool.version,
+  const schemaHash = hashConnectorSchema({ mode:'direct-account-v3', slug, toolkit:toolkit.slug, version:tool.version,
     input:hashConnectorSchema(directSchemaContract(tool.input_parameters)),
     output:tool.output_parameters ? hashConnectorSchema(directSchemaContract(tool.output_parameters)) : null,
     parameters, injected, effect,

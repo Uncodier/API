@@ -70,17 +70,20 @@ it('compares an independently attested database resource to fresh local installa
   db.connector.supabase_project_ref=external;db.local_installation_ref=local;rpc.mockImplementation((name:string)=>name==='connector_direct_actor'?reply(true):reply([db]));
   const resolve=()=>authorizeDirectAction(ctx,id,'SUPABASE_LIST_WIDGETS');
   evidence.mockImplementation(async check=>({allowed:await check(),localProjectRef:local}));expect((await resolve()).localProjectRef).toBe(local);
-  // The provider action stays subject to its own business-tool policy; it must not become a report.
-  await expect(authorizeDirectAction(ctx,id,'SUPABASE_RUN_READ_ONLY_QUERY')).rejects.toMatchObject({code:'DIRECT_ACTION_UNSUPPORTED'});
+  // SQL is a provider action, not a locally substituted report. Keep its exact account proof.
+  await expect(authorizeDirectAction(ctx,id,'SUPABASE_RUN_READ_ONLY_QUERY')).resolves.toMatchObject({localProjectRef:local,connector:{id}});
   for (const actual of [null,'c'.repeat(20),external]) {evidence.mockResolvedValueOnce({allowed:true,localProjectRef:actual});await expect(resolve()).rejects.toMatchObject({status:403});}
   db.local_installation_ref=external;evidence.mockResolvedValueOnce({allowed:true,localProjectRef:external});await expect(resolve()).rejects.toMatchObject({status:403});
   db.local_installation_ref=local;db.connector.supabase_project_ref=null;await expect(resolve()).rejects.toMatchObject({status:403});
 });
 
-it('never upgrades explicit unsafe capabilities to executable actions through all mode',async()=>{
-  for (const action of ['CRM_EXECUTE_SCRIPT','CRM_GET_CREDENTIALS','CRM_SQL_QUERY','CRM_HTTP_PROXY','OTHER_LIST_DEALS']) {
-    await expect(authorizeDirectAction(ctx,id,action)).rejects.toMatchObject({code:'DIRECT_ACTION_UNSUPPORTED'});
+it.each(['all','selected'])('admits catalog capabilities through %s without widening account or tool selection',async mode=>{
+  for (const action of ['CRM_EXECUTE_SCRIPT','CRM_GET_CREDENTIALS','CRM_SQL_QUERY','CRM_HTTP_PROXY']) {
+    const row=fresh();row.policy.tool_access_mode=mode;row.policy.allowed_tools=[action];
+    rpc.mockReturnValueOnce(reply([row]));
+    await expect(authorizeDirectAction(ctx,id,action)).resolves.toMatchObject({connector:{id},policy:{tool_access_mode:mode}});
   }
+  await expect(authorizeDirectAction(ctx,id,'OTHER_LIST_DEALS')).rejects.toMatchObject({code:'DIRECT_ACTION_UNSUPPORTED'});
 });
 
 it('admits a positively classified account on its exact pin, without manufacturing an attestation', async()=>{
