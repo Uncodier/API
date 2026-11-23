@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { execution, recoveryDatabase, scope } from '../test-support/assistant-recovery-fixture';
 import { MAX_RECOVERY_MESSAGES_BYTES, MAX_RECOVERY_RESPAWNS } from '../assistant-recovery-schema';
@@ -312,4 +313,23 @@ describe('checkpoint, token ownership, and effect fencing', () => {
     expect(write.filters.some(filter => filter.column === 'details')).toBe(false);
     expect(write.filters.some(filter => filter.column === 'details->assistant_recovery->>revision')).toBe(true);
   });
+});
+
+it('never persists the live private wrapper arguments or reply at either checkpoint write', async () => {
+  const privateText = randomBytes(24).toString('hex');
+  const args = {action:'search',query:privateText}; // mixed discovery without an explicit account filter
+  const answer = {success:true, query:privateText, tools:[{name:`connector:${privateText}`,account_label:privateText}]};
+  const messages = [{role:'system',content:`Selected local account: ${privateText}`}, ...receipts,
+    {role:'assistant',tool_calls:[{id:'private',type:'function',function:{name:'tools',arguments:JSON.stringify(args)}}]},
+    {role:'tool',tool_call_id:'private',content:JSON.stringify(answer)}];
+  const original = JSON.stringify(messages);
+  await recovery.initializeAssistantRecovery(scope, {...execution,callerSource:'interactive',catalogUserSession:true});
+  await recovery.markAssistantRecoveryInFlight(scope, messages);
+  await recovery.checkpointAssistantRecovery(scope, {messages});
+  expect(JSON.stringify(database.writes())).not.toContain(privateText);
+  const stored = database.snapshot().messages as any[];
+  expect(stored.slice(0,3)).toEqual(receipts); // native tool evidence remains exact
+  expect(JSON.parse(stored[3].tool_calls[0].function.arguments)).toEqual({action:'search',private_arguments:true});
+  expect(stored[4]).toMatchObject({tool_call_id:'private',content:expect.stringContaining('not an execution receipt')});
+  expect(JSON.stringify(messages)).toBe(original);
 });

@@ -23,7 +23,7 @@ afterEach(()=>{
 });
 
 // Network boundary only: real catalog parser, gateway, resolver, descriptor, adapter and failure recovery.
-it.each([true,false])('discovers only the scoped tool on the exact shared account when admitted: %s',async allowed=>{
+it.each([true,false])('keeps shared-account connector discovery separate from explicitly requested reports (report admitted: %s)',async allowed=>{
   const siteId=randomUUID(), connectorId=randomUUID(), project='a'.repeat(20);
   const ctx={siteId,userId:randomUUID(),agentId:randomUUID(),requestId:randomUUID(),instanceId:randomUUID(),catalogUserSession:true as const,host:'assistant' as const};
   const c={...connectorFixture(),id:connectorId,site_id:siteId,toolkit_slug:'supabase',supabase_project_ref:project,revocation_dispatched:false};
@@ -35,8 +35,15 @@ it.each([true,false])('discovers only the scoped tool on the exact shared accoun
   const native={name:'report',description:'Local report',parameters:{type:'object'},execute:jest.fn()};
   const http=jest.spyOn(globalThis,'fetch').mockRejectedValue(new Error('Unexpected network call'));
   const router=toolsRouterTool([native,connectorGateway(async()=>ctx)],ctx);
-  const answer=await router.execute({action:'search',query:'investor KPIs',connector_id:connectorId});
-  if(allowed)expect(answer).toMatchObject({success:true,count:1,tools:[{name:`connector:${connectorId}:SUPABASE_RUN_READ_ONLY_QUERY`,availability:'describe_required'}]});
+  const search={action:'search' as const,query:'investor KPIs',connector_id:connectorId};
+  expect(await router.execute(search)).toMatchObject({success:false,tools:[],connector_error:'ASK_SHARED_DATABASE'});
+  const providerRef=`connector:${connectorId}:SUPABASE_RUN_READ_ONLY_QUERY`;
+  expect(await router.execute({action:'describe',name:providerRef})).toMatchObject({success:false,code:'ASK_SHARED_DATABASE'});
+  expect(await router.execute({action:'call',name:providerRef,args:JSON.stringify({version:'20261116_00',schema_hash:'0'.repeat(64),arguments:{scope:'workspace',query:'select count(*) from analytics.paid_sales'}})})).toMatchObject({success:false,code:'ASK_SHARED_DATABASE',executed:false});
+  expect(mockRpc).not.toHaveBeenCalledWith('connector_instance_scoped_read',expect.anything());
+  expect(await router.execute({...search,tool_origin:'makinari_report',connector_id:undefined})).toMatchObject({success:false,tools:[],connector_error:'REPORT_ACCOUNT_REQUIRED'});
+  const answer=await router.execute({...search,tool_origin:'makinari_report'});
+  if(allowed)expect(answer).toMatchObject({success:true,count:1,tools:[{name:`report:${connectorId}:MAKINARI_METRICS`,toolkit:'makinari',tool_origin:'makinari_report',availability:'describe_required'}]});
   else expect(answer).toMatchObject({success:false,count:0,tools:[],connector_error:'SCOPED_READ_NOT_ALLOWED'});
   expect(JSON.stringify(answer)).not.toContain(project);
   expect(native.execute).not.toHaveBeenCalled(); expect(loadConnectorCredential).not.toHaveBeenCalled(); expect(http).not.toHaveBeenCalled();

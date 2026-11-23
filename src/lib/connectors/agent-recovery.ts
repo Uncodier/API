@@ -6,7 +6,7 @@ import type { ToolArgumentIssue } from '@/lib/tools/argument-contract';
 type Action = 'ask_manager' | 'ask_user' | 'verify_connection' | 'request_scope' | 'alternate_route' |
   'retry_later' | 'describe_again' | 'restart_search' | 'fix_arguments' | 'reconcile';
 type Advice = { action: Action; message: string; alternative?: string };
-const manual = 'Offer user-provided data or a native tool only if it is independently authorized for the same data and task. Do not switch accounts or credentials to bypass a denial.';
+const manual = 'Explain the blocker. A different source or scope is a separate task: use it only if the user explicitly chooses it and it is independently authorized. Do not switch accounts or credentials to bypass a denial.';
 const advice = (action: Action, message: string, alternative?: string): Advice => ({ action, message, ...(alternative && { alternative }) });
 export function agentRecovery(code: string): Advice {
   switch (code) {
@@ -17,9 +17,11 @@ export function agentRecovery(code: string): Advice {
     case 'PROVIDER_DIRECT_NOT_ENABLED': case 'DIRECT_POLICY_REQUIRED':
       return advice('ask_manager', 'Makinari did not authorize this connection or tool for this Ask turn. Check the signed-in member’s connection access and the saved tool permissions. This is not a rejection from the provider. Do not reconnect or switch accounts.');
     case 'ASK_SHARED_DATABASE':
-      return advice('alternate_route', 'This shared database is not a general-purpose external account. Search this same connection for its scoped read-only metrics tool. Do not request an admin token, substitute a different scope or report figures without a confirmed result.');
+      return advice('ask_user', 'Generic provider actions are unavailable on this shared database. Only if the user explicitly wants an internal Makinari metrics report, search the same connection with tool_origin="makinari_report". Do not request an admin token, switch accounts or substitute a report for a provider action.');
+    case 'REPORT_ACCOUNT_REQUIRED':
+      return advice('ask_user', 'Ask which connected account to use for the internal Makinari metrics report. Have the user select it in Ask; do not guess the connector_id or request a provider account ID or token.');
     case 'SCOPED_READ_NOT_ALLOWED':
-      return advice('ask_manager','Makinari has not admitted this scoped read for the signed-in member, connection and turn. A manager can check the saved catalogue read and tool permissions. Do not switch accounts, request a broader provider token or claim the query returned no data.');
+      return advice('ask_manager','Makinari did not authorize this internal report for the signed-in member, connection and turn. This is not a provider rejection. A manager can check the saved account and report permissions. Do not switch accounts, request a broader provider token or claim the query returned no data.');
     case 'DIRECT_DISPATCH_ALREADY_CLAIMED':
       return advice('reconcile', 'This request already reserved the provider action. Check its private receipt or the connected application; do not dispatch it again.');
     case 'DIRECT_DISPATCH_UNCONFIRMED':
@@ -48,9 +50,9 @@ export function agentRecovery(code: string): Advice {
       return advice('retry_later', 'Explain that a request quota was reached, not a permission failure. Wait; do not retry in a loop.', manual);
     case 'ACCESS_CHANGED':
       return advice('ask_user', 'Access changed before the result could be released. Ask the user to verify access before starting a new request.', manual);
-    case 'STALE_CURSOR': return advice('restart_search', 'Repeat the search without the previous cursor.');
+    case 'STALE_CURSOR': return advice('restart_search', 'Restart without the cursor, keeping the same origin and account filters.');
     case 'CONNECTOR_SCHEMA_CHANGED': case 'SCHEMA_CHANGED': case 'DESCRIBE_REQUIRED':
-      return advice('describe_again', 'Describe the exact tool again and use its current version and schema. Do not replay a previous call.');
+      return advice('describe_again', 'Describe the exact reference on the same origin and account again and use its current version and schema. Do not replay a previous call.');
     case 'INVALID_TOOL_ARGUMENTS': case 'CONNECTOR_INVALID_INPUT': case 'INVALID_FILTER': case 'INVALID_TOOL_REFERENCE':
       return advice('fix_arguments', 'Use the arguments and reference returned by tools search and describe. Ask the user only for missing non-secret inputs.');
     case 'PRIVATE_DESTINATION_REQUIRED':
@@ -66,9 +68,9 @@ export function agentRecovery(code: string): Advice {
     case 'ANALYTICS_WORKSPACE_ONLY':
       return advice('ask_user', 'This external dataset is authorized only for the workspace. Ask whether a clearly labeled workspace report is useful or request an authorized all-account export. Do not substitute scopes silently.',manual);
     case 'ANALYTICS_WORKSPACE_DENIED':
-      return advice('ask_manager', 'Ask the workspace manager to verify this source and the current actor, agent and connector-use permissions. Procurement sources require unrestricted owner or admin access. No new provider token or platform grant is required for workspace scope.',manual);
+      return advice('ask_manager', 'Makinari has not authorized this workspace report source for the signed-in member on the selected account. Ask the workspace manager to check that source and the current account binding. This is not a provider rejection. Do not switch source, scope or account.',manual);
     case 'ANALYTICS_SCOPE_DENIED':
-      return advice('ask_manager', 'The requested source or all-account scope has not been authorized for this actor and connection. Ask the platform operator to verify the exact analytics grant and access to the requested source (procurement also requires a workspace manager). Do not reconnect or substitute workspace totals.',manual);
+      return advice('ask_manager', 'Makinari has not authorized this report source at the requested scope on the selected account. The account binding or permissions may have changed; ask the responsible administrator to verify that exact source and scope. Do not request another credential, switch accounts or substitute narrower totals.',manual);
     case 'SUPABASE_DATASET_UNAVAILABLE': case 'ANALYTICS_SOURCE_UNVERIFIED':
       return advice('alternate_route', 'This project or analytics source could not be verified for direct reads. Ask the project operator to configure its dataset and reporting-role permissions. Do not infer a zero total.',manual);
     case 'CATALOG_AUTHORIZATION_UNAVAILABLE':

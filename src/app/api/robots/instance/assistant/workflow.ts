@@ -120,12 +120,24 @@ export async function runAssistantWorkflow(
     await bindDirectPromptAgentStep(recoveryScope, context.connectorAgentId) ? true : undefined;
   context.leadBulkUserSession = options?.leadBulkUserSession;
   context.connectorIdHint = options?.connectorIdHint;
-  if (context.connectorIdHint) {
-    context.systemPrompt += '\nA connector account is selected for this turn. If relevant to the request, search the available connector tools.';
-    if (/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(context.connectorIdHint) && context.connectorIdHint.length === 36) {
-      context.systemPrompt += ` Set connector_id to ${context.connectorIdHint} in tools search/list to see only that connection, not native reporting tools.`;
+  if (context.catalogUserSession) {
+    context.systemPrompt += `
+Connected accounts in private Ask:
+- For external app tasks (for example, list calendar events or update a CRM record), use tools search/list with tool_origin="provider". Use short public action terms, not customer data. A provider tool is connector:<id>:<SLUG>.
+- If the account is unclear, follow connector_next_cursor even on empty pages. If multiple accounts fit, ask which account to use (toolkit and account_label, or the account picker if labels collide). Do not pick the first. Use the full local connector_id for routing, not the label.
+- Only if the user wants an internal Makinari metrics report, search/list the intended connector_id with tool_origin="makinari_report". Its reference is report:<id>:MAKINARI_METRICS, not a provider action or the native report tool. If the source is unclear, ask which one the user wants.
+- Describe the exact returned reference, check its origin and account, and call only that reference with its pinned version and schema. Keep the requested data source and scope. Never substitute a report for a provider tool, switch accounts or downgrade platform to workspace after a denial or no match.
+- All tools is the saved Makinari tool policy, not the provider credential's permission to read or write a resource. A private receipt is a link for the user, not data you can summarize. Do not replay an unconfirmed call.`;
+    if (context.connectorIdHint) {
+      // Never insert a connector display name, provider identifier or malformed selection in a prompt.
+      if (context.connectorIdHint.length === 36 && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(context.connectorIdHint)) {
+        context.systemPrompt += `\nThe selected local connector_id is ${context.connectorIdHint}. Use it in tools search/list; selection narrows discovery but is not a request to execute.`;
+      } else {
+        context.systemPrompt += '\nThe account selection is invalid. Ask the user to select the intended account; do not use another.';
+      }
     }
-    context.systemPrompt += ' If the selected account has no suitable action, say so; do not substitute another account or project. The selection is not a request to execute anything.';
+  } else if (context.connectorIdHint) {
+    context.systemPrompt += '\nPrivate connector access is not available for this turn. Do not substitute another account or report.';
   }
   context.recoveryScope = recoveryScope;
   context.executionMode = options?.executionMode;

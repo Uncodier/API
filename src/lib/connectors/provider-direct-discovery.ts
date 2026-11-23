@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {loadConnectorCredential} from './account-access';
 import {catalogPageCursor} from './catalog-pagination';
 import {connectorToolRef} from './connector-ref';
+import {modelAccountIdentity} from './model-account-identity';
 import {createComposioClient} from './composio-transport';
 import {listToolkitToolMetadata, listSelectedCatalogMetadata, TOOL_CATALOG_LIMIT} from './composio-tool-metadata';
 import {CONNECTOR_DOMAINS, getToolkitDomains} from './domains';
@@ -19,10 +20,14 @@ const filtersSchema = z.object({query:z.string().max(2048).optional(),catalog_qu
   domain:z.string().max(100).optional(),category:z.string().max(100).optional(),connector_id:z.string().uuid().optional(),cursor:z.string().max(110).optional()}).strict();
 const words = (s:string) => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean).slice(0,24);
 type Item = Awaited<ReturnType<typeof listToolkitToolMetadata>>['items'][number];
-function matches(item:Item, kit:string, filters:ConnectorFilters) {
-  const term = filters.catalog_query ?? filters.query;
-  if (!term) return true;
-  if (/^[A-Z0-9]+(?:_[A-Z0-9]+)+$/.test(term)) return item.slug === term;
+const qualifiedName = /^(?:connector|report):/i;
+const literalSlug = /^[A-Z0-9]+(?:_[A-Z0-9]+)+$/;
+function matches(item:Item, kit:string, name:string, filters:ConnectorFilters) {
+  // An exact name in either filter must never be broadened by the other filter or keyword scoring.
+  const terms = [filters.query?.trim(), filters.catalog_query?.trim()];
+  if (terms.some(v => v && ((qualifiedName.test(v) && v !== name) || (literalSlug.test(v) && v !== item.slug)))) return false;
+  const term = terms[1] ?? terms[0];
+  if (!term || term === name || term === item.slug) return true;
   const text = `${kit} ${item.slug.replaceAll('_',' ')} ${item.name} ${item.description}`.toLowerCase();
   const search = words(term);
   return filters.catalog_query ? search.every(word=>text.includes(word)) : search.some(word=>text.includes(word));
@@ -71,8 +76,10 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
       if (offset && (observed!==fingerprint || offset>=items.length)) throw stale();
       for (;offset<items.length && tools.length<5;offset++) {
         const i=items[offset];
-        if (i.slug.startsWith('COMPOSIO_') || !matches(i,kit,filters)) continue;
-        tools.push({name:connectorToolRef(target.connector.id,i.slug),toolkit:kit,connector_id:target.connector.id,
+        if (i.slug.startsWith('COMPOSIO_')) continue;
+        const name=connectorToolRef(target.connector.id,i.slug);
+        if (!matches(i,kit,name,filters)) continue;
+        tools.push({name,toolkit:kit,tool_origin:'provider',...modelAccountIdentity(target.connector.id),
           domains,category,availability:directActionNameSafe(kit,i.slug)?'describe_required':'manual_only',
           description:`${i.slug.replaceAll('_',' ')}. Catalog metadata is not authorization.`});
       }

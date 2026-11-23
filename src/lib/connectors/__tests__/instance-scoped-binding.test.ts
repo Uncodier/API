@@ -24,7 +24,10 @@ beforeEach(()=>{
 it('revalidates the exact member, turn, installation and read-policy epochs; discovery never returns private references',async()=>{
   const binding=await resolve(); expect(binding).toMatchObject({localProjectRef:ref,context:ctx,connector:c,provider:p,policyRevision:3,directRevision:1});
   expect(mockRpc).toHaveBeenCalledWith('connector_instance_scoped_read',{p_connector_id:id,p_site_id:siteId,p_user_id:ctx.userId,p_instance_id:ctx.instanceId,p_agent_id:ctx.agentId});
-  const page=scopedReadPage(binding,{query:'ingresos del trimestre'}); expect(page.tools.map(t=>t.name)).toEqual([`connector:${id}:SUPABASE_RUN_READ_ONLY_QUERY`]);
+  const page=scopedReadPage(binding,{query:'ingresos del trimestre'}); expect(page.tools).toMatchObject([{name:`report:${id}:MAKINARI_METRICS`,tool_origin:'makinari_report',toolkit:'makinari',connector_id:id}]);
+  for(const term of ['SUPABASE_RUN_READ_ONLY_QUERY',`connector:${id}:SUPABASE_RUN_READ_ONLY_QUERY`,`report:${randomUUID()}:MAKINARI_METRICS`]) expect(scopedReadPage(binding,{catalog_query:term}).tools).toEqual([]);
+  expect(scopedReadPage(binding,{query:'SUPABASE_RUN_READ_ONLY_QUERY',catalog_query:'metrics'}).tools).toEqual([]);
+  expect(scopedReadPage(binding,{query:'Summary: quarterly sales',catalog_query:'MAKINARI_METRICS'}).tools).toHaveLength(1);
   expect(JSON.stringify(page)).not.toContain(ref);expect(scopedReadPage(binding,{catalog_query:'SUPABASE_DELETE_PROJECT'}).tools).toEqual([]);
   expect(()=>scopedReadPage(binding,{cursor:'old'})).toThrow(expect.objectContaining({code:'STALE_CURSOR'}));
 });

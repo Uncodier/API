@@ -6,16 +6,24 @@ import type { ProviderDirectRuntime } from './provider-direct-runtime';
 import { CONNECTOR_DOMAINS } from './domains';
 import { agentRecovery, failureForAgent } from './agent-recovery';
 import { argumentFailure } from '@/lib/tools/argument-contract';
+import { parseInstanceToolRef } from './instance-tool-ref';
 
 /** A spread-safe host-private marker. A matching name/prefix alone grants nothing. */
 export const CONNECTOR_GATEWAY = Symbol.for('makinari.connector-gateway');
-type Gateway = RoutedTool & { [CONNECTOR_GATEWAY]?: true };
+const PINNED_ACCOUNT = Symbol.for('makinari.connector-gateway.pinned-account');
+type Gateway = RoutedTool & { [CONNECTOR_GATEWAY]?: true; [PINNED_ACCOUNT]?: true };
 
 export const connectorFailure = failureForAgent;
 const catalogQuery = { type: 'string', description: 'English tool keywords or an exact tool slug for local catalog matching; use short public action terms. Never include customer text, names, credentials, query literals or other private values.' };
+const originFilter = {type:'string',enum:['provider','makinari_report'],description:'Search/list only this tool origin. Use provider for a connected application. Select makinari_report only for an explicitly requested internal report, with its account. Never change origins to work around a denial.'};
+function checkReference(name:string,origin:unknown,account:unknown) {
+  const ref=parseInstanceToolRef(name);
+  if(origin!==undefined && origin!==ref.origin)throw new ConnectorError('INVALID_TOOL_REFERENCE','The reference does not match the requested tool origin.',400);
+  if(account!==undefined && account!==ref.connectorId)throw new ConnectorError('NOT_FOUND','The reference does not belong to the requested account.',404);
+}
 
 /** Lazy construction: merely building a host/skill catalog never loads a secret or schema. */
-export function connectorGateway(resolveContext?: ConnectorContextResolver): Gateway {
+export function connectorGateway(resolveContext?: ConnectorContextResolver,accountPinned=false): Gateway {
   let runtime: Promise<ProviderDirectRuntime> | undefined;
   const getRuntime = async () => {
     if (!resolveContext) throw new ConnectorError('HOST_DISABLED', 'This host has no verified connector binding.', 403);
@@ -24,11 +32,12 @@ export function connectorGateway(resolveContext?: ConnectorContextResolver): Gat
   };
   return {
     [CONNECTOR_GATEWAY]: true,
+    ...(accountPinned && {[PINNED_ACCOUNT]:true as const}),
     name: 'use_composio_tools',
     description: 'Compatibility facade for tools connector discovery. Prefer tools search/describe/call. Exact connector references and fresh grants are required; no implicit account selection.',
     parameters: { type: 'object', properties: {
       action: { type: 'string', enum: ['search', 'describe', 'execute'] },
-      search_intent: { type: 'string' }, catalog_query: catalogQuery, action_name: { type: 'string', description: 'Exact connector:<id>:<tool> reference.' },
+      search_intent: { type: 'string' }, catalog_query: catalogQuery, tool_origin:originFilter, action_name: { type: 'string', description: 'Exact reference from discovery: connector:<id>:<provider action> or report:<id>:MAKINARI_METRICS. Never translate one into the other.' },
       action_params: { type: 'string', description: 'JSON-encoded arguments from the described schema.' },
       domain: { type: 'string' }, category: { type: 'string' },
       connector_id: { type: 'string' }, connector_cursor: { type: 'string' },
@@ -37,7 +46,12 @@ export function connectorGateway(resolveContext?: ConnectorContextResolver): Gat
       try {
         const resolver = await getRuntime();
         if (args.action === 'search') return { success: true, ...await resolver.search({ query: args.search_intent,
-          catalog_query: args.catalog_query, domain: args.domain, category: args.category, connector_id: args.connector_id, cursor: args.connector_cursor }) };
+          catalog_query: args.catalog_query, domain: args.domain, category: args.category, connector_id: args.connector_id, cursor: args.connector_cursor, tool_origin: args.tool_origin }) };
+        if(args.action==='describe'||args.action==='execute') {
+          try {checkReference(args.action_name,args.tool_origin,args.connector_id);} catch(error) {
+            return {...connectorFailure(error),executed:false,effectStarted:false};
+          }
+        }
         if (args.action === 'describe') return { success: true, ...await resolver.describe(args.action_name ?? '') };
         if (args.action === 'execute') {
           let input = args.action_params ?? {};
@@ -59,6 +73,7 @@ export function connectorGateway(resolveContext?: ConnectorContextResolver): Gat
 export function withConnectorResolver(native: RoutedTool, tools: RoutedTool[], scope?: ToolScreenScope): RoutedTool {
   const gateways = tools.filter(tool => tool.name === 'use_composio_tools' && (tool as Gateway)[CONNECTOR_GATEWAY]);
   const gateway = gateways.length === 1 ? gateways[0] : undefined;
+  const accountPinned=(gateway as Gateway|undefined)?.[PINNED_ACCOUNT]===true;
   const invoke = async (args: any) => {
     if (!gateway) return connectorFailure(Object.assign(new ConnectorError('HOST_DISABLED', 'Connector unavailable.', 403), { effectStarted: false }));
     try {
@@ -69,16 +84,20 @@ export function withConnectorResolver(native: RoutedTool, tools: RoutedTool[], s
   };
   return { ...native, parameters: { ...native.parameters, properties: { ...native.parameters.properties,
     domain: { type: 'string', description: 'Optional connector business-domain filter. Classification is not a permission.' },
-    connector_id: { type: 'string', description: 'Search or list only this exact local connector account, without native Makinari tools. Current grants still apply.' },
+    connector_id: { type: 'string', description: 'The exact local account ID. Copy it from the selection. Do not guess an account or select a similar tool from another one.' },
+    tool_origin:originFilter,
     catalog_query: catalogQuery,
     connector_cursor: { type: 'string', description: 'Continuation returned as connector_next_cursor; retain the same search filters.' },
   } }, execute: async (args: any) => {
-    if ((args.action === 'call' || args.action === 'describe') && typeof args.name === 'string' && args.name.startsWith('connector:')) {
+    const qualified=typeof args.name==='string' && (args.name.startsWith('connector:')||args.name.startsWith('report:'));
+    if ((args.action === 'call' || args.action === 'describe') && (qualified || args.tool_origin!==undefined || args.connector_id!==undefined || (accountPinned && args.name==='report'))) {
       return invoke({ action: args.action === 'call' ? 'execute' : 'describe', action_name: args.name,
-        action_params: args.args, thought_process: args.thought_process });
+        action_params: args.args, thought_process: args.thought_process,tool_origin:args.tool_origin,connector_id:args.connector_id });
     }
     if (!['search', 'list'].includes(args.action)) return native.execute(args);
-    const accountOnly = args.connector_id !== undefined;
+    // A server-pinned account still narrows discovery if the model omits connector_id.
+    // This marker only suppresses native results; runtime policy binds and authorizes the actual ID.
+    const accountOnly = args.connector_id !== undefined || args.tool_origin!==undefined || accountPinned;
     if (accountOnly && args.action === 'search' && (typeof args.query !== 'string' || !args.query.trim())) {
       return { success: false, error: 'Provide a search query, or use list to browse this account.' };
     }
@@ -87,16 +106,17 @@ export function withConnectorResolver(native: RoutedTool, tools: RoutedTool[], s
     if ((!gateway && !accountOnly) || result?.success === false) return result;
     const external = await invoke({ action: 'search', search_intent: args.action === 'search' ? args.query : undefined,
       domain: args.domain, category: args.category, connector_id: args.connector_id,
-      catalog_query: args.catalog_query, connector_cursor: args.connector_cursor, thought_process: args.thought_process });
+      catalog_query: args.catalog_query, connector_cursor: args.connector_cursor, tool_origin:args.tool_origin, thought_process: args.thought_process });
     const compatibleCategories = args.domain ? CONNECTOR_DOMAINS.find(domain => domain.id === args.domain)?.categories ?? [] : null;
     const nativeTools = (result.tools ?? []).filter((tool: any) => tool.name !== gateway?.name &&
       (!args.category || tool.category === args.category) && (!compatibleCategories || compatibleCategories.includes(tool.category)));
     const connectorTools = external.success ? external.tools ?? [] : [];
     const failure = external.success ? external.partial_error : external.code ?? 'CONNECTOR_UNAVAILABLE';
     const hint = failure ? agentRecovery(failure).message : !connectorTools.length && !external.next_cursor
-      ? accountOnly ? 'No eligible match on this connection. Do not substitute a native report or another account.'
+      ? accountOnly ? 'No eligible match for this origin and account selection. Do not substitute another tool or account.'
         : 'No matching provider tool was found on a connection available to Ask. This is not a query result or proof of missing provider permissions.'
-      : 'Continue with connector_next_cursor even if this page is empty. Describe the exact account reference before calling; a catalog match is not execution authority.';
+      : args.tool_origin==='makinari_report' ? 'This is an internal Makinari report, not the provider action. Describe the exact report reference for the permitted sources. Do not substitute a different account or scope.'
+        : 'Follow connector_next_cursor across accounts before deciding a match is unique. If the intended account is unclear, ask the user. Describe and call the exact returned reference; never switch account or tool origin.';
     const merged = [...nativeTools.slice(0, args.action === 'search' ? 10 - connectorTools.length : nativeTools.length), ...connectorTools];
     return { ...result, ...(accountOnly && !external.success && { success: false }), tools: merged, count: merged.length,
       connector_status: external.success ? (failure ? 'partial' : 'available') : 'unavailable',

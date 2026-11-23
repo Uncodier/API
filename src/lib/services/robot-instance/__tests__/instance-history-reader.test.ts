@@ -426,3 +426,16 @@ describe('strict validation and safe errors', () => {
     await expect(read({ action: 'read', log_id: id(1) })).rejects.toThrow('Unable to serialize this instance history log.');
   });
 });
+it('does not expose old qualified rows or the host recovery snapshot via model history reads or previews', async () => {
+  const privateValue = randomBytes(24).toString('hex');
+  const row = makeLog(1,{log_type:'tool_call',tool_name:'tools',message:`tools: action=call, name=report:${privateValue}`,
+    tool_args:{name:`report:${privateValue}`,action:'call'}, tool_result:{output:{rows:[privateValue]}}});
+  const parent = makeLog(2,{log_type:'user_action',details:{status:'running',assistant_recovery:{messages:[privateValue]}}});
+  mockHistory([row,parent]);
+  expect(JSON.stringify(await read({action:'list'}))).not.toContain(privateValue);
+  const child = await read({action:'read',log_id:row.id}) as InstanceHistoryReadResult;
+  expect(child.content).toContain('makinari_report');
+  expect(child.content).not.toContain(privateValue);
+  const action = await read({action:'read',log_id:parent.id}) as InstanceHistoryReadResult;
+  expect(JSON.parse(action.content).details).toEqual({status:'running'});
+});

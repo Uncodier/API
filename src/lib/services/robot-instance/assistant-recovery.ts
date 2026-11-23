@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { captureRecoveryNodeFingerprint } from './assistant-recovery-fingerprint';
 import { buildInterruptedRecoveryContext, mergeInterruptedRecoveryContext, summarizeRecoveryTool } from './assistant-recovery-context';
+import { protectConnectorCheckpoint } from './connector-recovery-checkpoint';
 import { IN_FLIGHT_STALL_MS } from './assistant-respawn-policy';
 import { MAX_PROVIDER_RETRY_DELAY_MS } from '@/lib/services/ai/provider-retry-policy';
 import { isWorkflowManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
@@ -159,6 +160,7 @@ export async function markAssistantRecoveryInFlight(
     if (active.snapshot.conversationOnly && kind === 'plan') throw new RecoveryError('inactive');
     const now = new Date().toISOString();
     const checkpoint = messages ? parseRecoveryCheckpoint({ messages }) : undefined;
+    if (checkpoint) protectConnectorCheckpoint(checkpoint, active.snapshot.execution.catalogUserSession === true);
     await compareAndSwap(scope, active, { ...active.snapshot, ...checkpoint, inFlight: true,
       inFlightSince: now, inFlightKind: kind, lastActivityAt: now, toolObservations: [] });
   });
@@ -196,6 +198,7 @@ export async function checkpointAssistantRecovery(
       messages: checkpoint.messages,
       ...(checkpoint.continuation !== undefined ? { continuation: checkpoint.continuation } : {}),
     });
+    protectConnectorCheckpoint(frozen, active.snapshot.execution.catalogUserSession === true);
     // Interrupted evidence remains until the action ends, including across another respawn.
     const { inFlightSince: _started, inFlightKind: _kind, toolObservations: _tools, ...snapshot } = active.snapshot;
     await compareAndSwap(scope, active, { ...snapshot, ...frozen, inFlight: false, lastActivityAt: new Date().toISOString() });

@@ -121,7 +121,7 @@ Each skill documents the artifacts it reads from or writes to. This lets the orc
 | `instance_plan` (DB record) | `makinari-fase-planeacion` / `makinari-rol-orchestrator` / `makinari-obj-workflow-designer` | Ordered execution steps with assigned skills, or a repeatable workflow template. |
 | `requirement_status` (DB record) | `makinari-fase-reporteado` | Client-facing delivery report with URLs. |
 | Private document revision and Git receipt | `file-delivery` | Any agent can discover `deliver_file` through `tools` to save HTML presentations, Markdown documents and CSV sheets without a workspace or deployment. Native Office binaries are not supported. |
-| Read-only connector findings summary | `connector-crm-operations`, `connector-messaging` | Bounded HubSpot contact or Gmail inbox findings, exact connector/resource references, truncation and blockers. No native business mutations or message delivery claims. |
+| Private connector result link | `connector-crm-operations`, `connector-messaging` | The member opens the authorized CRM or inbox read. Deliver a confirmed receipt or state a blocker; the model cannot summarize the private rows. |
 | Motion composition and verification evidence | `motion-design-html` | Editable HTML/SVG/Canvas/Three.js source, local assets, storyboard/timing notes and visual/seek checks. MP4 requires a separately available renderer and authorized binary delivery; `deliver_file` is text-only. |
 
 **Rules**
@@ -164,6 +164,9 @@ For explicit external CRM or inbox tasks, use
 [`connector-crm-operations`](connector-crm-operations/SKILL.md) or
 [`connector-messaging`](connector-messaging/SKILL.md). These primary domain skills
 support `task`, `integration`, and `automation` discovery; those types do not grant
-execution or background delegation. The initial reviewed operations are read-only
-HubSpot contacts and Gmail self-mailbox reads. Native outbound/content procedures
-remain separate, and account/member/agent/host permissions still apply.
+execution or background delegation. These procedures request reads; they do not authorize writes. Follow private Ask
+provider discovery on the intended account, not the native reporting tool or
+`report:<id>:MAKINARI_METRICS`. Use the latter only for an explicitly requested
+internal metrics report, with `tool_origin: "makinari_report"` and the exact account.
+An ambiguous account or data source needs a user choice; neither a missing tool
+nor an upstream denial is permission to switch.

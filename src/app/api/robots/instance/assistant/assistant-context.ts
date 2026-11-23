@@ -350,12 +350,12 @@ EXECUTION:
   const toolsRouterInstruction = `
 🧰 TOOL DISCOVERY & EXECUTION (tools):
 Most capabilities (media, messaging, CRM, commerce, social, content, infra, research, ui) are hidden behind the \`tools\` router to save context.
-- Use \`tools({ action: "list" })\` to see every routed tool grouped by category.
+- Use \`tools({ action: "list" })\` to browse available tools. Connector discovery is paginated; one page is not the full inventory.
 - Use \`tools({ action: "describe", name: "<tool>" })\` to get the exact parameters schema + expected_use for a specific tool before calling it.
-- Use \`tools({ action: "call", name: "<tool>", args: { ... } })\` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.
+- Use \`tools({ action: "call", name: "<tool>", args: { ... } })\` to execute it. Only correct arguments after a confirmed pre-dispatch validation error, on the same tool and account. Do not replay an uncertain call.
 - Examples: calendars, catalog_commerce, checkout, quotations, generate_image, sendEmail, leads, sales, publish, content, webSearch — ALL live behind tools. The router is the only way to reach them.
 - PUBLISHING CONTENT: The \`publish\` tool is multi-channel. You MUST combine compatible content across networks into a SINGLE tool call, but make SEPARATE calls if the content differs significantly between channels (e.g. short tweet vs newsletter).
-- To find people, working hours, team calendars, or reservable services: \`tools\` → \`calendars\` \`action="list"\`. Do not guess tool names for horarios.
+- For Makinari team members, working hours, native calendars or reservable services: \`tools\` → \`calendars\` \`action="list"\`. Do not guess tool names for horarios.
 - Core tools like instance_plan, requirement_status, requirements, and skill_lookup are directly available and NOT routed.`;
 
   const skillLookupInstruction = directExecution ? `

@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { randomUUID } from 'node:crypto';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { buildAssistantUserContent } from '@/lib/services/robot-instance/assistant-image-content';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
@@ -61,6 +62,21 @@ describe('node execution continuation workflow', () => {
     await h.run({userMessageLogId:'user-log',catalogUserSession:true,executionMode:'direct',callerSource:'interactive'});
     expect(h.bindDirectPromptAgentStep).toHaveBeenCalledWith({instanceId:'instance',siteId:'site',userId:'user',userMessageLogId:'user-log'},'prepared-agent');
     expect(h.processAssistantTurn.mock.calls[0][0].catalogUserSession).toBe(pinned ? true : undefined);
+  });
+  it.each(['selected', 'unselected', 'malformed'])('prompts an admitted Ask turn to preserve origin and account (%s)', async selection => {
+    const h = setup(); h.context.instanceNodeId = undefined; h.context.connectorAgentId = 'prepared-agent';
+    h.context.systemPrompt = 'Base instructions';
+    const id = randomUUID(), marker = `Account name ${randomUUID()}`;
+    h.bindDirectPromptAgentStep.mockResolvedValue(true);
+    h.processAssistantTurn.mockResolvedValue(h.result(h.transcript,'Done',true));
+    await h.run({userMessageLogId:'user-log',catalogUserSession:true,executionMode:'direct',callerSource:'interactive',
+      connectorIdHint:selection === 'selected' ? id : selection === 'malformed' ? marker : undefined});
+    const prompt = h.processAssistantTurn.mock.calls[0][0].systemPrompt;
+    expect(prompt).toContain('tool_origin="provider"'); expect(prompt).toContain('tool_origin="makinari_report"');
+    expect(prompt).toContain('report:<id>:MAKINARI_METRICS'); expect(prompt).toContain('ask which account');
+    expect(prompt).toMatch(/never substitute a report for a provider tool/i); expect(prompt).not.toContain(marker);
+    if (selection === 'selected') expect(prompt).toContain(`connector_id is ${id}`);
+    else expect(prompt).not.toContain(id);
   });
   it('a recovered conversation cannot inherit private connector execution with a newly prepared agent', async () => {
     const h = setup(); h.context.instanceNodeId = undefined;

@@ -5,6 +5,7 @@ import { assertScopes, scopesAllowed, screenAllowed } from './action-policy';
 import { canRequestFromConversation, getReviewedTool, policyReviewedTools } from './reviewed-tools';
 import { loadSupportPublication, publicationWindow } from './support-runtime-publication';
 import { isPublicationLabel } from './support-public-gmail';
+import { modelAccountIdentity } from './model-account-identity';
 import type { SupportConnectorScope } from './support-runtime-contract';
 import { CONNECTOR_COLUMNS, ConnectorError, type Connector, type ConnectorContext } from './types';
 
@@ -53,9 +54,10 @@ export function supportInventory(scope: SupportConnectorScope) {
       return { tools: [{ ...tool, description: publicDescription, slug: PUBLIC_TOOL }], label: undefined };
     }
     const [access, allowedScreens] = await Promise.all([resolveUsableAccount(context, id, true), screens ??= loadToolScreenAccess(context)]);
+    if (access.connector.id !== id || access.connector.site_id !== scope.siteId) throw denied();
     const tools = policyReviewedTools(access.connector, access.policy).filter(tool =>
       canRequestFromConversation(tool.slug) && screenAllowed(tool, allowedScreens) && scopesAllowed(access.connector, tool));
-    return { tools, label: access.connector.display_name.slice(0, 100) };
+    return { tools, label: modelAccountIdentity(access.connector.id).account_label };
   };
 }
 

@@ -401,3 +401,16 @@ describe('mergeInterruptedRecoveryContext', () => {
     expect(Buffer.byteLength(second)).toBeLessThanOrEqual(24 * 1024);
   });
 });
+it('does not reintroduce private arguments, labels or results from interrupted current, old or serialized connector observations', () => {
+  const secret = generated();
+  const args = {action:'search',tool_origin:'makinari_report',query:secret,thought_process:secret};
+  const result = {success:true,tools:[{account_label:secret}]};
+  const current = summarizeRecoveryTool({...input,name:'tools',args,result,outcome:'returned'});
+  expect(current).not.toHaveProperty('result');
+  expect(JSON.parse(current.args)).toEqual({action:'search',private_arguments:true,tool_origin:'makinari_report'});
+  const context = buildInterruptedRecoveryContext([current,{...input,name:'tools',args:JSON.stringify(args),result:JSON.stringify(result)}],
+    [{log_type:'tool_call',created_at:observedAt,tool_name:'tools',tool_args:args,tool_result:{output:result},message:secret}]);
+  expect(records(context)).toHaveLength(3);
+  expectAbsent(context,[secret]);
+  for (const row of records(context)) expect(row.args ?? row.tool_args).toBe(current.args);
+});

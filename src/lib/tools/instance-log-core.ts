@@ -1,3 +1,4 @@
+import { sharedInstanceLog, type LogContent } from '@/lib/connectors/instance-log-projection';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 function parseJsonIfString<T>(value: T | string | undefined): T | undefined {
@@ -120,7 +121,7 @@ export async function createInstanceLogCore(params: CreateInstanceLogParams) {
 
   // Caller/model-provided logs are telemetry, never a trusted billing source.
 
-  const insertRow: Record<string, unknown> = {
+  const insertRow: LogContent & Record<string, unknown> = {
     site_id,
     instance_id: instance_id || null,
     user_id: user_id || null,
@@ -163,7 +164,7 @@ export async function createInstanceLogCore(params: CreateInstanceLogParams) {
 
   const { data, error } = await supabaseAdmin
     .from('instance_logs')
-    .insert([insertRow as any])
+    .insert([sharedInstanceLog(insertRow) as any])
     .select()
     .single();
 
@@ -211,5 +212,5 @@ export async function listInstanceLogsCore(params: {
     throw new Error(`Error getting instance logs: ${error.message}`);
   }
 
-  return { success: true, data };
+  return { success: true, data: data?.map(row => sharedInstanceLog(row)) ?? data };
 }

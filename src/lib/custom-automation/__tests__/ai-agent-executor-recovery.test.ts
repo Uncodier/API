@@ -1,43 +1,9 @@
-import { randomBytes, randomUUID } from 'node:crypto';
-import * as openrouter from '@/lib/services/ai/openrouter';
-import * as chatRequest from '@/lib/services/ai/openrouter-chat-request';
-import * as providerRetry from '@/lib/services/ai/provider-retry-policy';
+import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import * as zod from 'zod';
-import * as jsonSchema from 'zod-to-json-schema';
-import * as azureVision from '../azure-vision-message-sanitize';
-import * as geminiMessages from '../gemini-message-sanitize';
-import * as toolArguments from '../coerce-tool-args';
-import * as toolResults from '@/lib/services/tool-operation-result';
-import * as documentImages from '@/lib/agentbase/services/command/document-image-content';
-import * as documentReferences from '@/lib/services/robot-instance/document-vision-references';
-import * as visionImages from '@/lib/services/robot-instance/vision-message-images';
 import type { Message } from '../ai-agent-executor';
-import { loadRuntimeModule } from '../test-helpers/load-runtime-module';
+import { loadExecutorRuntime } from '../test-helpers/load-executor-runtime';
 
-class OfflineOpenAI {
-  chat = { completions: { create: () => { throw new Error('Unexpected provider I/O'); } } };
-}
-const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executor')>(
-  'src/lib/custom-automation/ai-agent-executor.ts', {
-    'node:crypto': { randomUUID },
-    openai: OfflineOpenAI, 'google-auth-library': { GoogleAuth: class {} }, zod,
-    '@/lib/services/ai/openrouter': { ...openrouter, createOpenRouterClient: () => new OfflineOpenAI() },
-    '@/lib/services/ai/openrouter-chat-request': chatRequest,
-    '@/lib/services/ai/provider-retry-policy': providerRetry,
-    '@/lib/status/text-execution-observation': { observeCompletedTextRequest: async (_model: string, request: () => PromiseLike<unknown>) => request() },
-    'zod-to-json-schema': jsonSchema, './azure-vision-message-sanitize': azureVision,
-    './gemini-message-sanitize': geminiMessages, './coerce-tool-args': toolArguments,
-    '@/lib/services/tool-operation-result': toolResults,
-    '@/lib/agentbase/services/command/document-image-content': documentImages,
-    '@/lib/services/robot-instance/document-vision-references': documentReferences,
-    '@/lib/services/robot-instance/vision-message-images': visionImages,
-    '@/lib/services/robot-instance/instance-context-budget': {
-      fitInstanceRequest: () => { throw new Error('Unexpected context I/O'); },
-      resolveModelContextCapacity: () => { throw new Error('Unexpected context I/O'); },
-    },
-  },
-);
+const { AIAgentExecutor } = loadExecutorRuntime();
 
 beforeEach(() => {
   jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -82,4 +48,20 @@ describe('recovery errors remain control flow, not tool failures', () => {
     expect(observedMessages.some(message => message.role === 'tool')).toBe(false);
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
+});
+it('keeps qualified names, arguments, rejection transcripts and decorated schema text out of real executor console paths', async () => {
+  const secret = randomBytes(24).toString('hex');
+  const agent = new AIAgentExecutor({model:'test-model'});
+  const create = jest.fn<() => Promise<any>>().mockResolvedValueOnce({ choices:[{message:{role:'assistant',content:'',tool_calls:[
+    {id:'call-private',type:'function',function:{name:`report:${secret}`,arguments:JSON.stringify({body:secret})}},
+  ]},finish_reason:'tool_calls'}], usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15} });
+  (agent as any).client.chat.completions.create = create;
+  const tools = [{name:'tools',description:secret,parameters:{type:'object',properties:{query:{type:'string',description:secret}}},execute:jest.fn(async()=>({success:true}))}];
+  const turn = await agent.act({prompt:'Test',tools,maxIterations:1});
+  // Actual model protocol isn't rewritten for logging, including the unknown call.
+  expect(JSON.stringify(turn.messages)).toContain(secret);
+  create.mockRejectedValueOnce(Object.assign(new Error('invalid tool_call_id'),{status:400}));
+  await expect(agent.act({messages:turn.messages,tools,maxIterations:1})).rejects.toThrow('tool_call_id');
+  for (const channel of [console.log,console.error,console.warn]) expect(JSON.stringify(jest.mocked(channel).mock.calls)).not.toContain(secret);
+  expect(tools[0].execute).not.toHaveBeenCalled();
 });

@@ -13,19 +13,22 @@ turn. This is a read-only procedure, not authorization for sending or writing.
 
 ## Instructions
 
-1. Resolve the user's intended connected account. If the account is ambiguous,
-   ask; do not select the first connection or try a second credential on denial.
-2. Search the provider catalog using `tools search` with `connector_id` and a
+1. Use the selected account or ask which one the member intends. Multiple accounts
+   of the same toolkit can offer the same action. Use `account_label` to distinguish
+   them; if the suffix also matches, ask the user to select one in the account picker.
+   Route by the full local `connector_id`, never a display name or provider account ID.
+2. Search the provider catalog using `tools search` with `tool_origin: "provider"`, `connector_id` and a
    short public action term. The `communication` domain is an optional discovery
    hint, never permission. Follow the cursor even on an empty page. No private
    search terms or account credentials belong in a catalog query.
-3. Describe the exact returned `connector:<id>:<action>` reference. Check the
+3. Describe the exact returned `connector:<id>:<SLUG>` reference. Check the
    operation and arguments; do not substitute a mutation, an unknown-effect
-   action or a native report for the requested read. The version and schema
-   are evidence about the contract, not a grant. Do not invent action slugs.
+   action, another account or an internal Makinari metrics report for the requested
+   read. **All tools** permits compatible actions in Makinari; it does not expand the
+   provider credential’s access. If the provider denies the read, stop on that account.
 4. Use the described `version`, `schema_hash` and `arguments` envelope on the
    same account. Request the smallest useful page and projection. The host
-   validates the member, agent and current account policy before dispatch.
+   rechecks the member, pinned turn and current account policy before dispatch.
 5. Give the user the private result link. Never claim to have read or summarized
    rows that were only delivered to the private viewer. A page is not a total.
 

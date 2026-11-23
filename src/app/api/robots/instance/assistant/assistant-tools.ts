@@ -329,7 +329,7 @@ export async function getInstanceAssistantTools(
   const connectorContext = assistantConnectorContext({ siteId, userId, instanceId, host: connectorHost, agentId: connectorAgentId, requestId: commandSource?.actionId, sourceDigest, connectorIdHint, ...(catalogUserSession === true && connectorHost === 'assistant' && { catalogUserSession: true as const }) });
   const instanceTools = [
     ...customTools.filter(tool => !['use_composio_tools', 'leads_bulk_operations'].includes(tool?.name)),
-    composioActionTool(connectorContext),
+    composioActionTool(connectorContext,{accountPinned:connectorIdHint!==undefined}),
     // Bulk CRM writes need a verified interactive action, not an actor supplied by a background job.
     ...(leadBulkUserSession === true && connectorHost === 'assistant' && commandSource && commandSource.siteId === siteId
       && commandSource.userId === userId && commandSource.instanceId === instanceId

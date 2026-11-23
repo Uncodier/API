@@ -1,12 +1,11 @@
 import {z} from 'zod';
-import {parseConnectorToolRef} from './connector-ref';
+import {parseInstanceToolRef} from './instance-tool-ref';
 import type {ConnectorFilters} from './connector-discovery-types';
 import type {ConnectorContextResolver} from './host-context';
 import {scopedReadPage,scopedReadResolver} from './instance-scoped-binding';
 import type {searchDirectTools} from './provider-direct-discovery';
-import {instanceSearchTargets} from './provider-direct-policy';
+import {listDirectAccounts} from './provider-direct-policy';
 import {snapshotDirectJson} from './provider-direct-schema';
-import {SUPABASE_CATALOG_SLUG} from './provider-report-action';
 import {ConnectorError,type ConnectorContext} from './types';
 
 // Choose the contract before reading provider data. Neither a failed dispatch
@@ -21,24 +20,30 @@ export function createInstanceConnectorDispatcher<D,R>(resolve:ConnectorContextR
   }
   return {
     async search(filters:ConnectorFilters={}) {
+      const {tool_origin:origin='provider', ...filter}=filters;
+      if(origin!=='provider'&&origin!=='makinari_report') throw new ConnectorError('INVALID_FILTER','Choose provider or makinari_report.',400);
       const ctx=interactive(await resolve());
       if(filters.connector_id!==undefined&&!z.string().uuid().safeParse(filters.connector_id).success) throw new ConnectorError('INVALID_FILTER','Invalid connector account filter.',400);
       if(ctx.connectorIdHint&&filters.connector_id&&ctx.connectorIdHint!==filters.connector_id) throw new ConnectorError('NOT_FOUND','This connection is not selected.',404);
-      const narrow=filters.connector_id?{...ctx,connectorIdHint:filters.connector_id}:ctx;
-      const targets=await instanceSearchTargets(narrow);
-      return Array.isArray(targets)?generic.search(narrow,filters,targets):scopedReadPage(targets.binding,filters);
+      const account=filter.connector_id??ctx.connectorIdHint;
+      if(origin==='makinari_report') {
+        if(!account)throw new ConnectorError('REPORT_ACCOUNT_REQUIRED','Select the connection for this internal report.',400);
+        return scopedReadPage(await scopedReadResolver(resolve,ctx,account)(),filter);
+      }
+      const narrow=account?{...ctx,connectorIdHint:account}:ctx;
+      return generic.search(narrow,filter,await listDirectAccounts(narrow));
     },
     async describe(name:string) {
-      const ref=parseConnectorToolRef(name);
-      return ref.toolSlug===SUPABASE_CATALOG_SLUG ? (await scopedRuntime(ref.connectorId)).describe(name) : generic.describe(name);
+      const ref=parseInstanceToolRef(name);
+      return ref.origin==='makinari_report' ? (await scopedRuntime(ref.connectorId)).describe(name) : generic.describe(name);
     },
     async call(name:string,input:unknown) {
-      let ref:ReturnType<typeof parseConnectorToolRef>;
-      try {ref=parseConnectorToolRef(name);} catch(error) {
+      let ref:ReturnType<typeof parseInstanceToolRef>;
+      try {ref=parseInstanceToolRef(name);} catch(error) {
         if(error instanceof ConnectorError)Object.assign(error,{executed:false,effectStarted:false});
         throw error;
       }
-      if(ref.toolSlug!==SUPABASE_CATALOG_SLUG)return generic.call(name,input);
+      if(ref.origin==='provider')return generic.call(name,input);
       // Keep pre-dispatch errors identifiable; never label an error from the
       // scoped call itself "not sent" (it may already have reached the provider).
       let runtime:Awaited<ReturnType<typeof scopedRuntime>>,snapshot:unknown;

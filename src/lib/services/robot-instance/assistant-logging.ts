@@ -3,7 +3,7 @@ import { type NodeResult, buildInitialNodeResult } from './node-result-collector
 import { assistantRuntimeProvenance } from './assistant-context-version';
 import type { NodeContextRef } from './assistant-streaming-logs';
 import { AssistantExecutionBoundaryError } from './assistant-execution-boundary';
-import { connectorObservation } from '@/lib/connectors/connector-observation';
+import { connectorObservation, observedToolName } from '@/lib/connectors/connector-observation';
 import {
   normalizeToolOperationResult,
   toolOperationOutcomeToSuccess,
@@ -129,7 +129,12 @@ export function createAssistantOnStepHandler(
       let failedToolCalls = 0;
 
       for (const toolCall of step.toolCalls) {
-        const loggedArgs = connectorObservation(toolCall.toolName,toolCall.args) ?? toolCall.args;
+        const toolName = observedToolName(toolCall.toolName);
+        const callId = toolCall.id ?? toolCall.toolCallId;
+        const toolResult = callId == null ? undefined : step.toolResults?.find((tr: any) => tr.toolCallId === callId);
+        const rawResult = toolResult?.result ?? toolResult?.content ?? toolResult?.cleanedResult;
+        const observation = connectorObservation(toolCall.toolName, toolCall.args, rawResult);
+        const loggedArgs = observation ?? toolCall.args;
         // Extract and save thought_process as a thinking log if present
         if (loggedArgs && typeof loggedArgs.thought_process === 'string' && loggedArgs.thought_process.trim() !== '') {
           const { error: thinkingLogError } = await supabaseAdmin.from('instance_logs').insert({
@@ -139,7 +144,7 @@ export function createAssistantOnStepHandler(
             details: {
               provider,
               response_type: 'reasoning',
-              tool_name: toolCall.toolName,
+              tool_name: toolName,
               tool_call_id: toolCall.id || toolCall.toolCallId,
               ...(plan_id ? { plan_id } : {}),
               ...(step_id ? { step_id } : {}),
@@ -153,20 +158,15 @@ export function createAssistantOnStepHandler(
 
           if (thinkingLogError) {
             if (options?.strict) throw new AssistantExecutionBoundaryError('assistant_log_failed');
-            console.error(`❌ Error saving thought_process log for ${toolCall.toolName}:`, thinkingLogError);
+            console.error(`❌ Error saving thought_process log for ${toolName}:`, thinkingLogError);
           } else {
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [THINKING] Saved thought_process for ${toolCall.toolName}`);
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [THINKING] Saved thought_process for ${toolName}`);
           }
         }
 
-        // Find corresponding tool result
-        const toolResult = step.toolResults?.find(
-          (tr: any) => tr.toolCallId === toolCall.id || tr.toolCallId === toolCall.toolCallId
-        );
-
         // Extract screenshot if it's a computer tool
         let screenshotBase64 = null;
-        if (toolResult && toolCall.toolName === 'computer') {
+        if (toolResult && toolName === 'computer') {
           screenshotBase64 = toolResult.base64Image || null;
         }
         const operation = toolResult
@@ -179,41 +179,43 @@ export function createAssistantOnStepHandler(
         const { error: toolLogError } = await supabaseAdmin.from('instance_logs').insert({
           log_type: 'tool_call',
           level: 'info',
-          message: `${toolCall.toolName}: ${loggedArgs ? Object.entries(loggedArgs).map(([k, v]) => `${k}=${v}`).join(', ') : 'no args'}`,
-          tool_name: toolCall.toolName,
+          message: `${toolName}: ${loggedArgs ? Object.entries(loggedArgs).map(([k, v]) => `${k}=${v}`).join(', ') : 'no args'}`,
+          tool_name: toolName,
           tool_call_id: toolCall.id || toolCall.toolCallId,
           tool_args: loggedArgs || {},
           tool_result: toolResult ? {
             success: toolOperationOutcomeToSuccess(operation?.outcome),
             operation_outcome: operation?.outcome,
-            error: operation?.error || null,
-            output: (() => {
-              // Clean output of any base64 image and redundant success flags
-              const rawOutput = toolResult.result || toolResult.content || '';
-              let cleanOutput: any = rawOutput;
-              
-              if (typeof rawOutput === 'string') {
-                if (rawOutput.includes('base64,')) {
-                  cleanOutput = 'Screenshot captured successfully';
-                }
-              } else if (typeof rawOutput === 'object' && rawOutput !== null) {
-                const stripInternalKeys = (obj: any): any => {
-                  if (Array.isArray(obj)) return obj.map(stripInternalKeys);
-                  if (typeof obj === 'object' && obj !== null) {
-                    const copy = { ...obj };
-                    delete copy.base64Image;
-                    for (const key in copy) {
-                      copy[key] = stripInternalKeys(copy[key]);
-                    }
-                    return copy;
+            ...(observation ? {} : {
+              error: operation?.error || null,
+              output: (() => {
+                // Clean output of any base64 image and redundant success flags
+                const rawOutput = toolResult.result || toolResult.content || '';
+                let cleanOutput: any = rawOutput;
+
+                if (typeof rawOutput === 'string') {
+                  if (rawOutput.includes('base64,')) {
+                    cleanOutput = 'Screenshot captured successfully';
                   }
-                  return obj;
-                };
-                cleanOutput = stripInternalKeys(rawOutput);
-              }
-              
-              return cleanOutput;
-            })()
+                } else if (typeof rawOutput === 'object' && rawOutput !== null) {
+                  const stripInternalKeys = (obj: any): any => {
+                    if (Array.isArray(obj)) return obj.map(stripInternalKeys);
+                    if (typeof obj === 'object' && obj !== null) {
+                      const copy = { ...obj };
+                      delete copy.base64Image;
+                      for (const key in copy) {
+                        copy[key] = stripInternalKeys(copy[key]);
+                      }
+                      return copy;
+                    }
+                    return obj;
+                  };
+                  cleanOutput = stripInternalKeys(rawOutput);
+                }
+
+                return cleanOutput;
+              })(),
+            })
           } : {},
           screenshot_base64: screenshotBase64,
           parent_log_id: parentLogId,
@@ -238,7 +240,7 @@ export function createAssistantOnStepHandler(
 
         if (toolLogError) {
           if (options?.strict) throw new AssistantExecutionBoundaryError('assistant_log_failed');
-          console.error(`❌ Error saving tool log for ${toolCall.toolName}:`, toolLogError);
+          console.error(`❌ Error saving tool log for ${toolName}:`, toolLogError);
           failedToolCalls++;
         } else {
           savedToolCalls++;

@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { redactRuntimeSecrets } from '@/app/api/cron/shared/runtime-log-context';
 import { sanitizeMigrationRepairContext } from '../apps-platform/migration-repair-policy';
-import { connectorObservation } from '@/lib/connectors/connector-observation';
+import { connectorObservation, observedToolName } from '@/lib/connectors/connector-observation';
 
 export type RecoveryToolObservation = {
   name: string;
@@ -150,11 +150,12 @@ export function summarizeRecoveryTool(input: {
   const outcome = ownValue(input, 'outcome');
   const result = ownValue(input, 'result');
   const name = ownValue(input,'name'), args = ownValue(input,'args');
+  const observation = connectorObservation(name, args, result);
   return {
-    name: summarize(name, NAME_BYTES),
-    args: summarize(connectorObservation(name,args) ?? args),
+    name: summarize(typeof name === 'string' ? observedToolName(name) : name, NAME_BYTES),
+    args: summarize(observation ?? args),
     outcome: outcome === 'returned' || outcome === 'threw' ? outcome : 'unknown',
-    ...(result === undefined ? {} : { result: summarize(result) }),
+    ...(result === undefined || observation ? {} : { result: summarize(result) }),
     observedAt: summarize(ownValue(input, 'observedAt'), 64),
   };
 }
@@ -219,6 +220,13 @@ export function buildInterruptedRecoveryContext(
       created_at: summarize(ownValue(log, 'created_at'), 64),
       log_type: summarize(ownValue(log, 'log_type'), NAME_BYTES),
     };
+    const name = ownValue(log, 'tool_name');
+    const observation = connectorObservation(name, ownValue(log, 'tool_args'), ownValue(log, 'tool_result'));
+    if (observation) {
+      record.tool_name = typeof name === 'string' ? observedToolName(name) : 'tools';
+      record.tool_args = summarize(observation);
+      return renderRecord(record, 1024);
+    }
     for (const key of ['tool_name', 'tool_args', 'tool_result', 'message']) {
       const value = ownValue(log, key);
       if (value !== undefined) record[key] = summarize(value, key === 'tool_name' ? NAME_BYTES : SUMMARY_BYTES);

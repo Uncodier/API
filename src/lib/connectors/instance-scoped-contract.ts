@@ -8,8 +8,9 @@ import {getToolkit} from './composio-catalog';
 import {hashConnectorSchema} from './composio-tool-json';
 import {createComposioClient} from './composio-transport';
 import {providerId} from './composio-validation';
-import {parseConnectorToolRef} from './connector-ref';
+import {parseReportRef} from './instance-tool-ref';
 import type {ScopedReadBinding} from './instance-scoped-binding';
+import {readInstanceReportSources, type ReportSource} from './instance-report-sources';
 import {directSchemaContract} from './provider-direct-schema';
 import {readTokenProviderBinding} from './provider-project-binding';
 import {SUPABASE_CATALOG_SLUG as slug} from './provider-report-action';
@@ -32,8 +33,7 @@ const changed = () => new ConnectorError('ACCESS_CHANGED','The original Ask turn
 /** No resolution by toolkit, name, URL or environment. The injected resolver freshly verifies
  * installation identity and member use for the original private turn; it cannot pick a substitute. */
 export async function scopedAdmission(name:string, resolve:()=>Promise<ScopedReadBinding>) {
-  const {connectorId,toolSlug} = parseConnectorToolRef(name);
-  if (toolSlug !== slug) throw new ConnectorError('CONNECTOR_TOOL_DENIED','Only the scoped read action is available here.',403);
+  const {connectorId} = parseReportRef(name);
   const binding = structuredClone(await resolve());
   const {context,connector:c,provider:p,localProjectRef,policyRevision,directRevision} = binding;
   if (context.host !== 'assistant' || context.catalogUserSession !== true ||
@@ -53,7 +53,7 @@ export async function scopedAdmission(name:string, resolve:()=>Promise<ScopedRea
   const actor = {p_site_id:context.siteId,p_user_id:context.userId,p_instance_id:context.instanceId!,p_agent_id:context.agentId!,
     p_request_id:context.requestId!,p_connector_id:connectorId,p_project_ref:localProjectRef,p_connector_revision:c.revision,
     p_policy_revision:policyRevision,p_direct_revision:directRevision,p_credential_revision:p.credential_revision};
-  const stamp = hashConnectorSchema({actor,toolSlug,account:c.provider_account_id,config:c.auth_config_id,toolkit:c.toolkit_slug,
+  const stamp = hashConnectorSchema({actor,reportRef:name,providerAction:slug,account:c.provider_account_id,config:c.auth_config_id,toolkit:c.toolkit_slug,
     providerId:p.id,project:p.project_id,providerUser:p.provider_user_id,sourceDigest:context.sourceDigest??null,selection:context.connectorIdHint??null});
   return {binding,actor,stamp};
 }
@@ -68,11 +68,35 @@ export async function scopedCredential({binding:{connector,provider}}:Admission)
   return key;
 }
 
-// These fixed sources are the entire vocabulary, even if another policy later supports more.
-function dataset(scope:AnalyticsScope,site:string):BoundDataset {
-  const {paid_sales,tender_awards,approved_orders} = nativeSources(scope);
-  return {kind:'native', sources:{paid_sales,tender_awards,approved_orders},
+// Only the server compiler supplies bindings. The advisory RPC selects logical names,
+// never physical relations, tenant predicates, metadata prose or query parameters.
+function dataset(scope:AnalyticsScope,site:string,names:readonly ReportSource[]):BoundDataset {
+  const native = nativeSources(scope);
+  return {kind:'native',sources:Object.fromEntries(names.map(name=>[name,native[name]])),
     parameters:scope==='workspace'?[site]:[], ...(scope==='workspace' && {allowRows:true})};
+}
+
+const basis:Record<ReportSource,string> = {
+  paid_sales:'Completed sales with zero recorded balance. Amount is face value in major units; sale date is not a payment date.',
+  tender_awards:'Approved awards at winning quotation values. Creation time; net and tax in minor units.',
+  approved_orders:'Approved purchase orders, not cash payments. Creation time; net and tax in minor units.',
+};
+function reportFields(available:Awaited<ReturnType<typeof readInstanceReportSources>>,workspace:BoundDataset) {
+  const {parameters} = directQueryFields(workspace); // The legacy query/scope help advertises a different contract.
+  const queryHelp = available.workspace.map(name=>{
+    const columns = Object.entries(workspace.sources[name].columns).map(([c,t])=>`${c}:${t}`).join(', ');
+    const scopes = available.platform?.includes(name) ? 'workspace, platform' : 'workspace';
+    return `analytics.${name}(${columns}) [${scopes}]. ${basis[name]}`;
+  }).join(' ');
+  return {type:'object',additionalProperties:false,required:['query','scope'],properties:{
+    query:{type:'string',minLength:1,maxLength:4096,description:'Send one SELECT on a source listed for the requested scope. '+queryHelp+
+      " Use date_trunc('month', date_or_timestamp) for month starts (UTC for timestamps). GROUP BY and ORDER BY accept aliases or select-list positions. "+
+      'LIMIT is at most 25. COUNT(DISTINCT site_id) counts participating sites. Group monetary aggregates by currency or filter to one currency; no implied conversion.'},
+    parameters,
+    scope:{type:'string',enum:Object.keys(available),description:'Required. Workspace permits bounded non-ID projections on this workspace. '+
+      (available.platform?'Use platform only for explicitly requested cross-workspace aggregates on its listed sources. ':'')+
+      'If the requested scope or source is unavailable, stop; do not substitute another.'},
+  }};
 }
 
 export async function scopedContract(a:Admission) {
@@ -95,15 +119,13 @@ export async function scopedContract(a:Admission) {
   if (account.accountType !== 'PRIVATE' || !account.hostedSupabasePat) {
     throw new ConnectorError('CONNECTOR_ACCOUNT_MISMATCH','The exact private hosted Supabase token account is required.',409);
   }
-  const datasets = {workspace:dataset('workspace',connector.site_id),platform:dataset('platform',connector.site_id)};
-  const {query,parameters} = directQueryFields(datasets.workspace);
-  const argumentsSchema = {type:'object',additionalProperties:false,required:['query','scope'],properties:{
-    query:{...query,description:query.description.replace('Workspace is the default; ','In workspace scope, ')},parameters,
-    scope:{type:'string',enum:['workspace','platform'],description:'Required. Use workspace for this workspace, or platform only for explicitly requested cross-workspace aggregates with an independent grant. Never substitute scopes.'},
-  }};
-  const hash = hashConnectorSchema({mode:'instance-scoped-native-analytics-v1',name:slug,version:scopedVersion,accountBinding:a.stamp,
+  const available = await readInstanceReportSources(a.actor);
+  const datasets = {workspace:dataset('workspace',connector.site_id,available.workspace),
+    ...(available.platform && {platform:dataset('platform',connector.site_id,available.platform)})};
+  const argumentsSchema = reportFields(available,datasets.workspace);
+  const hash = hashConnectorSchema({mode:'instance-report-sources-v1',name:slug,version:scopedVersion,accountBinding:a.stamp,
     input:hashConnectorSchema(directSchemaContract(tool.input_parameters)),
     outputPin,argumentsSchema,workspace:analyticsDatasetFingerprint(datasets.workspace),
-    platform:analyticsDatasetFingerprint(datasets.platform),keyHash:createHash('sha256').update(credential.apiKey).digest('hex')});
-  return {client,credential,argumentsSchema,hash,datasets};
+    ...(datasets.platform && {platform:analyticsDatasetFingerprint(datasets.platform)}),keyHash:createHash('sha256').update(credential.apiKey).digest('hex')});
+  return {client,credential,argumentsSchema,hash,datasets,available};
 }

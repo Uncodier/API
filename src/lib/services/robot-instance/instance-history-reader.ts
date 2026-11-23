@@ -1,3 +1,5 @@
+import { sharedInstanceLog } from '@/lib/connectors/instance-log-projection';
+import { observedToolName } from '@/lib/connectors/connector-observation';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
@@ -80,6 +82,7 @@ export type InstanceHistoryArgs = z.input<typeof argsSchema> | z.input<typeof in
 export type InstanceHistoryCursor = z.infer<typeof cursorSchema>;
 
 export interface InstanceHistoryLogContent {
+  tool_name?: string | null;
   message?: string | null;
   tool_args?: unknown;
   tool_result?: unknown;
@@ -92,6 +95,7 @@ export interface InstanceHistoryLogContent {
  * fields are null; metadata and screenshot_base64 are deliberately excluded.
  */
 export function serializeInstanceHistoryLog(log: InstanceHistoryLogContent): string {
+  log = sharedInstanceLog(log);
   return JSON.stringify({
     message: log.message ?? null,
     tool_args: log.tool_args ?? null,
@@ -146,7 +150,7 @@ function metadata(log: InstanceHistoryMetadata): InstanceHistoryMetadata {
     id: log.id,
     created_at: log.created_at,
     log_type: log.log_type.slice(0, INSTANCE_HISTORY_LIMITS.logTypeChars),
-    tool_name: log.tool_name?.slice(0, INSTANCE_HISTORY_LIMITS.toolNameChars) ?? null,
+    tool_name: log.tool_name ? observedToolName(log.tool_name).slice(0, INSTANCE_HISTORY_LIMITS.toolNameChars) : null,
   };
 }
 
@@ -186,7 +190,12 @@ async function listHistory(siteId: string, instanceId: string, args: ListArgs): 
   return {
     action: 'list',
     logs: page.map(log => {
-      const message = log.message ?? '';
+      // Listing intentionally never fetches a transcript/JSON payload. Older rows may have
+      // serialized private arguments in message; offer an explicitly projected read instead.
+      const privatePreview = log.tool_name && (observedToolName(log.tool_name) !== log.tool_name || log.tool_name === 'use_composio_tools' ||
+        (['tools','tool_lookup'].includes(log.tool_name) && /(?:\b(?:connector_id|connector_cursor|catalog_query|tool_origin|private_arguments)=|(?:connector|report)\s*:|\bname=use_composio_tools|\baction=(?:search|list)\b)/i.test(log.message ?? '')));
+      const summary = log.message?.match(/^(?:tools|tool_lookup|use_composio_tools): action=(call|describe|search|list|connector), private_arguments=true(?:, tool_origin=(provider|makinari_report))?$/);
+      const message = privatePreview && summary?.[0] !== log.message ? 'Tool discovery or private action. Read the log for safe details.' : log.message ?? '';
       return {
         ...metadata(log),
         preview: message.slice(0, INSTANCE_HISTORY_LIMITS.previewChars),

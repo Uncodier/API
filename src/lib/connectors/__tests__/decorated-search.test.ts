@@ -4,14 +4,14 @@ import {composioActionTool} from '@/app/api/agents/tools/composio/assistantProto
 import {assertToolScreenAccess,loadToolScreenAccess} from '@/app/api/agents/tools/router/screen-access';
 import {EmbeddingsService} from '@/lib/services/embeddings-service';
 import {instanceCatalog} from './instance-catalog-fixture';
-import {instanceSearchTargets} from '../provider-direct-policy';
+import {listDirectAccounts} from '../provider-direct-policy';
 import {loadConnectorCredential} from '../account-access';
 import {listToolkitToolMetadata} from '../composio-tool-metadata';
 import {executeDirectTool,describeDirectTool} from '../provider-direct-transport';
 import {connectorFixture,providerFixture,secret} from './composio-fixtures';
 import {ConnectorError} from '../types';
 
-jest.mock('../provider-direct-policy',()=>({instanceSearchTargets:jest.fn()}));
+jest.mock('../provider-direct-policy',()=>({listDirectAccounts:jest.fn()}));
 jest.mock('../account-access',()=>({loadConnectorCredential:jest.fn()}));
 jest.mock('../provider-direct-transport',()=>({describeDirectTool:jest.fn(),executeDirectTool:jest.fn()}));
 jest.mock('../composio-tool-metadata',()=>({TOOL_CATALOG_LIMIT:20,listToolkitToolMetadata:jest.fn()}));
@@ -29,21 +29,21 @@ const list=jest.mocked(listToolkitToolMetadata), embeds=jest.mocked(EmbeddingsSe
 const items=Array.from({length:7},(_,i)=>({slug:`NOVELCRM_LIST_CONTACTS_${i}`,name:'List contacts',description:'Lista de contactos',action_types:['read'] as ['read']}));
 beforeEach(()=>{jest.resetAllMocks();jest.mocked(loadToolScreenAccess).mockResolvedValue({isAdmin:false,blockedScreens:[]});
   embeds.mockRejectedValue(new Error('Offline'));
-  jest.mocked(instanceSearchTargets).mockResolvedValue([account]);jest.mocked(loadConnectorCredential).mockResolvedValue({source:'byok',revision:provider.credential_revision,apiKey:secret()});
+  jest.mocked(listDirectAccounts).mockResolvedValue([account]);jest.mocked(loadConnectorCredential).mockResolvedValue({source:'byok',revision:provider.credential_revision,apiKey:secret()});
   list.mockResolvedValue({items,next_cursor:null,total:items.length});
 });
 afterEach(()=>{expect(describeDirectTool).not.toHaveBeenCalled();expect(executeDirectTool).not.toHaveBeenCalled();});
-async function build() {
+async function build(pinned?:string) {
   const decorated=jest.fn();
   const factory=instanceCatalog({
-    '@/lib/connectors/host-context':{assistantConnectorContext:()=>async()=>ctx},
+    '@/lib/connectors/host-context':{assistantConnectorContext:()=>async()=>({...ctx,connectorIdHint:pinned})},
     '@/app/api/agents/tools/composio/assistantProtocol':{composioActionTool},
     '@/app/api/agents/tools/router/assistantProtocol':{routeTools},
     '@/lib/services/tool-execution-context':{readToolExecutionContext:()=>undefined},
   });
   const native={name:'leads',description:'Native CRM contacts',parameters:{type:'object',properties:{}},execute:jest.fn()};
   const tools=await factory.getInstanceAssistantTools(ctx.siteId,ctx.userId,ctx.instanceId,[native],undefined,undefined,undefined,undefined,undefined,undefined,undefined,
-    defs=>defs.map(t=>t.name!=='use_composio_tools'?t:{...t,execute:(args:unknown)=>{decorated(args);return t.execute(args);}}),'assistant',ctx.agentId);
+    defs=>defs.map(t=>t.name!=='use_composio_tools'?t:{...t,execute:(args:unknown)=>{decorated(args);return t.execute(args);}}),'assistant',ctx.agentId,pinned);
   return {router:tools.find((t:RoutedTool)=>t.name==='tools')!,decorated};
 }
 it('routes private discovery through the decorated gateway; local and multilingual catalog matches survive offline embeddings and continue without duplicates',async()=>{
@@ -64,14 +64,22 @@ it('does not fall back to native actions or another account for an explicit sele
   const {router}=await build(); const filters={action:'search',query:'contactos',connector_id:id};
   const res=await router.execute(filters);expect(res.tools.every((t:RoutedTool)=>t.name.startsWith(`connector:${id}:`))).toBe(true);
   expect(embeds).not.toHaveBeenCalled();
-  jest.mocked(instanceSearchTargets).mockRejectedValueOnce(new ConnectorError('DIRECT_POLICY_REQUIRED','Not admitted',403));
+  jest.mocked(listDirectAccounts).mockRejectedValueOnce(new ConnectorError('DIRECT_POLICY_REQUIRED','Not admitted',403));
   expect(await router.execute(filters)).toMatchObject({success:false,tools:[],connector_error:'DIRECT_POLICY_REQUIRED'});
+});
+
+it('preserves a server-pinned account when the agent omits the connector filter, even on denial',async()=>{
+  const {router}=await build(id);
+  expect((await router.execute({action:'list'})).tools.every((tool:{name:string})=>tool.name.startsWith(`connector:${id}:`))).toBe(true);
+  jest.mocked(listDirectAccounts).mockRejectedValueOnce(new ConnectorError('ASK_SHARED_DATABASE','Not a provider account',403));
+  expect(await router.execute({action:'search',query:'report'})).toMatchObject({success:false,connector_error:'ASK_SHARED_DATABASE',tools:[]});
+  expect(embeds).not.toHaveBeenCalled();
 });
 it('losing access invalidates old continuations; screen denial does not read account metadata',async()=>{
   const {router}=await build(); const res=await router.execute({action:'list'});
-  jest.mocked(instanceSearchTargets).mockResolvedValue([]);
+  jest.mocked(listDirectAccounts).mockResolvedValue([]);
   expect(await router.execute({action:'list',connector_cursor:res.connector_next_cursor})).toMatchObject({connector_error:'STALE_CURSOR'});
   jest.clearAllMocks();jest.mocked(assertToolScreenAccess).mockRejectedValueOnce(new ConnectorError('ACCESS_DENIED','Denied',403));
   expect(await router.execute({action:'list',connector_id:id})).toMatchObject({success:false,tools:[],connector_error:'ACCESS_DENIED'});
-  expect(instanceSearchTargets).not.toHaveBeenCalled();expect(loadConnectorCredential).not.toHaveBeenCalled();
+  expect(listDirectAccounts).not.toHaveBeenCalled();expect(loadConnectorCredential).not.toHaveBeenCalled();
 });

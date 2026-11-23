@@ -1,6 +1,6 @@
 # Private connector analytics: sources and operator authority
 
-**Local implementation and offline evidence, not a deployment or a live grant.** This is a constrained reporting contract for the pinned `SUPABASE_RUN_READ_ONLY_QUERY` connector, not a general SQL proxy. Discovery advertises logical sources and column types, not project credentials, physical bindings or private rows. A request's `scope` is not an authorization. The actual human opens the receipt in their authenticated private destination; the assistant cannot read back the rows.
+**Historical reporting adapter; local implementation and offline evidence, not a deployment or a live grant.** The pinned `SUPABASE_RUN_READ_ONLY_QUERY` transport below is not a model-facing alias for an internal report. Private Ask now uses the separate [source selection contract](CONNECTOR_PROVIDER_DIRECT.md#choosing-the-source-and-account-in-private-ask-local-contract); it does not offer this adapter as a fallback or expose a general SQL proxy. Discovery advertises logical sources and column types, not project credentials, physical bindings or private rows. A request's `scope` is not an authorization. The actual human opens the receipt in their authenticated private destination; the assistant cannot read back the rows.
 
 ## Native sources
 

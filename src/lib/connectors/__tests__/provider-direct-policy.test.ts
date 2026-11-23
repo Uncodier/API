@@ -74,6 +74,8 @@ it('compares an independently attested database resource to fresh local installa
   db.connector.supabase_project_ref=external;db.local_installation_ref=local;rpc.mockImplementation((name:string)=>name==='connector_direct_actor'?reply(true):reply([db]));
   const resolve=()=>authorizeDirectAction(ctx,id,'SUPABASE_LIST_WIDGETS');
   evidence.mockImplementation(async check=>({allowed:await check(),localProjectRef:local}));expect((await resolve()).localProjectRef).toBe(local);
+  // The provider action stays subject to its own business-tool policy; it must not become a report.
+  await expect(authorizeDirectAction(ctx,id,'SUPABASE_RUN_READ_ONLY_QUERY')).rejects.toMatchObject({code:'DIRECT_ACTION_UNSUPPORTED'});
   for (const actual of [null,'c'.repeat(20),external]) {evidence.mockResolvedValueOnce({allowed:true,localProjectRef:actual});await expect(resolve()).rejects.toMatchObject({status:403});}
   db.local_installation_ref=external;evidence.mockResolvedValueOnce({allowed:true,localProjectRef:external});await expect(resolve()).rejects.toMatchObject({status:403});
   db.local_installation_ref=null;db.connector.supabase_project_ref=null;await expect(resolve()).rejects.toMatchObject({status:403});

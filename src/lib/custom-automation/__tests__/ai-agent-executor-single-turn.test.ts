@@ -1,48 +1,8 @@
 import { jest } from '@jest/globals';
-import { randomUUID } from 'node:crypto';
-import * as openrouter from '@/lib/services/ai/openrouter';
-import * as chatRequest from '@/lib/services/ai/openrouter-chat-request';
-import * as providerRetry from '@/lib/services/ai/provider-retry-policy';
-import * as zod from 'zod';
-import * as jsonSchema from 'zod-to-json-schema';
-import * as azureVision from '../azure-vision-message-sanitize';
-import * as geminiMessages from '../gemini-message-sanitize';
-import * as toolArguments from '../coerce-tool-args';
-import * as toolResults from '@/lib/services/tool-operation-result';
-import * as documentImages from '@/lib/agentbase/services/command/document-image-content';
-import * as documentReferences from '@/lib/services/robot-instance/document-vision-references';
-import * as visionImages from '@/lib/services/robot-instance/vision-message-images';
 import type { AIProvider, ActOptions, Message } from '../ai-agent-executor';
-import { loadRuntimeModule } from '../test-helpers/load-runtime-module';
+import { loadExecutorRuntime } from '../test-helpers/load-executor-runtime';
 
-class OfflineOpenAI {
-  chat = { completions: { create: () => { throw new Error('Provider I/O must be mocked'); } } };
-}
-
-const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executor')>(
-  'src/lib/custom-automation/ai-agent-executor.ts', {
-    'node:crypto': { randomUUID },
-    openai: OfflineOpenAI,
-    '@/lib/services/ai/openrouter': { ...openrouter, createOpenRouterClient: () => new OfflineOpenAI() },
-    '@/lib/services/ai/openrouter-chat-request': chatRequest,
-    '@/lib/services/ai/provider-retry-policy': providerRetry,
-    '@/lib/status/text-execution-observation': { observeCompletedTextRequest: async (_model: string, request: () => PromiseLike<unknown>) => request() },
-    'google-auth-library': { GoogleAuth: class {} },
-    zod,
-    'zod-to-json-schema': jsonSchema,
-    './azure-vision-message-sanitize': azureVision,
-    './gemini-message-sanitize': geminiMessages,
-    './coerce-tool-args': toolArguments,
-    '@/lib/services/tool-operation-result': toolResults,
-    '@/lib/agentbase/services/command/document-image-content': documentImages,
-    '@/lib/services/robot-instance/document-vision-references': documentReferences,
-    '@/lib/services/robot-instance/vision-message-images': visionImages,
-    '@/lib/services/robot-instance/instance-context-budget': {
-      fitInstanceRequest: () => { throw new Error('Unexpected context I/O'); },
-      resolveModelContextCapacity: () => { throw new Error('Unexpected context I/O'); },
-    },
-  },
-);
+const { AIAgentExecutor } = loadExecutorRuntime();
 
 const call = (id: string, name = 'write', args = '{}') => ({
   id, type: 'function' as const, function: { name, arguments: args },

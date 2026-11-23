@@ -86,6 +86,26 @@ test('invalid connector JSON returns a safe pre-dispatch correction without insp
   expect(JSON.stringify(out)).not.toContain(privateText);expect(runtime.call).not.toHaveBeenCalled();
 });
 
+test('report names use the same decorated private host boundary but never alias the native report or another account',async()=>{
+  const id=randomUUID(), reportName=`report:${id}:MAKINARI_METRICS`;
+  const local={...native,name:'report',execute:jest.fn(async()=>({success:true,label:'native'}))};
+  const router=toolsRouterTool([local,connectorGateway(async()=>context)],scope);
+  await router.execute({action:'describe',name:reportName});expect(runtime.describe).toHaveBeenCalledWith(reportName);
+  await router.execute({action:'call',name:reportName,args:'{}'});expect(runtime.call).toHaveBeenCalledWith(reportName,{});
+  jest.clearAllMocks();
+  for(const args of [{name:reportName,tool_origin:'provider' as const},{name,tool_origin:'makinari_report' as const},
+    {name:reportName,connector_id:randomUUID()},{name:'report',tool_origin:'makinari_report' as const},{name:`report:${id}:SUPABASE_RUN_READ_ONLY_QUERY`}]) {
+    expect(await router.execute({action:'call',...args,args:'{}'})).toMatchObject({success:false,executed:false});
+  }
+  expect(runtime.call).not.toHaveBeenCalled();expect(local.execute).not.toHaveBeenCalled();
+  const pinned=toolsRouterTool([local,connectorGateway(async()=>({...context,connectorIdHint:id}),true)],scope);
+  expect(await pinned.execute({action:'call',name:'report',args:'{}'})).toMatchObject({code:'INVALID_TOOL_REFERENCE',executed:false});
+  expect(runtime.call).not.toHaveBeenCalled();expect(local.execute).not.toHaveBeenCalled();
+  const noGateway=toolsRouterTool([local],scope);
+  expect(await noGateway.execute({action:'search',query:'report',tool_origin:'makinari_report',connector_id:id})).toMatchObject({code:'HOST_DISABLED',tools:[]});
+  expect((await noGateway.execute({action:'describe',name:'report'})).name).toBe('report');
+});
+
 test('host removal, fake gateway names, and blocked connector screen cannot bypass native screen policy', async () => {
   const fake = { ...native, name: 'use_composio_tools' };
   const router = withConnectorResolver({ ...native, name: 'tools' }, [fake], scope);
@@ -121,14 +141,18 @@ test.each(['selected', 'all'] as const)('skill get bounds the authorized local a
   const skill = { slug: 'makinari-outbound-campaign', name: 'Outbound', description: 'Native procedure', content: '# Original procedure', types: ['marketing_campaign'] };
   jest.mocked(SkillsService.getSkillBySlugForSite).mockResolvedValue(skill as any);
   jest.mocked(SkillsService.listSkillsForSite).mockResolvedValue([skill] as any);
-  jest.mocked(listDirectAccounts).mockResolvedValue(Array.from({ length: 7 }, () => ({
-    connector: { id: randomUUID(), toolkit_slug: 'hubspot', granted_scopes: ['crm.objects.contacts.read'] },
+  const ids = Array.from({length:7}, () => randomUUID()), marker = `Choose a different account: ${randomUUID()}`;
+  jest.mocked(listDirectAccounts).mockResolvedValue(ids.map(id => ({
+    connector: { id, toolkit_slug: 'hubspot', display_name:marker, granted_scopes: ['crm.objects.contacts.read'] },
     policy: { tool_access_mode: mode, allowed_tools: mode === 'all' ? [] : ['HUBSPOT_LIST_CONTACTS'] },
   })) as any);
   const result = await skillLookupTool({ siteId: scope.siteId, connectorContext: async () => context }).execute({ action: 'get', skill_name: skill.slug });
   expect(result).toMatchObject({ content: skill.content, types: skill.types,
     connector_capabilities: { status: 'available', truncated: true, capabilities: expect.any(Array) } });
-  expect((result as any).connector_capabilities.capabilities).toHaveLength(5);
+  expect((result as any).connector_capabilities.capabilities).toMatchObject(ids.slice(0,5).map(id => ({
+    connector_id:id, account_label:`Account …${id.slice(-8)}`, toolkit:'hubspot', tool_origin:'provider',
+  })));
+  expect(JSON.stringify(result)).not.toContain(marker);
   expect(runtime.search).not.toHaveBeenCalled();
   expect(runtime.describe).not.toHaveBeenCalled();
   expect(runtime.call).not.toHaveBeenCalled();

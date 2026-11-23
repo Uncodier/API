@@ -1,6 +1,6 @@
 import {randomUUID,randomBytes} from 'node:crypto';
 import {createProviderDirectRuntime} from '../provider-direct-runtime';
-import {authorizeDirectAction,instanceSearchTargets} from '../provider-direct-policy';
+import {authorizeDirectAction,listDirectAccounts} from '../provider-direct-policy';
 import {loadConnectorCredential} from '../account-access';
 import {executeDirectTool,describeDirectTool} from '../provider-direct-transport';
 import {claimDirectDispatch,storeDirectResult} from '../provider-direct-receipt';
@@ -9,7 +9,7 @@ import {ConnectorError,type ConnectorContext} from '../types';
 import {failureForAgent} from '../agent-recovery';
 import {accountFixture,connectorFixture,providerFixture} from './composio-fixtures';
 
-jest.mock('../provider-direct-policy',()=>({authorizeDirectAction:jest.fn(),instanceSearchTargets:jest.fn()}));
+jest.mock('../provider-direct-policy',()=>({authorizeDirectAction:jest.fn(),listDirectAccounts:jest.fn()}));
 jest.mock('../provider-direct-discovery',()=>({searchDirectTools:jest.fn()}));
 jest.mock('../provider-direct-transport',()=>({describeDirectTool:jest.fn(),executeDirectTool:jest.fn()}));
 jest.mock('../provider-direct-receipt',()=>({claimDirectDispatch:jest.fn(),storeDirectResult:jest.fn()}));
@@ -30,7 +30,7 @@ function fixture() {
   const pin={version:'20261119_00',schema_hash:hash,arguments:{text:'requested change'}};
   jest.mocked(loadConnectorCredential).mockResolvedValue({source:'byok',apiKey:key,revision:provider.credential_revision});
   jest.mocked(authorizeDirectAction).mockImplementation(async()=>structuredClone(target));
-  jest.mocked(instanceSearchTargets).mockResolvedValue([target]);
+  jest.mocked(listDirectAccounts).mockResolvedValue([target]);
   jest.mocked(searchDirectTools).mockResolvedValue({tools:[],truncated:false,next_cursor:null});
   jest.mocked(describeDirectTool).mockResolvedValue({version:pin.version,schemaHash:hash,parameters:{type:'object'},effect:'write',description:'Create item'});
   jest.mocked(claimDirectDispatch).mockResolvedValue(claim);jest.mocked(storeDirectResult).mockResolvedValue(receipt);
@@ -71,7 +71,7 @@ it('no key/metadata/dispatch for wrong host, wrong account or invalid interactiv
   await expect(f.run.describe(`connector:${randomUUID()}:${f.slug}`)).rejects.toMatchObject({code:'NOT_FOUND'});
   f.ctx.catalogUserSession=undefined;
   await expect(f.run.call(f.name,f.pin)).rejects.toMatchObject({executed:false,code:'PRIVATE_DESTINATION_REQUIRED'});
-  for(const dependency of [instanceSearchTargets,authorizeDirectAction,loadConnectorCredential,executeDirectTool,describeDirectTool]) expect(dependency).not.toHaveBeenCalled();
+  for(const dependency of [listDirectAccounts,authorizeDirectAction,loadConnectorCredential,executeDirectTool,describeDirectTool]) expect(dependency).not.toHaveBeenCalled();
 });
 it('does not use the legacy read or native report when policy is missing',async()=>{
   const f=fixture();jest.mocked(authorizeDirectAction).mockRejectedValue(new ConnectorError('DIRECT_POLICY_REQUIRED','Not enrolled',403));
@@ -80,7 +80,7 @@ it('does not use the legacy read or native report when policy is missing',async(
 });
 it('requires a trusted action for effects and narrows account pagination before querying policy',async()=>{
   const f=fixture();f.ctx.connectorIdHint=undefined;
-  await f.run.search({connector_id:f.target.connector.id});expect(instanceSearchTargets).toHaveBeenCalledWith({...f.ctx,connectorIdHint:f.target.connector.id});
+  await f.run.search({connector_id:f.target.connector.id});expect(listDirectAccounts).toHaveBeenCalledWith({...f.ctx,connectorIdHint:f.target.connector.id});
   f.ctx.requestId=undefined;
   await expect(f.run.call(f.name,f.pin)).rejects.toMatchObject({executed:false,code:'PRIVATE_DESTINATION_REQUIRED'});
   expect(executeDirectTool).not.toHaveBeenCalled();

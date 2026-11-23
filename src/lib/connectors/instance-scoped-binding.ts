@@ -5,8 +5,8 @@ import {getVisibleConnector,getConnectorProvider} from './account-access';
 import {ConnectorError,type ConnectorContext,type Connector,type ConnectorProvider} from './types';
 import type {ConnectorContextResolver} from './host-context';
 import type {ConnectorCandidate,ConnectorFilters} from './connector-discovery-types';
-import {connectorToolRef} from './connector-ref';
-import {SUPABASE_CATALOG_SLUG} from './provider-report-action';
+import {METRICS_REPORT,reportRef} from './instance-tool-ref';
+import {modelAccountIdentity} from './model-account-identity';
 
 export type ScopedReadBinding = {context:ConnectorContext;connector:Connector;provider:ConnectorProvider;policyRevision:number;localProjectRef:string;directRevision:number};
 const uuid=z.string().uuid(), ref=z.string().length(20).regex(/^[a-z]{20}$/), revision=z.number().int().positive().max(2147483647);
@@ -59,14 +59,18 @@ export function scopedReadPage(binding:ScopedReadBinding,filters:ConnectorFilter
   if(filters.cursor!==undefined) throw new ConnectorError('STALE_CURSOR','Restart the search on the selected account.',409);
   if((filters.query!==undefined&&(typeof filters.query!=='string'||filters.query.length>2048))||
     (filters.catalog_query!==undefined&&(typeof filters.catalog_query!=='string'||!filters.catalog_query.trim()||filters.catalog_query.length>150))) throw new ConnectorError('INVALID_FILTER','Use bounded catalogue search terms.',400);
-  const term=(filters.catalog_query??filters.query??'').trim(), domains=['storage','analytics','developer'];
+  const domains=['analytics'];
   // On this explicitly selected account there is exactly one compatible action.
   // Free-text intent is not a grant or a language-dependent allowlist. A literal
   // tool ID, however, must never produce a substitute tool.
-  const matches=!/^[A-Z0-9]+(?:_[A-Z0-9]+)+$/.test(term)||term===SUPABASE_CATALOG_SLUG;
-  const tools:ConnectorCandidate[]=matches&&(!filters.domain||domains.includes(filters.domain))&&(!filters.category||['research','infra'].includes(filters.category))?[{
-    name:connectorToolRef(binding.connector.id,SUPABASE_CATALOG_SLUG),connector_id:binding.connector.id,toolkit:'supabase',domains,category:filters.category??'research',
-    availability:'describe_required',description:'Read authorized metrics using this Supabase account. Describe the available sources and scopes. Not a general SQL console.',
+  const name=reportRef(binding.connector.id);
+  const matches=[filters.query,filters.catalog_query].every(value=>{
+    const term=value?.trim()??'';
+    return /^(?:connector|report):/i.test(term) ? term===name : !/^[A-Z0-9]+(?:_[A-Z0-9]+)+$/i.test(term)||term===METRICS_REPORT;
+  });
+  const tools:ConnectorCandidate[]=matches&&(!filters.domain||domains.includes(filters.domain))&&(!filters.category||filters.category==='research')?[{
+    name,...modelAccountIdentity(binding.connector.id),toolkit:'makinari',tool_origin:'makinari_report',domains,category:filters.category??'research',
+    availability:'describe_required',description:'Makinari metrics report on this connection, not a Supabase provider action. Describe to see permitted data.',
   }]:[];
   return {tools,truncated:false,next_cursor:null};
 }

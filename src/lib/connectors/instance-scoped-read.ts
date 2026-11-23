@@ -12,13 +12,29 @@ import {assertProviderToolSucceeded, rethrowReadFailure} from './provider-outcom
 import {SUPABASE_CATALOG_SLUG as slug} from './provider-report-action';
 import {validateConnectorInput} from './schema-validation';
 import {compileAnalyticsSelect} from './supabase-select-compiler';
+import {AnalyticsSelectInputError} from './supabase-select-diagnostics';
+import type {AnalyticsScope, BoundDataset} from './supabase-analytics-sources';
 import {ConnectorError} from './types';
+import {modelAccountIdentity} from './model-account-identity';
 
 export type {ScopedReadBinding} from './instance-scoped-binding';
 const pin = z.object({version:z.string().max(100),schema_hash:z.string().length(64).regex(/^[a-f0-9]+$/),arguments:z.record(z.unknown())}).strict();
 const success = z.object({successful:z.literal(true),error:z.null(),data:z.unknown()});
 const unavailable = () => new ConnectorError('DIRECT_POLICY_UNAVAILABLE','The scoped read could not be authorized.',503);
 const changedActor = () => new ConnectorError('ACCESS_CHANGED','The original scoped read binding is no longer current.',403);
+
+const denied = (scope:AnalyticsScope) => new ConnectorError(scope==='workspace'?'ANALYTICS_WORKSPACE_DENIED':'ANALYTICS_SCOPE_DENIED',
+  'The exact analytics source and scope are not authorized for this turn.',403);
+
+function compileReport(args:Record<string,unknown>,scope:AnalyticsScope,dataset:BoundDataset) {
+  try { return compileAnalyticsSelect(args.query,args.parameters,dataset); }
+  catch (error) {
+    // The compiler resolves the actual FROM against only this scope's admitted sources.
+    // Do not invite an argument repair or substitution for a missing source.
+    if (error instanceof AnalyticsSelectInputError && error.reason==='source') throw denied(scope);
+    throw error;
+  }
+}
 
 /** Only the isolated Ask branch supplies this resolver. A descriptor is a pin to check, not
  * a grant. The only provider POST below receives the compiler output, never caller SQL. */
@@ -37,11 +53,11 @@ export function createInstanceScopedRead(resolve:()=>Promise<ScopedReadBinding>)
   return {
     async describe(name:string) {
       try {
-        const {admission,argumentsSchema,hash,recheck} = await prepare(name);
+        const {admission,argumentsSchema,hash,recheck,available} = await prepare(name);
         await recheck();
-        return {name, connector_id:admission.actor.p_connector_id, toolkit:'supabase', effect:'read' as const,
-          description:'Calculate private metrics using one bounded SELECT on a listed analytics source. The requested source and scope require current authorization.',
-          version:scopedVersion, schema_hash:hash,
+        return {name,...modelAccountIdentity(admission.actor.p_connector_id),toolkit:'makinari',tool_origin:'makinari_report' as const,effect:'read' as const,
+          description:'Internal Makinari metrics report using the selected connection. This is not a provider action or a general SQL console.',
+          available_sources:available, version:scopedVersion, schema_hash:hash,
           parameters:{type:'object',additionalProperties:false,required:['version','schema_hash','arguments'],properties:{
             version:{type:'string',const:scopedVersion},schema_hash:{type:'string',const:hash},arguments:argumentsSchema,
           }}, expected_use:'Use the exact selected account and explicitly requested scope. Return only the private receipt; do not infer figures or retry a denied read.'};
@@ -57,11 +73,13 @@ export function createInstanceScopedRead(resolve:()=>Promise<ScopedReadBinding>)
         if (envelope.data.version !== scopedVersion) changed();
         const args = envelope.data.arguments;
         const plan = await prepare(name);
-        if (envelope.data.schema_hash !== plan.hash) changed();
-        validateConnectorInput(plan.argumentsSchema,args);
         const scope = args.scope;
         if (scope !== 'platform' && scope !== 'workspace') throw new ConnectorError('INVALID_TOOL_ARGUMENTS','An explicit analytics scope is required.',400);
-        const compiled = compileAnalyticsSelect(args.query,args.parameters,plan.datasets[scope]);
+        const dataset = plan.datasets[scope];
+        if (!dataset) throw denied(scope); // Never compile an unavailable scope using a workspace fallback.
+        if (envelope.data.schema_hash !== plan.hash) changed();
+        validateConnectorInput(plan.argumentsSchema,args);
+        const compiled = compileReport(args,scope,dataset);
         const {actor,binding:{connector,provider}} = plan.admission;
         const authority = {...actor,p_version:scopedVersion,p_schema_hash:plan.hash,p_source:compiled.source,p_data_scope:scope} as const;
         const body = {connected_account_id:connector.provider_account_id,user_id:provider.provider_user_id,version:scopedVersion,

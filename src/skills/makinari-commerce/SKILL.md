@@ -12,6 +12,8 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 
 ## Instructions
 
+These procedures use native Makinari records. If the member instead wants, for example, an event in a connected external calendar or a promotion in a connected commerce account, use private Ask provider discovery (`tool_origin: "provider"`) on the intended `connector_id`. Describe the returned `connector:<id>:<SLUG>`; do not create a native reservation or promotion as a substitute. Ask which system or account if unclear. A missing action or provider denial is a blocker, not permission to try another credential.
+
 1. **Marketplace & Catalog Management**
    - Create products with `catalog_commerce` `action="create"` (requires `name`; set `target_sale_price`, `currency`, `kind`, and `is_purchasable=true` for sellable items). Use `image_url` for product photos (HTTP URLs from uploaded assets).
    - Product images shown in Shop, Marketplace, and POS are pre-generated assets. When `image_url` uses the Makinari prompt image endpoint, it MUST include the seller `site_id`. These catalog surfaces use that URL as cache-only and MUST NOT trigger regeneration.

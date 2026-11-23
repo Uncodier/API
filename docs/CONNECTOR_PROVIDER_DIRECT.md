@@ -30,14 +30,22 @@ supported review flow can accept a request for that action instead. Generic
 direct actions do not automatically produce review requests. A manager's
 decision never upgrades a read-only provider credential or overrides a 403.
 
-The generic dispatcher does not use a reporting compiler or a per-tool registry.
-The shared-installation exception is intentionally separate: a positive match of
-the selected bound project can advertise **only** `SUPABASE_RUN_READ_ONLY_QUERY`
-under its own authorized, scoped contract. A generic failure or provider 403 is
-never a reason to reroute an action. Historical report links, Support, approvals
-and native `report` remain separate.
+## Choosing the source and account in private Ask (local contract)
 
-### Instance authority and scoped reads: schema applied to shared Makinari
+| User asks for | How to discover it | Exact reference to describe and call |
+| --- | --- | --- |
+| An action on a connected app (calendar, CRM, inbox, commerce, etc.) | `tools` search/list with `tool_origin: "provider"`; keep the selected `connector_id`. This is the default connector inventory. | `connector:<id>:<SLUG>` |
+| An internal Makinari metrics report | Explicit `tool_origin: "makinari_report"` on the intended account. A visible account is not proof the report or a particular source/scope is authorized. | `report:<id>:MAKINARI_METRICS` |
+
+Candidates and descriptors carry `tool_origin`, `toolkit`, `connector_id` (the **local** account UUID), and `account_label`. The label is `Account …` plus the last eight characters of the local ID, as shown in the Ask picker. Never interpolate `display_name`, a provider account ID, email, credential, or arbitrary account metadata into the prompt. The label is a hint, not a routing key. Keep the full ID and exact returned name through describe and call.
+
+For example, two calendar connections may both list the same update action. Without a selection, follow the cursor, including empty pages, before concluding there is just one candidate. If the member has not specified which account, ask which one to use. If suffixes collide, ask for a selection in the account picker. **All tools** is a Makinari policy for that account; it cannot turn a read-only credential into one that can update events. A missing tool, provider denial or partial page does not authorize use of the other account.
+
+A shared-project report is a distinct source, not an alias for the provider's `SUPABASE_RUN_READ_ONLY_QUERY`. Neither a failed provider call nor a search for that slug invokes the report compiler. Do not change source (including to the native `report` tool), account or data scope to make an unavailable operation succeed. If the source is ambiguous, clarify before acting. Support, approvals and opening historical private receipts retain their narrower contracts. None gains private Ask authority.
+
+On describe, the internal report exposes `available_sources` by scope and a `scope` enum with only currently admitted scopes. An absent scope or source is not an invitation to supply it manually or to report totals from a narrower scope. The provider descriptor instead describes the provider's action: Makinari does not add internal report sources or scope arguments to it. Neither descriptor authorizes dispatch. The prerequisite `20261123080000_connector_instance_report_sources.sql` was applied to shared Makinari on November 23, 2026 at **07:44:43 UTC**, and independently verified at **07:44:52 UTC**. This was schema only; it did not deploy the API, worker or web or execute a provider action.
+
+### Earlier instance authority and scoped reads: schema applied to shared Makinari
 
 - `20261123040000_connector_instance_member_authority.sql` removes the prompt
   agent's connector-grant veto from interactive Instance discovery, claim, store
@@ -131,8 +139,8 @@ arbitrary code/SQL or implicit file loading are not generic business actions.
 A provider contract that cannot be validated or an output that cannot be safely
 shown is explicitly unavailable/limited, not an empty result. No assertion of
 execution coverage for every tool in Composio is made. A Supabase Management PAT
-against this installation is not an isolated user credential: only the explicit
-scoped action may use the selected account for a server-constrained read. The
+against this installation is not an isolated user credential: only the explicitly
+requested, independently authorized Makinari report uses that connection for a constrained read. The
 generic transport rejects such PATs. Never substitute a service key for the
 user’s account or drop tenant isolation to run investor KPIs.
 

@@ -5,7 +5,6 @@ import { connectorDatabaseError, getVisibleConnector, loadConnectorCredential, r
 import { directActionNameSafe } from './provider-direct-guards';
 import { readTokenProviderBinding } from './provider-project-binding';
 import { ConnectorError, type AuthorizedConnector, type ConnectorContext } from './types';
-import { readScopedBinding, type ScopedReadBinding } from './instance-scoped-binding';
 
 /** Internal only. Neither discovery metadata nor an AuthorizedConnector from another policy is a direct grant. */
 export type DirectAuthorizedConnector = AuthorizedConnector & { directProof: {
@@ -36,10 +35,7 @@ const sharedDatabase = () => new ConnectorError('ASK_SHARED_DATABASE','Ask canno
 const missing = () => new ConnectorError('NOT_FOUND','Connector not found.',404);
 const deadline = () => AbortSignal.timeout(5_000);
 
-type SharedSelection = {kind:'scoped_read';binding:ScopedReadBinding};
-async function admit(ctx:ConnectorContext, connectorId?:string, action?:string, classify?:false):Promise<DirectAuthorizedConnector[]>;
-async function admit(ctx:ConnectorContext, connectorId:string|undefined, action:undefined, classify:true):Promise<DirectAuthorizedConnector[]|SharedSelection>;
-async function admit(ctx:ConnectorContext, connectorId?:string, action?:string, classify=false):Promise<DirectAuthorizedConnector[]|SharedSelection> {
+async function admit(ctx:ConnectorContext, connectorId?:string, action?:string):Promise<DirectAuthorizedConnector[]> {
   if (typeof window!=='undefined' || ctx.host!=='assistant' || ctx.catalogUserSession!==true ||
     ![ctx.siteId,ctx.userId,ctx.instanceId,ctx.agentId].every(v=>uuid.safeParse(v).success)) {
     throw new ConnectorError('ACCESS_DENIED','Direct use requires a verified interactive member and agent.',403);
@@ -68,7 +64,6 @@ async function admit(ctx:ConnectorContext, connectorId?:string, action?:string, 
     if (selected?.id===connectorId && selected.site_id===ctx.siteId && selected.toolkit_slug==='supabase' && ref.safeParse(selected.supabase_project_ref).success) {
       const evidence=await actorEvidence();
       if (evidence.allowed && evidence.localProjectRef===selected.supabase_project_ref) {
-        if (classify && evidence.localProjectRef) return {kind:'scoped_read',binding:await readScopedBinding(ctx,selected,evidence.localProjectRef)};
         throw sharedDatabase();
       }
     }
@@ -111,7 +106,6 @@ async function admit(ctx:ConnectorContext, connectorId?:string, action?:string, 
 }
 
 export function listDirectAccounts(ctx:ConnectorContext) { return admit(ctx,ctx.connectorIdHint); }
-export function instanceSearchTargets(ctx:ConnectorContext) { return admit(ctx,ctx.connectorIdHint,undefined,true); }
 export async function authorizeDirectAction(ctx:ConnectorContext,connectorId:string,toolSlug:string):Promise<DirectAuthorizedConnector> {
   if (!uuid.safeParse(connectorId).success || !slug.safeParse(toolSlug).success) throw denied();
   const targets=await admit(ctx,connectorId,toolSlug);

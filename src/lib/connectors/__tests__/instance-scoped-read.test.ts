@@ -18,6 +18,8 @@ jest.mock('@/lib/database/hosted-project-identity',()=>({withDirectActorEvidence
 const oldOrigin = process.env.CONNECTORS_WEB_ORIGIN;
 const claimRpc = 'claim_connector_instance_scoped_read', storeRpc = 'store_connector_instance_scoped_read';
 const version = '20261116_00';
+const sourcesRpc = 'connector_instance_report_sources';
+const allSources = ['paid_sales','tender_awards','approved_orders'];
 const query = "SELECT currency, COUNT(DISTINCT site_id) AS sites, SUM(amount) AS total FROM analytics.paid_sales WHERE sale_date < $1 GROUP BY currency ORDER BY total DESC LIMIT 1";
 const workspace = {query,scope:'workspace',parameters:['2026-10-01']};
 const platform = {...workspace,scope:'platform'};
@@ -47,13 +49,14 @@ function setup() {
   const ok=(data:unknown)=>({data,error:null}), fail=(code:string)=>({data:null,error:{code},status:403});
   const state = {tool:tool as unknown,account:account as unknown,kit:api as unknown,
     onAccount:()=>{}, onPost:()=>{}, onStored:()=>{}, afterStore:(result:unknown)=>result,
-    claimReply:undefined as unknown,
+    claimReply:undefined as unknown, sourcesReply:ok({workspace:allSources,platform:allSources}) as unknown,
     response:(body:CallBody)=>jsonResponse({successful:true,error:null,log_id:secret(),logs:[key],data:{rows_returned:1,result:[{
       analytics_scope:body.arguments.parameters.at(-1),analytics_rows:[{currency:'USD',sites:'2',total:amount},{currency:'MXN',sites:'1',total:'100.00'}],
     }]}})};
   mockRpc.mockImplementation((name:string,params:Record<string,unknown>)=>{
     if(name===byokRpc) return attestedProject(provider)(name,params);
     return {abortSignal:async()=>{
+      if(name===sourcesRpc)return state.sourcesReply;
       if(name===claimRpc){ events.push('claim'); claims.push(params);
         if(state.claimReply!==undefined)return state.claimReply;
         if(!entitlement.allowed)return fail('42501'); if(reserved)return fail('P0D03');
@@ -81,7 +84,7 @@ function setup() {
     }
     throw new Error('Unexpected provider route');
   });
-  const run=createInstanceScopedRead(resolve),name=`connector:${id}:${slug}`;
+  const run=createInstanceScopedRead(resolve),name=`report:${id}:MAKINARI_METRICS`;
   async function describe(){const d=await run.describe(name);return {...d,call:(args:unknown)=>run.call(name,{version:d.version,schema_hash:d.schema_hash,arguments:args})};}
   return {run,resolve,describe,name,id,site,ref,key,tool,api,account,binding,provider,claimId,receiptId,events,claims,stores,bodies,state,http,entitlement};
 }
@@ -125,15 +128,60 @@ it('routes the same qualified tool from a real selected-account search through d
     return scopedRpc(name,params);
   });
   const run=createProviderDirectRuntime(async()=>context);
-  const page=await run.search({connector_id:f.id,query:'indicadores de ventas'});
+  const page=await run.search({connector_id:f.id,query:'indicadores de ventas',tool_origin:'makinari_report'});
   expect(page.tools.map(row=>row.name)).toEqual([f.name]);expect(f.http).not.toHaveBeenCalled();
   const descriptor=await run.describe(page.tools[0].name);
+  expect(descriptor).toMatchObject({tool_origin:'makinari_report',toolkit:'makinari',connector_id:f.id});
   expect(f.events).toEqual([]);
   const result=await run.call(descriptor.name,{version:descriptor.version,schema_hash:descriptor.schema_hash,arguments:workspace});
   expect(result).toMatchObject({success:true,receipt:{url:`/connectors/results/${f.receiptId}`}});
   expect(f.events).toEqual(['claim','post','store']);expect(f.bodies[0].connected_account_id).toBe(connector.provider_account_id);
   expect(f.claims[0]).toMatchObject({p_user_id:context.userId,p_request_id:context.requestId,p_connector_id:f.id,p_data_scope:'workspace'});
   expect(JSON.stringify(result)).not.toContain(amount);
+});
+
+it('describes only admitted logical sources and scope, never infers grants from a hosted token or selects another scope',async()=>{
+  const f=setup(); f.state.sourcesReply={data:{workspace:['paid_sales']},error:null};
+  const d=await f.describe(), schema=d.parameters.properties.arguments.properties;
+  expect(d.available_sources).toEqual({workspace:['paid_sales']}); expect(schema.scope.enum).toEqual(['workspace']);
+  expect(schema.query.description).toMatch(/analytics\.paid_sales.*amount:numeric/);
+  expect(JSON.stringify(d)).not.toMatch(/platform|tender_awards|approved_orders|net_amount_minor|grant_id/i);
+  const {context:c,connector,policyRevision,directRevision,provider}=f.binding;
+  expect(mockRpc).toHaveBeenCalledWith(sourcesRpc,{p_site_id:f.site,p_user_id:c.userId,p_instance_id:c.instanceId,p_agent_id:c.agentId,p_request_id:c.requestId,
+    p_connector_id:f.id,p_project_ref:f.ref,p_connector_revision:connector.revision,p_policy_revision:policyRevision,p_direct_revision:directRevision,p_credential_revision:provider.credential_revision});
+  await expect(d.call(platform)).rejects.toMatchObject({code:'ANALYTICS_SCOPE_DENIED',executed:false});
+  await expect(d.call({scope:'workspace',query:'SELECT count(*) FROM analytics.tender_awards'})).rejects.toMatchObject({code:'ANALYTICS_WORKSPACE_DENIED',executed:false});
+  expect(f.events).toEqual([]); await d.call(workspace); expect(f.events).toEqual(['claim','post','store']);
+  expect(f.claims[0].p_data_scope).toBe('workspace'); expect(f.bodies[0].arguments.parameters[0]).toBe(f.site);
+});
+
+it('compiles only the requested pair and invalidates an old descriptor on authority drift',async()=>{
+  const f=setup(); f.state.sourcesReply={data:{workspace:allSources,platform:['paid_sales']},error:null};
+  const d=await f.describe(); expect(d.available_sources).toEqual({workspace:allSources,platform:['paid_sales']});
+  expect(d.parameters.properties.arguments.properties.scope.enum).toEqual(['workspace','platform']);
+  const help=d.parameters.properties.arguments.properties.query.description;
+  expect(help).toMatch(/analytics\.paid_sales\([^)]*\) \[workspace, platform\]/);
+  expect(help).toMatch(/analytics\.approved_orders\([^)]*\) \[workspace\]/);
+  await expect(d.call({scope:'platform',query:'SELECT count(*) FROM analytics.approved_orders'})).rejects.toMatchObject({code:'ANALYTICS_SCOPE_DENIED',executed:false});
+  f.state.sourcesReply={data:{workspace:allSources},error:null};
+  await expect(d.call(platform)).rejects.toMatchObject({code:'ANALYTICS_SCOPE_DENIED',executed:false});
+  await expect(d.call(workspace)).rejects.toMatchObject({code:'CONNECTOR_SCHEMA_CHANGED',executed:false});
+  expect((await f.describe()).schema_hash).not.toBe(d.schema_hash); expect(f.events).toEqual([]);
+});
+
+it.each([
+  [null,'SCOPED_READ_NOT_ALLOWED'],[{},'SCOPED_READ_NOT_ALLOWED'],[{workspace:[]},'DIRECT_POLICY_UNAVAILABLE'],
+  [{workspace:['published_views']},'DIRECT_POLICY_UNAVAILABLE'],[{platform:['paid_sales']},'DIRECT_POLICY_UNAVAILABLE'],
+  [{workspace:['paid_sales','paid_sales']},'DIRECT_POLICY_UNAVAILABLE'],[{workspace:['paid_sales'],platform:['tender_awards']},'DIRECT_POLICY_UNAVAILABLE'],
+  [{workspace:['paid_sales'],grant_id:randomUUID()},'DIRECT_POLICY_UNAVAILABLE'],
+])('fails closed on empty or incompatible authority: %p',async (data,code)=>{
+  const f=setup(); f.state.sourcesReply={data,error:null};
+  await expect(f.describe()).rejects.toMatchObject({code}); expect(f.events).toEqual([]);
+});
+
+it('does not treat an unavailable report-source RPC as workspace permission',async()=>{
+  const f=setup(); f.state.sourcesReply={data:null,error:{code:'PGRST202',message:f.key}};
+  await expect(f.describe()).rejects.toMatchObject({code:'DIRECT_POLICY_UNAVAILABLE'}); expect(f.events).toEqual([]);
 });
 
 it('rejects a missing or disallowed scope or source, raw SQL/selectors, inventory, identifiers, and platform row samples before claim or POST',async()=>{
@@ -167,7 +215,7 @@ it.each(['structured','transport'] as const)('keeps a real upstream 403 (%s) dis
 
 it('requires the exact qualified read reference, independently proven same project and private human turn even before metadata/keys',async()=>{
   const f=setup();
-  for(const name of [slug,`connector:${randomUUID()}:${slug}`,`connector:${f.id}:SUPABASE_GET_PROJECT`,f.name+'\n']) await expect(f.run.describe(name)).rejects.toThrow();
+  for(const name of [slug,`report:${randomUUID()}:MAKINARI_METRICS`,`connector:${f.id}:${slug}`,`connector:${f.id}:SUPABASE_GET_PROJECT`,f.name+'\n']) await expect(f.run.describe(name)).rejects.toThrow();
   for(const change of [{localProjectRef:'b'.repeat(20)},{localProjectRef:undefined},{context:{...f.binding.context,requestId:undefined}},
     {context:{...f.binding.context,host:'workflow'}},{context:{...f.binding.context,catalogUserSession:undefined}},{context:{...f.binding.context,connectorIdHint:randomUUID()}},
     {connector:{...f.binding.connector,provider_account_id:'instant_account'}},{connector:{...f.binding.connector,revocation_dispatched:true}},

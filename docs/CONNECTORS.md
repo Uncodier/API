@@ -66,14 +66,9 @@ business reads and writes are distinct from automatic authorization, arbitrary
 network proxies, code execution, credential management or database administration.
 See [provider-direct rollout and acceptance](CONNECTOR_PROVIDER_DIRECT.md).
 
-An explicit `tools search/list` with `connector_id` returns only that connection's
-inventory, not native report suggestions, including on an outage or empty page.
-Without the account filter the usual mixed discovery is unchanged.
-Private Robots dispatch does not translate a provider tool into a Makinari
-report, SQL compiler or analytics-grant check. The legacy SQL reporting adapter
-is retained to open existing authorized report choices, not as an alternate
-executor. A project-wide management credential on the shared Makinari database
-does not supply a site-isolated data boundary for direct delegation.
+An explicit `tools` search/list with `connector_id` or `tool_origin: "provider"` returns provider inventory, not native report suggestions, even on an outage or empty page. Without either filter or a selected account, native tools can still appear alongside provider candidates. Internal metrics require explicit `tool_origin: "makinari_report"` and the intended connection; they do not appear as provider actions. The internal reference is `report:<id>:MAKINARI_METRICS`, not a provider slug and not native `report`.
+
+Both provider and internal report candidates and descriptions identify their origin, local connector UUID, toolkit and safe account suffix. Ask should clarify ambiguous accounts or data sources and keep the same exact reference and scope. A different credential or a native tool is not a fallback. See [source selection and account identity](CONNECTOR_PROVIDER_DIRECT.md#choosing-the-source-and-account-in-private-ask-local-contract) for the two-account example and the offline/live verification boundary. Historical private report choices retain their original authorization path.
 
 A locally rejected call can return `INVALID_TOOL_ARGUMENTS` with `argument_issue`
 (a declared path, rule and, where relevant, a type or bound), `executed: false`

@@ -73,8 +73,32 @@ it('keeps legacy database error behavior without strict mode', async () => {
 
 it.each(['tools','use_composio_tools'])('omits private connector arguments from shared log payload, message and reasoning for %s',async toolName=>{
   const text=randomBytes(24).toString('hex');
-  const args={action:toolName==='tools'?'call':'execute',name:'connector:private',thought_process:text,args:JSON.stringify({arguments:{body:text}})};
+  const args={action:toolName==='tools'?'call':'execute',...(toolName==='tools'?{name:'connector:private'}:{action_name:'connector:private'}),thought_process:text,args:JSON.stringify({arguments:{body:text}})};
   await handler()({text:'',toolCalls:[{id:'stable',toolName,args}],toolResults:[{toolCallId:'stable',result:{success:true,receipt:{status:'private_result_ready'}}}]});
-  expect(writes).toHaveLength(2);expect(writes[1].tool_args).toEqual({action:'call',private_arguments:true});
+  expect(writes).toHaveLength(2);expect(writes[1].tool_args).toEqual({action:'call',private_arguments:true,tool_origin:'provider'});
   expect(JSON.stringify(writes)).not.toContain(text);expect(args.thought_process).toBe(text);
+});
+it('writes only origin, operation and outcome for private discovery and reports while retaining native sibling diagnostics', async () => {
+  const secret = randomBytes(24).toString('hex');
+  const candidates = {success:true, tools:[{name:`connector:${secret}`, account_label:secret}]};
+  const result = {success:false,error:{code:secret,message:secret}};
+  const toolCalls = [
+    {id:'s',toolName:'tools',args:{action:'search',query:secret,thought_process:secret}},
+    {id:'r',toolName:'tools',args:{action:'call',name:`report:${secret}`,args:secret,thought_process:secret}},
+    {id:'n',toolName:'tools',args:{action:'call',name:'report',args:'{"action":"list"}'}},
+    {id:'o',toolName:'tools',args:{action:'search',tool_origin:secret,query:secret}},
+  ];
+  await handler()({text:'',toolCalls,toolResults:[
+    {toolCallId:'n',result:{success:true,native:'kept'}}, {toolCallId:'r',result,isError:true},
+    {toolCallId:'s',result:candidates}, {toolCallId:'o',result},
+  ]});
+  expect(writes.map(x=>x.log_type)).toEqual(['agent_action','tool_call','tool_call','tool_call','tool_call']);
+  expect(writes[1].tool_result).toEqual({success:true,operation_outcome:'passed'});
+  expect(writes[2].tool_args).toEqual({action:'call',private_arguments:true,tool_origin:'makinari_report'});
+  expect(writes[2].tool_result).toEqual({success:false,operation_outcome:'failed'});
+  expect(writes[3].tool_result.output.native).toBe('kept');
+  expect(writes[4].tool_args).toEqual({action:'search',private_arguments:true});
+  expect(JSON.stringify(writes)).not.toContain(secret);
+  expect(JSON.stringify(jest.mocked(console.log).mock.calls)).not.toContain(secret);
+  expect(toolCalls[1].args.args).toBe(secret); expect(result.error.message).toBe(secret);
 });

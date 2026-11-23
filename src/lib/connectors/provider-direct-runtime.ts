@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { loadConnectorCredential } from './account-access';
 import { parseConnectorToolRef } from './connector-ref';
+import { modelAccountIdentity } from './model-account-identity';
 import { ConnectorArgumentError } from './connector-argument-error';
 import { hashConnectorSchema } from './composio-tool-json';
 import { snapshotDirectJson } from './provider-direct-schema';
@@ -56,11 +57,11 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
       const a = await admission(name);
       const d = await describeDirectTool(a.target, await credentialFor(a), a.toolSlug);
       await recheck(name, a.stamp);
-      return {name, connector_id:a.target.connector.id, toolkit:a.target.connector.toolkit_slug,
+      return {name, tool_origin:'provider' as const, ...modelAccountIdentity(a.target.connector.id), toolkit:a.target.connector.toolkit_slug,
         description:d.description, version:d.version, schema_hash:d.schemaHash, effect:d.effect,
         parameters:{type:'object',additionalProperties:false,required:['version','schema_hash','arguments'],properties:{
           version:{type:'string',const:d.version},schema_hash:{type:'string',const:d.schemaHash},arguments:d.parameters,
-        }}, expected_use:'Use this exact account, version and schema. Only perform the operation requested by the user. A private receipt is not the data. Never replay an unconfirmed action.'};
+        }}, expected_use:'Use this exact provider reference, account, version and schema for the requested operation. All tools is a Makinari tool policy, not provider credential permissions. Do not switch accounts or substitute a report. A private receipt is not the data. Never replay an unconfirmed action.'};
     },
     async call(name: string, input: unknown) {
       let dispatchPossible = false;

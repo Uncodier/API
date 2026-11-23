@@ -1,3 +1,5 @@
+import { sharedInstanceLog } from '@/lib/connectors/instance-log-projection';
+
 export type Log = { id: string; created_at: string; log_type: string; message: string; level?: string;
   tool_name?: string; tool_args?: unknown; tool_result?: unknown; details?: Record<string, unknown> | null };
 
@@ -29,8 +31,9 @@ export function logReferences(log: Log): string {
 export function logText(log: Log): string {
   // Encode newlines so each row has an unambiguous provenance marker. Never
   // summarize an excerpt and then mark the *whole* log as compacted.
+  const safe = sharedInstanceLog(log);
   const tool = log.log_type === 'tool_call'
-    ? ` args=${JSON.stringify(log.tool_args ?? {})} result=${JSON.stringify(log.tool_result ?? '')}` : '';
-  return `[${log.log_type}${log.tool_name ? `:${log.tool_name}` : ''}] ${JSON.stringify(log.message)}`
+    ? ` args=${JSON.stringify(safe.tool_args ?? {})} result=${JSON.stringify(safe.tool_result ?? '')}` : '';
+  return `[${log.log_type}${safe.tool_name ? `:${safe.tool_name}` : ''}] ${JSON.stringify(safe.message)}`
     + ` log_id=${log.id} created_at=${log.created_at}${logReferences(log)}${tool}`;
 }
