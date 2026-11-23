@@ -25,6 +25,7 @@ it('only returns current DB-backed direct proof for the exact account/actor and 
   rpc.mockReturnValue(reply([{...fresh(),not_public:'ignored'}])); const t=await target();
   expect(t.directProof).toMatchObject({attestationId:attestation,directRevision:3,accountId:'a1',authConfigId:'ac1',siteId:site,projectId:'p1',credentialRevision:rev});
   expect(rpc).toHaveBeenCalledWith('connector_direct_accounts',{p_site_id:site,p_user_id:user,p_instance_id:instance,p_agent_id:agent,p_connector_id:id,p_slug:'CRM_LIST_DEALS'});
+  expect(rpc).toHaveBeenCalledTimes(1);expect(visible).not.toHaveBeenCalled();expect(access).not.toHaveBeenCalled();
   expect(t.policy.tool_access_mode).toBe('all');expect(t).not.toHaveProperty('requestOnly');expect(JSON.stringify(t)).not.toContain(credential);
   expect(evidence).not.toHaveBeenCalled(); expect(t).not.toHaveProperty('not_public');
 });

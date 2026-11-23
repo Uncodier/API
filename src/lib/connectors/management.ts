@@ -24,6 +24,7 @@ export const accessPatchSchema = revision.extend({ members: z.array(member).max(
   .refine(value => new Set(value.members.map(row => row.user_id)).size === value.members.length)
   .refine(value => new Set(value.agents.map(row => row.agent_id)).size === value.agents.length);
 const fullPolicy = revision.extend({
+  ask_access: z.object({enabled:z.boolean(),expected_direct_revision:z.number().int().min(1).max(2_147_483_646)}).strict().optional(),
   catalog_reads: z.boolean().optional(),
   support_publication: supportPublicationSchema.nullish(),
   tool_access_mode: z.enum(['all', 'selected']).default('selected'),
@@ -31,7 +32,10 @@ const fullPolicy = revision.extend({
   allowed_hosts: z.array(z.enum(['assistant', 'direct'])).max(2),
   require_approval: z.boolean(), enabled: z.boolean(),
 }).strict().refine(value => new Set(value.allowed_tools).size === value.allowed_tools.length
-  && new Set(value.allowed_hosts).size === value.allowed_hosts.length);
+  && new Set(value.allowed_hosts).size === value.allowed_hosts.length
+  && (!value.ask_access || (value.catalog_reads!==false && value.allowed_hosts.includes('assistant')===value.ask_access.enabled))
+  && (!value.ask_access?.enabled || (value.enabled && value.allowed_hosts.includes('assistant')
+    && (value.tool_access_mode==='all' || value.allowed_tools.length>0))));
 const catalogOptOut = revision.extend({ catalog_reads: z.literal(false) }).strict();
 export const policyPatchSchema = z.union([catalogOptOut, fullPolicy]);
 const resultSchema = z.object({ connector_id: uuid, revision: z.number().int().positive() });
@@ -135,10 +139,24 @@ export async function updateConnectorPolicy(userId: string, connectorId: string,
     const { apiKey } = await loadConnectorCredential(body.site_id);
     await validateCatalogToolIds(createComposioClient(apiKey), connector.toolkit_slug, body.allowed_tools);
   }
-  return connectorMutation('connector_update_policy', {
+  const policyArgs = {
     ...scope, p_tool_access_mode: body.tool_access_mode, p_allowed_tools: body.allowed_tools,
     p_allowed_hosts: body.allowed_hosts, p_require_approval: body.require_approval, p_enabled: body.enabled,
     p_support_publication: body.support_publication ?? null,
     ...(body.catalog_reads === undefined ? {} : { p_catalog_reads: body.catalog_reads }),
-  });
+  };
+  if (!body.ask_access) return connectorMutation('connector_update_policy',policyArgs);
+  // One transaction or neither change. Never fall back to separate writes on error or lost acknowledgement.
+  const {enabled:askEnabled,expected_direct_revision:directRevision}=body.ask_access;
+  const {data,error}=await supabaseAdmin.rpc('connector_save_policy_with_ask',{
+    ...policyArgs,p_catalog_reads:body.catalog_reads??null,p_ask_enabled:askEnabled,p_expected_direct_revision:directRevision,
+  }).abortSignal(AbortSignal.timeout(5000));
+  if (error?.code==='P0D01') throw new ConnectorError('DIRECT_ATTESTATION_REQUIRED','The connection does not have current credential verification.',409);
+  if (error) connectorDatabaseError(error);
+  const receipt=resultSchema.extend({direct_revision:z.number().int().positive(),ask_enabled:z.boolean()}).safeParse(data);
+  if (!receipt.success || receipt.data.connector_id!==connectorId || receipt.data.revision!==body.expected_revision+1 ||
+    receipt.data.direct_revision!==directRevision+1 || receipt.data.ask_enabled!==askEnabled) {
+    throw new ConnectorError('STORAGE_UNAVAILABLE','Could not confirm the saved policy. Reload before trying again.',503);
+  }
+  return receipt.data;
 }

@@ -90,6 +90,40 @@ it('rejects implicit use, duplicate targets, empty updates, future revocation an
 const catalogOnly = 'GMAIL_SEND_EMAIL';
 const policyInput = { ...base, allowed_tools: ['GMAIL_FETCH_EMAILS', catalogOnly], allowed_hosts: ['assistant' as const], require_approval: true, enabled: true };
 const row = (slug: string) => ({ ...toolFixture(), name: 'Example tool', slug });
+const askChange = {enabled:true,expected_direct_revision:7};
+const combinedReceipt = {connector_id:id,revision:2,direct_revision:8,ask_enabled:true};
+it('saves the ordinary tool policy and explicit Ask permission with one manager RPC and both revisions',async()=>{
+  rpc.mockReturnValueOnce(query(combinedReceipt));
+  provider.mockResolvedValueOnce({items:policyInput.allowed_tools.map(row)});
+  expect(await updateConnectorPolicy(user,id,{...policyInput,ask_access:askChange})).toEqual(combinedReceipt);
+  expect(access).toHaveBeenCalledWith(site,user,true);expect(rpc).toHaveBeenCalledTimes(1);
+  expect(rpc).toHaveBeenCalledWith('connector_save_policy_with_ask',expect.objectContaining({p_actor_id:user,p_connector_id:id,
+    p_expected_revision:1,p_expected_direct_revision:7,p_ask_enabled:true,p_catalog_reads:null,p_tool_access_mode:'selected',p_allowed_tools:policyInput.allowed_tools}));
+});
+it.each([{ask_enabled:false},{direct_revision:7},{revision:3},{connector_id:other},{direct_revision:undefined}])('does not confirm a partial, stale or mismatched combined receipt: %j',async patch=>{
+  rpc.mockReturnValueOnce(query({...combinedReceipt,...patch}));
+  await expect(updateConnectorPolicy(user,id,{...policyInput,tool_access_mode:'all',allowed_tools:[],ask_access:askChange})).rejects.toMatchObject({code:'STORAGE_UNAVAILABLE'});
+  expect(rpc).toHaveBeenCalledTimes(1);
+});
+it.each([['P0D01','DIRECT_ATTESTATION_REQUIRED'],['40001','REVISION_CONFLICT'],['PGRST202','STORAGE_UNAVAILABLE']])('does not split, downgrade or replay an unsuccessful combined save: %s',async (sqlCode,code)=>{
+  rpc.mockReturnValueOnce(query(null,{code:sqlCode}));
+  await expect(updateConnectorPolicy(user,id,{...policyInput,tool_access_mode:'all',allowed_tools:[],ask_access:askChange})).rejects.toMatchObject({code});
+  expect(rpc).toHaveBeenCalledTimes(1);
+});
+it('rejects conflicting authority fields and never upgrades a catalog opt-out or a partial request into consent',()=>{
+  for (const patch of [{enabled:false},{allowed_hosts:[]},{allowed_tools:[]},{catalog_reads:false},
+    {ask_access:{enabled:true}},{ask_access:{...askChange,actor_id:other}},{ask_access:{...askChange,expected_direct_revision:0}}]) {
+    expect(policyPatchSchema.safeParse({...policyInput,ask_access:askChange,...patch}).success).toBe(false);
+  }
+  expect(policyPatchSchema.safeParse({...base,catalog_reads:false,ask_access:askChange}).success).toBe(false);
+  expect(policyPatchSchema.safeParse({...policyInput,ask_access:{...askChange,enabled:false}}).success).toBe(false);
+});
+it('turns off the assistant and its saved permission together without checking provider credentials in all mode', async()=>{
+  const receipt={...combinedReceipt,ask_enabled:false};rpc.mockReturnValueOnce(query(receipt));
+  expect(await updateConnectorPolicy(user,id,{...policyInput,tool_access_mode:'all',allowed_tools:[],allowed_hosts:[],
+    ask_access:{...askChange,enabled:false}})).toEqual(receipt);
+  expect(rpc).toHaveBeenCalledTimes(1);expect(provider).not.toHaveBeenCalled();expect(credential).not.toHaveBeenCalled();
+});
 it.each(['workspace', 'explicit'])('validates the full selection on %s connectors, not just new or reviewed tools', async mode => {
   visible.mockResolvedValue({ toolkit_slug: 'gmail', access_mode: mode });
   provider.mockResolvedValueOnce({ items: policyInput.allowed_tools.map(row).reverse() });

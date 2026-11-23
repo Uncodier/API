@@ -41,9 +41,6 @@ async function admit(ctx:ConnectorContext, connectorId?:string, action?:string):
   }
   if (connectorId!==undefined && (!uuid.safeParse(connectorId).success || (ctx.connectorIdHint!==undefined && connectorId!==ctx.connectorIdHint))) throw missing();
   if (action!==undefined && !slug.safeParse(action).success) throw denied();
-  // Distinguish a visible but unavailable selection from foreign/hidden IDs without leaking policy information.
-  if (connectorId!==undefined) await getVisibleConnector(ctx.siteId,ctx.userId,connectorId);
-  else await requireConnectorSiteAccess(ctx.siteId,ctx.userId);
   const actor = {p_site_id:ctx.siteId,p_user_id:ctx.userId,p_instance_id:ctx.instanceId!,p_agent_id:ctx.agentId!};
   const actorEvidence = () => withDirectActorEvidence(async()=>{
     const {data,error} = await supabaseAdmin.rpc('connector_direct_actor',actor).abortSignal(deadline());
@@ -56,7 +53,10 @@ async function admit(ctx:ConnectorContext, connectorId?:string, action?:string):
   const parsed = z.array(row).max(100).safeParse(result.data);
   if (!parsed.success) throw unavailable();
   if (!parsed.data.length) {
-    if (connectorId===undefined) return [];
+    // Admission already checked the site, member visibility/use and saved policy together.
+    // Only a negative result needs a browse lookup to distinguish hidden from visible-but-disabled.
+    if (connectorId===undefined) { await requireConnectorSiteAccess(ctx.siteId,ctx.userId); return []; }
+    await getVisibleConnector(ctx.siteId,ctx.userId,connectorId);
     throw denied();
   }
 

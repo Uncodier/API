@@ -30,6 +30,12 @@ supported review flow can accept a request for that action instead. Generic
 direct actions do not automatically produce review requests. A manager's
 decision never upgrades a read-only provider credential or overrides a 403.
 
+### One manager decision in Connectors (local forward change)
+
+For a currently verified isolated account, the manager can enable Ask and save its tool policy in **one** `PATCH /api/connectors/connections/[id]/policy`. An explicit change sends `ask_access: {enabled, expected_direct_revision}` with the ordinary `expected_revision`. The server validates any selected tool IDs and sends one transaction to `connector_save_policy_with_ask`. It confirms the exact account, both advanced revisions and the resulting permission. If the transaction fails, neither decision is applied. If acknowledgement is lost, reload before acting; do not replay the save or fall back to two requests.
+
+An ordinary policy save without `ask_access` does not implicitly adopt, enable or re-enable an account. Previously disabled accounts remain disabled. The internal enrollment identifies the exact credential verification for revocation and receipt checks; it is maintained by the same save, not a second permission the manager must grant. Catalog browsing does not imply execution. Saving Ask access does not establish isolation for a shared administrative credential or enable arbitrary SQL. The migration must precede the matching API and web release; no provider calls or account backfills are part of the migration.
+
 ## Choosing the source and account in private Ask (local contract)
 
 | User asks for | How to discover it | Exact reference to describe and call |
