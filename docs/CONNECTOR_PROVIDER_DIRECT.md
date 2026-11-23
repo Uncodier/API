@@ -81,6 +81,15 @@ private context is not restored from the shared recovery checkpoint and tool
 effects must not be replayed. Support, public channels and approvals keep their
 existing output policies.
 
+A new authenticated Ask turn in the same owned conversation can use the latest
+saved private answer within the previous 30 trusted turns. Only the written
+answer is read, not the original tool result. The worker rechecks current source
+grants and parent visibility. Follow-up inference has no tools, is not streamed
+or recorded in shared history, and publishes a new private answer subject to the
+original grants. Use a new conversation for a fresh provider operation when
+private follow-up context is present. Apply `20261123175000_connector_ask_followup.sql`
+before rolling out the matching workers, then verify with an authenticated owner.
+
 No separate provider record is created by default. To request one for this call, set the
 optional boolean `save_record: true` beside `version`, `schema_hash` and `arguments`.
 It does not enter provider arguments or the dispatch digest. A successful save adds
@@ -92,10 +101,14 @@ Apply `20261123172000_connector_optional_result_records.sql` before deploying th
 matching Ask API/workers. It installs the no-report release check: the original
 claim and authenticated parent visibility are still checked, without a report write,
 retention cleanup, or per-owner report lock. Existing private links are unchanged.
-Apply `20261123173000_connector_owner_ask_answers.sql` next, and deploy the
-matching Robots web private-answer route with the API/workers. New Ask calls
-fail closed if the private delivery migration is unavailable. There is no remote
-migration, live result replay, or grant in this change.
+`20261123173000_connector_owner_ask_answers.sql` was applied to shared Makinari
+at **14:28:23 UTC on November 23, 2026**. The recorded source matched the API
+file, the new table was empty with row-level security enabled and outside
+Realtime, and the read and write RPC grants were independently verified.
+The matching Robots web private-answer route and API/workers still require
+deployment and a fresh interactive acceptance check. The migration did not
+replay provider calls, populate answers, or change existing connector grants.
+New Ask calls fail closed if the private delivery migration is unavailable.
 
 A direct connection delegates the **actual** permissions of the downstream
 credential. For the attested path it must be independently verified as dedicated to this site's

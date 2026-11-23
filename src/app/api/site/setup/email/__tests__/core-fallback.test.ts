@@ -6,6 +6,7 @@ const settings = { channels: { agent_email: { status: 'active', username: 'offli
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: settings, error: null }) }) }) }) } }));
 jest.mock('@/lib/database/lead-db', () => ({ getLeadById: jest.fn() }));
 jest.mock('@/lib/messaging/lead-merge-fields', () => ({}));
+jest.mock('@/lib/messaging/exact-email-content', () => ({ exactEmailContent: jest.fn() }));
 jest.mock('@/lib/services/email/EmailSendService', () => ({ EmailSendService: { isValidEmail: () => true, sendEmail: (...args: unknown[]) => mockSmtpSend(...args) } }));
 jest.mock('@/lib/services/email/AgentMailSendService', () => ({ AgentMailSendService: { sendViaAgentMail: (...args: unknown[]) => mockAgentSend(...args) } }));
 jest.mock('@/lib/services/email/EmailSignatureService', () => ({ EmailSignatureService: {} }));

@@ -51,7 +51,8 @@ it('releases facts against the active claim and real parent RLS, without creatin
       CREATE POLICY fixture_owner_visibility ON public.remote_instances FOR SELECT TO authenticated
         USING (user_id=auth.uid() AND visible);
       CREATE TABLE public.instance_logs(id uuid PRIMARY KEY,site_id uuid,user_id uuid,instance_id uuid,
-        agent_id uuid,log_type text,trusted_user_action boolean,details jsonb,level text,message text,parent_log_id uuid);
+        agent_id uuid,log_type text,trusted_user_action boolean,details jsonb,level text,message text,parent_log_id uuid,
+        created_at timestamptz NOT NULL DEFAULT clock_timestamp());
       CREATE TABLE public.site_connector_auth_attempts(id uuid,site_id uuid,connector_id uuid,status text);
       CREATE TABLE public.connectors(id uuid,site_id uuid,revision int);
       CREATE TABLE public.connector_members(site_id uuid,connector_id uuid,user_id uuid,expires_at timestamptz);
@@ -136,5 +137,42 @@ it('releases facts against the active claim and real parent RLS, without creatin
     denied(actor(owner)+'SELECT answer FROM connector_result_private.ask_answers;');
     expect(db.query('BEGIN; UPDATE public.remote_instances SET visible=false; '+actor(owner)+read+'ROLLBACK;')).not.toContain(text);
     expect(db.query('BEGIN; UPDATE connector_result_private.fixture_grants SET enabled=false; '+actor(owner)+read+'ROLLBACK;')).not.toContain(text);
+
+    db.migrate('20261123175000_connector_ask_followup.sql');
+    db.query(`INSERT INTO public.instance_logs(id,site_id,user_id,instance_id,agent_id,log_type,trusted_user_action,details)
+      SELECT '${nextAction}',site_id,user_id,instance_id,agent_id,log_type,trusted_user_action,details FROM public.instance_logs WHERE id='${action}';
+      INSERT INTO connector_result_private.direct_ask_submissions VALUES ('${nextAction}');
+      UPDATE connector_result_private.direct_turn_heads SET action_id='${nextAction}';`);
+    const followup = `SELECT public.connector_ask_followup('${nextAction}');`;
+    const derived = 'Derived KPI comparison';
+    const save = `SELECT public.connector_ask_followup('${nextAction}','${action}','${derived}');`;
+    expect(db.query(asService(followup))).toContain(text);
+    expect(db.query(asService(followup))).toContain(action);
+    expect(db.query(asService(followup.replace(nextAction,action)))).not.toContain(text);
+    denied(actor(owner)+followup);
+    denied(asService(save.replace(action,foreign)));
+    denied(`BEGIN; UPDATE public.remote_instances SET visible=false; ${asService(followup)} ROLLBACK;`);
+    expect(db.query(`BEGIN; UPDATE connector_result_private.fixture_grants SET enabled=false; ${asService(followup)} ROLLBACK;`))
+      .toContain('{"unavailable": true}');
+    expect(db.query(`BEGIN; DELETE FROM connector_result_private.direct_turn_heads; ${asService(followup)} ROLLBACK;`))
+      .toContain('{"unavailable": true}');
+    denied(`BEGIN; UPDATE connector_result_private.fixture_grants SET enabled=false; ${asService(save)} ROLLBACK;`);
+    expect(db.query(asService(save)).split('\n').at(-1)).toBe('true');
+    expect(db.query(asService(save)).split('\n').at(-1)).toBe('true');
+    denied(asService(save.replace(derived,'Different follow-up')));
+    expect(db.query(actor(owner)+read.replace(action,nextAction)).split('\n').at(-1)).toBe(derived);
+    expect(db.query(actor(foreign)+read.replace(action,nextAction))).not.toContain(derived);
+    expect(db.query(`SELECT message FROM public.instance_logs WHERE parent_log_id='${nextAction}'`))
+      .toBe(`This answer uses private connector data. [Open your answer](/robots/private-answer/${nextAction}).`);
+    const thirdAction = randomUUID();
+    db.query(`INSERT INTO public.instance_logs(id,site_id,user_id,instance_id,agent_id,log_type,trusted_user_action,details)
+      SELECT '${thirdAction}',site_id,user_id,instance_id,agent_id,log_type,trusted_user_action,details FROM public.instance_logs WHERE id='${nextAction}';
+      INSERT INTO connector_result_private.direct_ask_submissions VALUES ('${thirdAction}');
+      UPDATE connector_result_private.direct_turn_heads SET action_id='${thirdAction}';`);
+    const third = followup.replace(nextAction, thirdAction);
+    expect(db.query(asService(third))).toContain(derived);
+    expect(db.query(`BEGIN; UPDATE connector_result_private.fixture_grants SET enabled=false; ${asService(third)} ROLLBACK;`))
+      .toContain('{"unavailable": true}');
+    expect(db.query('SELECT count(*) FROM connector_direct_rpc.ask_followup_gate')).toBe('0');
   } finally { db.stop(); }
 }, 20_000);

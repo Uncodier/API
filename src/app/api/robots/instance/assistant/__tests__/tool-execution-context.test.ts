@@ -250,6 +250,8 @@ describe('assistant private execution context wiring', () => {
     });
     const ownerAnswers = {confirmOwnerConnectorContext:jest.fn(async (_claims: string[]) => undefined),
       ownerConnectorAnswerAvailable:jest.fn(async () => true),
+      loadOwnerConnectorFollowup:jest.fn(async (_scope:unknown): Promise<undefined | {source_id:string,answer:string} | {unavailable:true}> => undefined),
+      publishOwnerConnectorFollowup:jest.fn(async (_scope:unknown,_source:string,_text:string) => 'Open your owner answer'),
       publishOwnerConnectorAnswer:jest.fn(async (_scope:unknown,_claims:string[],_text:string) => 'Open your owner answer')};
     const run = loadRuntimeModule<typeof import('../assistant-turn-core')>(
       'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
@@ -314,6 +316,37 @@ describe('assistant private execution context wiring', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])('keeps saved private context and derived text inside the private boundary (access=%s)', async allowed => {
+    const f = turn(), source = randomUUID(), text = `Private data ${randomUUID()}`;
+    const scope = {siteId,instanceId,userId:randomUUID(),userMessageLogId:randomUUID()};
+    Object.assign(f.context,{instanceNodeId:undefined,callerSource:'interactive',catalogUserSession:true,recoveryScope:scope});
+    const messages = [{role:'user',content:'Explain those KPIs'}];
+    f.ownerAnswers.loadOwnerConnectorFollowup.mockResolvedValueOnce(allowed ? {source_id:source,answer:text} : {unavailable:true});
+    f.executor.mockImplementationOnce(async (input,_instance,options) => {
+      expect(JSON.stringify(input).includes(text)).toBe(allowed);
+      expect(options.ownerConnectorContext).toBe(allowed ? true : undefined);
+      expect(options.custom_tools).toEqual([]);
+      const reply = allowed ? text : 'Previous answer is unavailable.';
+      return {messages:[...input,{role:'assistant',content:reply}],text:reply,isDone:true,output:{reply},steps:[{text:reply,finishReason:'stop'}]};
+    });
+    const out = await f.run(f.context,messages);
+    expect(f.getTools).not.toHaveBeenCalled();
+    expect(f.ownerAnswers.publishOwnerConnectorAnswer).not.toHaveBeenCalled();
+    if (allowed) expect(f.ownerAnswers.publishOwnerConnectorFollowup).toHaveBeenCalledWith(scope,source,text);
+    else expect(f.ownerAnswers.publishOwnerConnectorFollowup).not.toHaveBeenCalled();
+    expect(JSON.stringify(out)).not.toContain(text);
+    expect(out.text).toBe(allowed ? 'Open your owner answer' : 'Previous answer is unavailable.');
+  });
+  it('discards an incomplete private answer without persisting or replaying it', async () => {
+    const f = turn(), text = `Private data ${randomUUID()}`;
+    const scope = {siteId,instanceId,userId:randomUUID(),userMessageLogId:randomUUID()};
+    Object.assign(f.context,{instanceNodeId:undefined,callerSource:'interactive',catalogUserSession:true,recoveryScope:scope});
+    const messages = [{role:'user',content:'Summarize the comparison'}];
+    f.ownerAnswers.loadOwnerConnectorFollowup.mockResolvedValueOnce({source_id:randomUUID(),answer:text});
+    f.executor.mockImplementationOnce(async input => ({messages:[...input,{role:'assistant',content:text}],
+      text,isDone:false,steps:[{text,finishReason:'length'}]}));
+    expect(await f.run(f.context,messages)).toEqual({text:'',isDone:false,resumable:false,messages,steps:[{finishReason:'length'}]});
+  });
   it('keeps the durable wrapper non-replaying while forwarding to the shared core', async () => {
     const processTurn = jest.fn(async (..._args: any[]) => ({ isDone: false, messages: [] }));
     const { processAssistantTurn } = loadRuntimeModule<typeof import('../assistant-turn')>(

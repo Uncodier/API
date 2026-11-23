@@ -31,6 +31,7 @@ export function loadRuntimeModule<T>(relativePath: string, dependencies: Record<
     console,
     Buffer,
     URL,
+    structuredClone,
     crypto: { randomUUID: () => 'local-test-lock-token' },
     setTimeout,
     clearTimeout,

@@ -17,6 +17,10 @@ import { validateResponseFormat } from '@/lib/services/channels/response-format'
 import { resolveEmailMediaAttachment } from '@/lib/services/channels/email-media';
 import { requireSavedOutboundMedia } from '@/lib/services/channels/saved-outbound-media';
 import { dispatchNativeMedia } from '@/lib/services/channels/native-media-delivery';
+import { getSiteLicensedResources, isLicensedChannelConnection } from '@/lib/billing/licensed-resources';
+import { exactEmailContent } from '@/lib/messaging/exact-email-content';
+import { isAcceptedZavuMessage } from '@/lib/messaging/exact-zavu-response';
+import { sendChannelMessage } from '@/lib/services/zavu/client';
 import {
   acquireEmailSendPermit,
   releaseEmailSendPermit,
@@ -161,6 +165,10 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
   const agentEmailConfig = siteSettings.channels?.agent_email || siteSettings.channels?.agent_mail || siteSettings.channels?.agent;
   const isAgentEmailActive = agentEmailConfig && (String(agentEmailConfig.status) === 'active' || String(agentEmailConfig.status) === 'synced') && agentEmailConfig.enabled !== false;
   const configuredEmail = siteSettings.channels?.email?.email;
+  const connections = siteSettings.channels?.connections;
+  const hasZavuEmail = email !== 'no-email@example.com' && Array.isArray(connections)
+    && connections.some(connection => connection?.type === 'email' && typeof connection.zavu_sender_id === 'string'
+      && connection.zavu_sender_id.trim());
   const sendPermit = await acquireEmailSendPermit({
     instanceId: instance_id,
     siteId: site_id,
@@ -235,14 +243,61 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
         }
         console.error(`[SEND_EMAIL] AgentMail error:`, error);
         // An ambiguous native attachment attempt must never resend via SMTP.
-        if (!configuredEmail || params.disable_provider_fallback || params.media_url || attachments?.length) {
+        if ((!hasZavuEmail && !configuredEmail) || params.disable_provider_fallback || params.media_url || attachments?.length) {
           await releaseEmailSendPermit(sendPermit);
           return {
             success: false,
             error: { code: 'AGENTMAIL_FAILED', message: error.message },
           };
         }
-        console.warn(`[SEND_EMAIL] Falling back to standard SMTP due to AgentMail error`);
+        console.warn(`[SEND_EMAIL] Checking alternative email channels after AgentMail error`);
+      }
+    }
+  }
+
+  if (hasZavuEmail) {
+    let senderId: string | undefined;
+    try {
+      const { channels } = await getSiteLicensedResources(site_id);
+      senderId = channels.connections.find(connection => isLicensedChannelConnection('email', connection)
+        && connection.metadata?.emailChannelActive !== false
+        && typeof connection.zavu_sender_id === 'string' && connection.zavu_sender_id.trim())?.zavu_sender_id;
+    } catch {
+      await releaseEmailSendPermit(sendPermit);
+      return { success: false, error: { code: 'EMAIL_CHANNEL_LOOKUP_FAILED', message: 'Could not verify the site email channels' } };
+    }
+
+    if (senderId) {
+      let attempted = false;
+      try {
+        const signature = omit_signature ? '' : (await EmailSignatureService.generateAgentSignature(site_id, from)
+          .catch(() => ({ formatted: '' }))).formatted;
+        const siteName = await fetchSiteNameForMerge(site_id);
+        const { text, htmlBody } = exactEmailContent(effectiveMessage, siteName || '', signature, trackingId);
+        const dispatch = async (): Promise<SendEmailCoreResult> => {
+          try {
+            await assertAutomationSendAllowed(params);
+          } catch (error) {
+            if (error instanceof AutomationSendSuppressed) return automationSkippedResult(error);
+            throw error;
+          }
+          attempted = true;
+          const sent = await sendChannelMessage({ to: email, channel: 'email', senderId, subject: effectiveSubject,
+            text, htmlBody, ...(attachments?.length ? { attachments } : {}),
+            ...(params.message_id ? { idempotencyKey: `send-email:${site_id}:${params.message_id}` } : {}) });
+          if (!isAcceptedZavuMessage(sent)) throw new Error('Zavu did not confirm acceptance');
+          return { success: true, status: sent.message.status, email_id: sent.message.id, external_message_id: sent.message.id };
+        };
+        const result = attachments?.length ? await dispatchNativeMedia(params, 'zavu', dispatch, sent => ({
+          id: sent.external_message_id, skipped: sent.skipped,
+          status: ['queued', 'sending'].includes(sent.status || '') ? 'pending' : 'sent',
+        })) : await dispatch();
+        if (result.skipped) await releaseEmailSendPermit(sendPermit);
+        return result;
+      } catch {
+        // An unconfirmed Zavu attempt may have been accepted. Do not resend via SMTP.
+        if (!attempted) await releaseEmailSendPermit(sendPermit);
+        return { success: false, error: { code: 'ZAVU_EMAIL_FAILED', message: 'Zavu email delivery could not be confirmed' } };
       }
     }
   }
