@@ -1,4 +1,4 @@
-import { completeAuth, createAuthLink, getAccount, listAccounts, revokeAccount, verifyAccountIdentity } from '../composio-accounts';
+import { completeAuth, createAuthLink, getAccount, listAccounts, revokeAccount, verifyAccountIdentity, verifyDirectAccountIdentity } from '../composio-accounts';
 import type { ComposioClient } from '../composio-transport';
 import { accountFixture, secret } from './composio-fixtures';
 
@@ -55,6 +55,19 @@ describe('Composio bound account lifecycle adapter', () => {
     expect(await verifyAccountIdentity(client,target)).toMatchObject({hostedSupabasePat:false,accountType:undefined,scopesKnown:false});
     request.mockResolvedValueOnce(raw).mockResolvedValueOnce({items:[{...list,state:{val:{scope:'read'}}}]});
     await expect(verifyAccountIdentity(client,target)).rejects.toMatchObject({code:'CONNECTOR_ACCOUNT_MISMATCH'});
+  });
+
+  it('the direct identity check accepts partial or inconsistent scope metadata but never a different account or owner',async()=>{
+    const marker=secret(), original=accountFixture();
+    const detail={...original,user_id:undefined,state:{authScheme:'OAUTH2',val:{scope:{optional:marker}}}};
+    request.mockResolvedValueOnce(detail).mockResolvedValueOnce({items:[original]});
+    const result=await verifyDirectAccountIdentity(client,expected);
+    expect(result).toMatchObject({id:expected.accountId,oauth2:true,scopesKnown:false,scopes:[]});
+    expect(JSON.stringify(result)).not.toContain(marker);
+    for (const mismatch of [{id:'ca_other'},{user_id:'other_site'},{auth_config:{id:'other',is_disabled:false}},{status:'DISABLED'}]) {
+      request.mockResolvedValueOnce(detail).mockResolvedValueOnce({items:[{...original,...mismatch}]});
+      await expect(verifyDirectAccountIdentity(client,expected)).rejects.toBeDefined();
+    }
   });
 
   it('does not infer ownership from a project-wide account when owner proof is missing', async () => {

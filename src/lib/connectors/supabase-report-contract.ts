@@ -36,7 +36,12 @@ export function assertReportContract(tool: CatalogReadMetadata) {
     tool.no_auth !== false || tool.is_deprecated !== false || tool.deprecated?.is_deprecated ||
     !Array.isArray(tool.tags) || tool.tags.length !== tags.length || !tags.every(tag => (tool.tags as unknown[]).includes(tag))) unsupportedAction();
   if (tool.scope_requirements !== null || tool.scopes.length !== 1 || tool.scopes[0] !== REPORT_SCOPE) unsupportedScopes();
-  if (!providerInput.safeParse(tool.input_parameters).success) unsupportedSchema();
+  assertScopedInputContract(tool.input_parameters);
+}
+
+/** Validate the actual wire input, independent of the account's OAuth metadata. */
+export function assertScopedInputContract(input:unknown) {
+  if (!providerInput.safeParse(input).success) unsupportedSchema();
 }
 
 export const DEFAULT_REPORT_LIMIT = 10;

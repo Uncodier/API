@@ -8,6 +8,7 @@ type Dict = Record<string, unknown>;
 const obj = (v: unknown): v is Dict => !!v && typeof v === 'object' && !Array.isArray(v);
 const allowedTypes = ['string', 'number', 'integer', 'boolean', 'null', 'object', 'array'];
 const labels = ['description', 'title', 'human_parameter_name', 'human_parameter_description'];
+const presentation = [...labels, 'examples'];
 const safeVocabulary = (v: unknown) => v === null || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) ||
   (typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,47}$/.test(v) && !/[^A-Za-z0-9_.-]/.test(v));
 
@@ -40,17 +41,39 @@ function property(v: object, key: string) {
 }
 function invalid(): never { throw new ConnectorError('CONNECTOR_INVALID_INPUT', 'Expected a bounded JSON request.', 400); }
 
+// Fingerprint the provider contract, not its display copy. Descend only through
+// known schema positions: property/definition names and literal values (notably
+// defaults and enum members) can themselves contain keys named 'description'.
+// Unrecognized keywords stay in the pin verbatim. Never resolve references here.
+export function directSchemaContract(schema: Dict): Dict {
+  const node = (v: unknown): unknown => obj(v) ? directSchemaContract(v) : v;
+  const out: Dict = Object.create(null);
+  for (const [key, value] of Object.entries(schema)) {
+    if (presentation.includes(key)) continue;
+    if (['properties', '$defs', 'definitions', 'patternProperties', 'dependentSchemas'].includes(key) && obj(value)) {
+      out[key] = Object.fromEntries(Object.entries(value).map(([name, child]) => [name, node(child)]));
+    } else if (['items', 'anyOf', 'oneOf', 'allOf', 'prefixItems'].includes(key) && Array.isArray(value)) {
+      out[key] = value.map(node);
+    } else if (['items', 'additionalProperties'].includes(key)) {
+      out[key] = node(value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 // Fail closed on unimplemented semantic keywords; never publish provider prose, examples,
 // or dynamic property names. Omitted additionalProperties is locally narrowed to false.
 export function directParameterPlan(raw: unknown, projectRef?: string) {
   validateJson(raw);
   const injected: Dict = {};
   const defs = obj(raw) && obj(raw.$defs) ? raw.$defs : {};
-  const annotations = [...labels, 'examples', 'default'];
+  const annotations = [...presentation, 'default'];
   let nodes = 0;
   function project(v: unknown, depth: number): Dict {
     if (!obj(v) || ++nodes > 400 || depth > 10) unsupportedDirectSchema();
-    for (const key of labels) if (v[key] !== undefined) {
+    for (const key of labels) if (v[key] != null) {
       if (typeof v[key] !== 'string' || (v[key] as string).length > 16_000) unsupportedDirectSchema();
     }
     if (v.$ref !== undefined) {

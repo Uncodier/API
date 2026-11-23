@@ -42,6 +42,9 @@ export function directActionNameSafe(kit: string, slug: string): boolean {
   // Longer names (such as GET_FILE_CONTENT or LIST_FILES_AND_DOWNLOAD) do not qualify.
   const storedMetadata = /^(?:list|find|search) (?:all )?(?:files|folders)$|^get (?:file|folder) (?:metadata|details)$/.test(operation);
   if (storedMetadata) return true;
+  // Stripe's native retrieval takes a promotion_code_id (a coupon record), not
+  // executable code. Do not exempt CODE generally, other verbs, or other toolkits.
+  if (kit === 'stripe' && operation === 'retrieve promotion code') return true;
   return !unsafeCapability(operation) && !wholeScope.test(operation) && !/\b(?:tokens?|keys?|repl|code|batch actions?)\b/.test(operation);
 }
 

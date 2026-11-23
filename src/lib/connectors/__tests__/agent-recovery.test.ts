@@ -18,7 +18,7 @@ it.each([
 
 it('explains the shared database limit without suggesting a policy toggle, more credentials or fabricated KPI values',()=>{
   const advice=agentRecovery('ASK_SHARED_DATABASE');
-  expect(advice.message).toMatch(/shared Makinari database/); expect(advice.message).toMatch(/read-only source/);
+  expect(advice.message).toMatch(/shared database/); expect(advice.message).toMatch(/same connection.*scoped read-only/);
   expect(advice.message).toMatch(/Do not request an admin token/); expect(advice.action).not.toBe('ask_manager');
 });
 

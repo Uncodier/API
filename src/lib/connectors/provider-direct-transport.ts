@@ -3,15 +3,15 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { DirectAuthorizedConnector } from './provider-direct-policy';
 import { readTokenProviderBinding } from './provider-project-binding';
-import { verifyAccountIdentity } from './composio-accounts';
+import { verifyDirectAccountIdentity } from './composio-accounts';
 import { getToolkit } from './composio-catalog';
 import { createComposioClient, invalidProviderResponse, validateJson, type ComposioClient } from './composio-transport';
-import { inputValue, providerValue, safeText, scopesSchema, toolkitSlug, toolSlug } from './composio-validation';
+import { inputValue, providerValue, safeText, toolkitSlug, toolSlug } from './composio-validation';
 import { hashConnectorSchema } from './composio-tool-json';
 import { assertProviderToolSucceeded } from './provider-outcome';
 import { directActionNameSafe, directEffect, unsupportedDirectTool } from './provider-direct-guards';
 import { assertDirectArguments } from './provider-direct-validation';
-import { directParameterPlan, snapshotDirectJson } from './provider-direct-schema';
+import { directParameterPlan, directSchemaContract, snapshotDirectJson } from './provider-direct-schema';
 import { ConnectorError } from './types';
 
 type JsonObject = Record<string, unknown>;
@@ -22,11 +22,11 @@ export type DirectDescriptor = { version: string; schemaHash: string; parameters
 const release = z.string().length(11).regex(/^20\d{6}_\d{2}$/);
 const envelopeSchema = z.object({ version: release, schema_hash: z.string().length(64).regex(/^[a-f0-9]+$/), arguments: z.record(z.unknown()) }).strict();
 const metadataSchema = z.object({
-  slug: toolSlug, toolkit: z.object({slug: toolkitSlug}), version: release, description: safeText(16_000), name: safeText(500).optional(),
+  slug: toolSlug, toolkit: z.object({slug: toolkitSlug}), version: release,
   input_parameters: z.record(z.unknown()), output_parameters: z.record(z.unknown()).nullish(),
   no_auth: z.literal(false), is_deprecated: z.literal(false), deprecated: z.object({ is_deprecated: z.literal(false).optional() }).nullish(),
-  // These are provider metadata, NOT a substitute for the actual app's permission decision.
-  scopes: scopesSchema.nullish(), scope_requirements: z.record(z.unknown()).nullish(), tags: z.array(safeText(100)).max(128).optional(),
+  // Provider prose and advertised scope requirements are neither arguments nor authority.
+  tags: z.array(safeText(100)).max(128).optional(),
 });
 function changed(): never {
   throw new ConnectorError('CONNECTOR_SCHEMA_CHANGED', 'The pinned action, account or authorization changed. Describe it again.', 409);
@@ -77,23 +77,28 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
     !Object.hasOwn(injected,'project_ref')) unsupportedDirectTool();
   const toolkit = await getToolkit(client, connector.toolkit_slug);
   if (toolkit.toolkit_type !== 'api' || toolkit.enabled === false) unsupportedDirectTool();
-  const account = await verifyAccountIdentity(client, {accountId:connector.provider_account_id, userId:provider.provider_user_id,
+  const account = await verifyDirectAccountIdentity(client, {accountId:connector.provider_account_id, userId:provider.provider_user_id,
     toolkitSlug:connector.toolkit_slug, authConfigId:connector.auth_config_id});
-  if (account.accountType !== 'PRIVATE' || (!account.oauth2 && !account.apiKeyAuth) || account.hostedSupabasePat) notReady();
+  // Supabase's native API_KEY setup takes a Management PAT. A missing/masked
+  // origin is not evidence that the key is a business-data-only credential.
+  if (account.accountType !== 'PRIVATE' || (!account.oauth2 && !account.apiKeyAuth) || account.hostedSupabasePat ||
+    (account.toolkitSlug === 'supabase' && account.apiKeyAuth)) notReady();
   current(directProof.expiresAt);
-  // Pin raw contract (including annotations, scope metadata and output), local projection,
-  // policy epoch, positive isolation proof, effective credential, live identity and grants.
-  // No credential, resource identifier, provider prose or scope goes into the description.
+  // Only the app decides its grants. The pin binds the execution contract to
+  // this verified authority; it is not a cache of provider permission reports.
   const effect = directEffect(tool.tags ?? [], toolkit.slug, slug);
   // Projection must not expose server secrets/bindings even if upstream metadata
   // repeats them inside a seemingly ordinary field name or enum literal.
   const visible = JSON.stringify(parameters);
   if ([credential.apiKey, directProof.resourceBoundary, connector.provider_account_id, connector.auth_config_id].some(privateValue =>
     privateValue && (visible.includes(JSON.stringify(privateValue)) || (privateValue.length >= 12 && visible.includes(privateValue))))) unsupportedDirectTool();
-  const schemaHash = hashConnectorSchema({ mode:'direct-account-v1', metadata:hashConnectorSchema(raw), parameters, effect,
+  const schemaHash = hashConnectorSchema({ mode:'direct-account-v2', slug, toolkit:toolkit.slug, version:tool.version,
+    input:hashConnectorSchema(directSchemaContract(tool.input_parameters)),
+    output:tool.output_parameters ? hashConnectorSchema(directSchemaContract(tool.output_parameters)) : null,
+    parameters, injected, effect,
     directProof:{...directProof}, connectorRevision:connector.revision, projectRef:connector.supabase_project_ref ?? null,
     policyRevision:policy.revision, keyHash, scheme:account.oauth2 ? 'OAUTH2' : 'API_KEY',
-    scopesKnown:account.scopesKnown, reportedScopes:[...account.scopes].sort(), userId:provider.provider_user_id });
+    userId:provider.provider_user_id });
   const descriptor: DirectDescriptor = {version:tool.version, schemaHash, parameters, effect,
     description:`${slug} on the selected private connection. Provider result data is delivered privately, not to the model.`};
   return { descriptor, injected, accountId:account.id, userId:provider.provider_user_id };

@@ -7,11 +7,11 @@ import { snapshotDirectJson } from './provider-direct-schema';
 import type { ConnectorContextResolver } from './host-context';
 import { searchDirectTools } from './provider-direct-discovery';
 import { directOutputReport } from './provider-direct-output';
-import { authorizeDirectAction, listDirectAccounts } from './provider-direct-policy';
+import { authorizeDirectAction } from './provider-direct-policy';
 import { claimDirectDispatch, storeDirectResult } from './provider-direct-receipt';
 import { describeDirectTool, executeDirectTool } from './provider-direct-transport';
 import { ConnectorError, type ConnectorContext } from './types';
-import type { ConnectorFilters } from './connector-discovery-types';
+import { createInstanceConnectorDispatcher } from './instance-connector-dispatcher';
 
 const uuid = z.string().uuid();
 const pin = z.object({version:z.string().min(1).max(100), schema_hash:z.string().regex(/^[a-f0-9]{64}$/),
@@ -50,19 +50,8 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
   async function recheck(name: string, stamp: string) {
     if ((await admission(name)).stamp !== stamp) throw changed();
   }
-  return {
-    async search(filters: ConnectorFilters = {}) {
-      const ctx = interactive(await resolveContext());
-      if (filters.connector_id !== undefined && !uuid.safeParse(filters.connector_id).success) {
-        throw new ConnectorError('INVALID_FILTER','Invalid connector account filter.',400);
-      }
-      if (ctx.connectorIdHint && filters.connector_id && ctx.connectorIdHint !== filters.connector_id) {
-        throw new ConnectorError('NOT_FOUND','This connection is not selected.',404);
-      }
-      // An explicit account search must not even load another account's inventory or credential.
-      const narrow = filters.connector_id ? {...ctx, connectorIdHint:filters.connector_id} : ctx;
-      return searchDirectTools(narrow, filters, await listDirectAccounts(narrow));
-    },
+  return createInstanceConnectorDispatcher(resolveContext,interactive,{
+    search:searchDirectTools,
     async describe(name: string) {
       const a = await admission(name);
       const d = await describeDirectTool(a.target, await credentialFor(a), a.toolSlug);
@@ -114,6 +103,6 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
         throw error;
       }
     },
-  };
+  });
 }
 export type ProviderDirectRuntime = ReturnType<typeof createProviderDirectRuntime>;

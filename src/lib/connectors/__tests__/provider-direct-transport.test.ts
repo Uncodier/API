@@ -108,15 +108,27 @@ it.each(['tool','toolkit','version','deprecated','no_auth','custom','mcp','disab
   expect(before).not.toHaveBeenCalled();noPost();
 });
 
-it.each(['attestation','direct_revision','policy_revision','account_revision','new_account','resource','schema','permissions','effect','output','key','scheme','grants'])('prevents replay after %s changes',async kind=>{
+it.each(['exact origin', 'unreported origin'])('does not delegate a Supabase API_KEY on a bound external project (%s)', async kind => {
+  const account = fixture('supabase','LIST_TABLES'), ref = 'b'.repeat(20);
+  account.target.directProof.resourceBoundary = ref;
+  Object.assign(account.target.connector, {supabase_project_ref:ref});
+  Object.assign(account.target, {localProjectRef:'a'.repeat(20)});
+  Object.assign(account.tool, {input_parameters:{type:'object',properties:{project_ref:{type:'string'}},required:['project_ref']}});
+  Object.assign(account.account.state, {authScheme:'API_KEY',val:kind === 'exact origin' ? {full:'https://api.supabase.com'} : {}});
+  account.queue(account.tool,account.toolkit,account.account);
+  await expect(account.read()).rejects.toMatchObject({code:'CONNECTOR_NOT_READY'});
+  noPost();
+});
+
+it.each(['attestation','direct_revision','policy_revision','account_revision','new_account','resource','schema','default','effect','output','key','scheme'])('prevents replay after %s changes',async kind=>{
   const f=fixture(), d=await f.describe();
   if(kind==='attestation')f.target.directProof.attestationId=randomUUID();if(kind==='policy_revision')f.target.policy.revision++;
   if(kind==='direct_revision')f.target.directProof.directRevision++;
   if(kind==='account_revision')f.target.connector.revision++;if(kind==='resource')f.target.directProof.resourceBoundary+='-new';
   if(kind==='new_account')f.target.connector.provider_account_id=f.target.directProof.accountId=f.account.id=randomUUID();
-  if(kind==='schema')f.tool.input_parameters.properties.query.maxLength=25;if(kind==='permissions')f.tool.scope_requirements.any_of=[['different']];
+  if(kind==='schema')f.tool.input_parameters.properties.query.maxLength=25;if(kind==='default')Object.assign(f.tool.input_parameters.properties.options.properties.count,{default:12});
   if(kind==='effect')f.tool.tags.push('updateHint');if(kind==='output')f.tool.output_parameters.properties.count.type='string';
-  if(kind==='key')f.credential.apiKey=secret();if(kind==='scheme')f.account.state.authScheme='API_KEY';if(kind==='grants')f.account.state.val.scope+=' extra';
+  if(kind==='key')f.credential.apiKey=secret();if(kind==='scheme')f.account.state.authScheme='API_KEY';
   f.queue(f.tool,f.toolkit,f.account);const before=jest.fn();await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:{query:'books'}},before))
     .rejects.toMatchObject({code:'CONNECTOR_SCHEMA_CHANGED',effectStarted:false});expect(before).not.toHaveBeenCalled();noPost();
 });
@@ -227,4 +239,86 @@ it('never enumerates or selects a different project under a database-scoped bind
   const f=fixture('businessdata','LIST_PROJECTS'), ref='c'.repeat(20);
   f.target.directProof.resourceBoundary=ref;Object.assign(f.target.connector,{supabase_project_ref:ref});Object.assign(f.target,{localProjectRef:'d'.repeat(20)});
   f.queue(f.tool);await expect(f.read()).rejects.toMatchObject({code:'TOOL_UNREVIEWED'});noPost();
+});
+
+// The v3.1 tool detail includes display text, pricing/Instant metadata and a list of
+// available releases. None selects the account or changes this exact pinned action.
+it('keeps a pin across display/advertisement edits, including schema-node annotations', async () => {
+  const f = fixture(), d = await f.describe(), marker = secret();
+  Object.assign(f.tool, {name:null, description:null, available_versions:[f.tool.version, '20261125_04'],
+    instant:{price:{description:marker}}});
+  Object.assign(f.tool.input_parameters.properties.query, {title:null, description:marker, examples:[marker]});
+  Object.assign(f.tool.output_parameters.properties.count, {human_parameter_name:marker});
+  f.tool.tags.push('Business');
+  const after = await f.describe();
+  expect(after).toEqual(d);
+  expect(JSON.stringify(after)).not.toContain(marker);
+  f.queue(f.tool, f.toolkit, f.account, {successful:true,error:null,data:{count:1}});
+  await f.call({version:d.version,schema_hash:d.schemaHash,arguments:{query:'invoices'}});
+  expect(JSON.parse(http.mock.calls[3][1].body)).toEqual({version:d.version,connected_account_id:f.account.id,
+    user_id:f.account.user_id,arguments:{query:'invoices'}});
+});
+
+it.each(['display copy', 'reported requirements', 'reported grants'])('does not stale the descriptor just for changed %s', async kind => {
+  const f = fixture(), d = await f.describe();
+  if (kind === 'display copy') f.tool.description = 'Updated catalogue copy.';
+  if (kind === 'reported requirements') f.tool.scope_requirements.any_of = [['different']];
+  if (kind === 'reported grants') f.account.state.val.scope += ' another.permission';
+  expect(await f.describe()).toEqual(d);
+});
+
+it('does not use reported tool requirements or optional grant lists as a dispatch permission', async () => {
+  const f = fixture(), d = await f.describe(), marker = secret();
+  // No known list of grants and no locally interpretable requirements. Only the app can decide.
+  Object.assign(f.account.state, {val:{scope:{provider_defined:marker}}});
+  Object.assign(f.tool, {description:undefined, scopes:{label:marker}, scope_requirements:[{provider_defined:marker}]});
+  expect(await f.describe()).toEqual(d);
+  f.queue(f.tool, f.toolkit, f.account, {successful:false,error:marker,data:{status_code:403}});
+  const before = jest.fn(async () => {});
+  const pin = {version:d.version,schema_hash:d.schemaHash,arguments:{query:'invoices'}};
+  const denied = await f.call(pin, before).catch(e => e);
+  expect(denied).toMatchObject({code:'APP_RESOURCE_DENIED'});
+  expect(JSON.stringify(denied)).not.toContain(marker);
+  expect(before).toHaveBeenCalledTimes(1);
+  expect(http).toHaveBeenCalledTimes(4);
+  http.mockReset();
+  f.account.state.val.scope = '*';
+  f.target.policy.allowed_tools = [];
+  await expect(f.call(pin, before)).rejects.toMatchObject({code:'CONNECTOR_TOOL_DENIED',effectStarted:false});
+  expect(http).not.toHaveBeenCalled();
+  expect(before).toHaveBeenCalledTimes(1);
+});
+
+it('does not mistake literal field names or default-object keys for presentation annotations', async () => {
+  const f = fixture();
+  const outputField = {type:'string'};
+  Object.assign(f.tool.output_parameters.properties, {description:outputField});
+  const defaults = {description:'weekday'};
+  Object.assign(f.tool.input_parameters.properties, {filter:{type:'object',properties:{description:{type:'string'}},default:defaults}});
+  const d = await f.describe();
+  const pin = {version:d.version,schema_hash:d.schemaHash,arguments:{query:'new'}};
+  outputField.type = 'integer'; f.queue(f.tool, f.toolkit, f.account);
+  await expect(f.call(pin)).rejects.toMatchObject({code:'CONNECTOR_SCHEMA_CHANGED',effectStarted:false}); noPost();
+  http.mockReset(); outputField.type = 'string'; defaults.description = 'weekend'; f.queue(f.tool, f.toolkit, f.account);
+  await expect(f.call(pin)).rejects.toMatchObject({code:'CONNECTOR_SCHEMA_CHANGED',effectStarted:false}); noPost();
+});
+
+it('describes Stripe promotion-code retrieval by stored ID, not executable code', async () => {
+  // https://docs.composio.dev/toolkits/stripe#retrieve-promotion-code (20261116_00).
+  const f = fixture('stripe','RETRIEVE_PROMOTION_CODE');
+  Object.assign(f.tool, {version:'20261116_00',input_parameters:{type:'object',required:['promotion_code_id'],
+    properties:{promotion_code_id:{type:'string'}}}});
+  const d = await f.describe();
+  const pin = {version:d.version,schema_hash:d.schemaHash,arguments:{promotion_code_id:'promo_sample'}};
+  f.queue(f.tool, f.toolkit, f.account, {successful:true,error:null,data:{active:true}});
+  await expect(f.call(pin)).resolves.toEqual({data:{active:true}});
+  expect(JSON.parse(http.mock.calls[3][1].body).arguments).toEqual(pin.arguments);
+  for (const op of ['RETRIEVE_CODE','RUN_CODE','RETRIEVE_PROMOTION_CODE_AND_RUN_SCRIPT']) {
+    expect(directActionNameSafe('stripe', `STRIPE_${op}`)).toBe(false);
+  }
+  expect(directActionNameSafe('other', 'OTHER_RETRIEVE_PROMOTION_CODE')).toBe(false);
+  http.mockReset();
+  f.queue(f.tool, f.toolkit, f.account);
+  await expect(f.call({...pin,arguments:{...pin.arguments,code:'not an ID'}})).rejects.toMatchObject({effectStarted:false});
+  noPost();
 });

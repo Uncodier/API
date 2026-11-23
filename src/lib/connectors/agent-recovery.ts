@@ -15,9 +15,11 @@ export function agentRecovery(code: string): Advice {
     case 'CATALOG_READS_DISABLED': case 'CATALOG_OPT_IN_REQUIRED':
       return advice('ask_manager', 'Ask a workspace manager to enable catalog reads for this connection in Connectors if appropriate.', manual);
     case 'PROVIDER_DIRECT_NOT_ENABLED': case 'DIRECT_POLICY_REQUIRED':
-      return advice('ask_manager', 'Makinari did not authorize this connection or tool for this Ask turn. A manager can check Ask availability and the saved member, agent and tool permissions in Connectors. This is not a rejection from the provider. Do not reconnect, request a broader token or switch accounts.');
+      return advice('ask_manager', 'Makinari did not authorize this connection or tool for this Ask turn. Check the signed-in member’s connection access and the saved tool permissions. This is not a rejection from the provider. Do not reconnect or switch accounts.');
     case 'ASK_SHARED_DATABASE':
-      return advice('alternate_route', 'This connection points to the shared Makinari database. Ask cannot query it as an external account. Selecting all tools or reconnecting will not change that. For these KPIs, ask for a read-only source containing only the authorized metrics. Do not request an admin token, substitute a different scope or report any figures as if a query had run.');
+      return advice('alternate_route', 'This shared database is not a general-purpose external account. Search this same connection for its scoped read-only metrics tool. Do not request an admin token, substitute a different scope or report figures without a confirmed result.');
+    case 'SCOPED_READ_NOT_ALLOWED':
+      return advice('ask_manager','Makinari has not admitted this scoped read for the signed-in member, connection and turn. A manager can check the saved catalogue read and tool permissions. Do not switch accounts, request a broader provider token or claim the query returned no data.');
     case 'DIRECT_DISPATCH_ALREADY_CLAIMED':
       return advice('reconcile', 'This request already reserved the provider action. Check its private receipt or the connected application; do not dispatch it again.');
     case 'DIRECT_DISPATCH_UNCONFIRMED':

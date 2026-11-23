@@ -2,13 +2,13 @@ import { attestedProject, byokRpc } from './byok-rpc-fixture';
 import { randomUUID } from 'node:crypto';
 import { toolsRouterTool } from '@/app/api/agents/tools/router/assistantProtocol';
 import { connectorGateway } from '../tool-resolver';
-import { getVisibleConnector, loadConnectorCredential } from '../account-access';
+import { getConnectorProvider, getVisibleConnector, loadConnectorCredential } from '../account-access';
 import {withDirectActorEvidence} from '@/lib/database/hosted-project-identity';
 import { accountFixture, connectorFixture, providerFixture, toolkitFixture, toolFixture, secret, jsonResponse } from './composio-fixtures';
 
 const mockRpc = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (...args:unknown[]) => mockRpc(...args) } }));
-jest.mock('../account-access', () => ({ requireConnectorSiteAccess:jest.fn(), getVisibleConnector:jest.fn(), loadConnectorCredential:jest.fn() }));
+jest.mock('../account-access', () => ({ requireConnectorSiteAccess:jest.fn(), getVisibleConnector:jest.fn(), getConnectorProvider:jest.fn(), loadConnectorCredential:jest.fn() }));
 jest.mock('@/lib/database/hosted-project-identity',()=>({withDirectActorEvidence:jest.fn()}));
 jest.mock('@/app/api/agents/tools/router/screen-access', () => ({ ...jest.requireActual('@/app/api/agents/tools/router/screen-access'),
   assertToolScreenAccess: jest.fn(), loadToolScreenAccess: jest.fn(async () => ({isAdmin:true,blockedScreens:[]})) }));
@@ -23,18 +23,22 @@ afterEach(()=>{
 });
 
 // Network boundary only: real catalog parser, gateway, resolver, descriptor, adapter and failure recovery.
-it('reports the shared database stop at tools.search without substituting a report or touching Composio',async()=>{
+it.each([true,false])('discovers only the scoped tool on the exact shared account when admitted: %s',async allowed=>{
   const siteId=randomUUID(), connectorId=randomUUID(), project='a'.repeat(20);
   const ctx={siteId,userId:randomUUID(),agentId:randomUUID(),requestId:randomUUID(),instanceId:randomUUID(),catalogUserSession:true as const,host:'assistant' as const};
-  jest.mocked(getVisibleConnector).mockResolvedValueOnce({...connectorFixture(),id:connectorId,site_id:siteId,toolkit_slug:'supabase',supabase_project_ref:project});
-  jest.mocked(withDirectActorEvidence).mockImplementationOnce(async check=>({allowed:await check(),localProjectRef:project}));
-  mockRpc.mockImplementation(name=>({abortSignal:async()=>({data:name==='connector_direct_accounts'?[]:name==='connector_direct_actor',error:null})}));
+  const c={...connectorFixture(),id:connectorId,site_id:siteId,toolkit_slug:'supabase',supabase_project_ref:project,revocation_dispatched:false};
+  const p={...providerFixture(),site_id:siteId,provider_user_id:siteId};
+  jest.mocked(getVisibleConnector).mockResolvedValue(c);jest.mocked(getConnectorProvider).mockResolvedValue(p);
+  jest.mocked(withDirectActorEvidence).mockImplementation(async check=>({allowed:await check(),localProjectRef:project}));
+  mockRpc.mockImplementation(name=>({abortSignal:async()=>({data:name==='connector_direct_accounts'?[]:name==='connector_instance_scoped_read'?
+    allowed?{connector_id:connectorId,connector_revision:c.revision,policy_revision:1,direct_revision:1,credential_revision:p.credential_revision,project_ref:project}:null:name==='connector_direct_actor',error:null})}));
   const native={name:'report',description:'Local report',parameters:{type:'object'},execute:jest.fn()};
   const http=jest.spyOn(globalThis,'fetch').mockRejectedValue(new Error('Unexpected network call'));
   const router=toolsRouterTool([native,connectorGateway(async()=>ctx)],ctx);
   const answer=await router.execute({action:'search',query:'investor KPIs',connector_id:connectorId});
-  expect(answer).toMatchObject({success:false,count:0,tools:[],connector_error:'ASK_SHARED_DATABASE',connector_recovery:{action:'alternate_route'}});
-  expect(answer.hint).toMatch(/read-only source/);expect(JSON.stringify(answer)).not.toContain(project);
+  if(allowed)expect(answer).toMatchObject({success:true,count:1,tools:[{name:`connector:${connectorId}:SUPABASE_RUN_READ_ONLY_QUERY`,availability:'describe_required'}]});
+  else expect(answer).toMatchObject({success:false,count:0,tools:[],connector_error:'SCOPED_READ_NOT_ALLOWED'});
+  expect(JSON.stringify(answer)).not.toContain(project);
   expect(native.execute).not.toHaveBeenCalled(); expect(loadConnectorCredential).not.toHaveBeenCalled(); expect(http).not.toHaveBeenCalled();
 });
 

@@ -13,9 +13,9 @@ const accountSchema = z.object({
   state: z.object({ authScheme: z.string().optional(), val: z.object({ scope: z.unknown().optional(), full: z.unknown().optional() }) }).optional(),
 });
 
-function normalizeAccount(data: z.infer<typeof accountSchema>) {
+function normalizeAccount(data: z.infer<typeof accountSchema>, readScopes = true) {
   // scope is provider-granted state, never the auth-config's requested scope ceiling.
-  const rawScope = data.state?.val.scope;
+  const rawScope = readScopes ? data.state?.val.scope : undefined;
   const scopes = rawScope == null ? [] : providerValue(scopesSchema,
     typeof rawScope === 'string' ? rawScope.split(/[\s,]+/).filter(Boolean) : rawScope);
   // Composio may mask state.val.full to "http..." even on exact-account GET.
@@ -38,10 +38,14 @@ function normalizeAccount(data: z.infer<typeof accountSchema>) {
 export type ComposioAccount = ReturnType<typeof normalizeAccount>;
 
 export async function getAccount(client: ComposioClient, id: string): Promise<ComposioAccount> {
+  return readExactAccount(client,id,true);
+}
+
+async function readExactAccount(client: ComposioClient, id: string, readScopes:boolean): Promise<ComposioAccount> {
   inputValue(providerId, id);
   const data = providerValue(accountSchema, await client.request(`/connected_accounts/${id}`));
   if (data.id !== id) invalidProviderResponse();
-  return normalizeAccount(data);
+  return normalizeAccount(data,readScopes);
 }
 
 /** One bounded private-account page only. Never adopts accounts or traverses the project implicitly. */
@@ -54,15 +58,19 @@ export async function listAccounts(client: ComposioClient, userId: string, curso
   if (data.items.some(item => (item.user_id !== undefined && item.user_id !== userId) || item.experimental?.account_type === 'SHARED')) {
     invalidProviderResponse();
   }
-  return { items: data.items.map(normalizeAccount), next_cursor: data.next_cursor ?? null, total_items: data.total_items ?? null };
+  return { items: data.items.map(item=>normalizeAccount(item)), next_cursor: data.next_cursor ?? null, total_items: data.total_items ?? null };
 }
 
 /** Missing deprecated user_id requires a second provider-filtered exact-account ownership proof. */
-export async function verifyAccountIdentity(client: ComposioClient, expected: {
-  accountId: string; userId: string; toolkitSlug: string; authConfigId: string;
-}): Promise<ComposioAccount> {
+type AccountIdentity = {accountId:string;userId:string;toolkitSlug:string;authConfigId:string};
+export const verifyAccountIdentity = (client:ComposioClient,expected:AccountIdentity) => verifyIdentity(client,expected,true);
+/** Direct execution does not consume an OAuth grant inventory. Missing, partial or
+ * differently shaped scope metadata is neither proof nor denial of access. */
+export const verifyDirectAccountIdentity = (client:ComposioClient,expected:AccountIdentity) => verifyIdentity(client,expected,false);
+
+async function verifyIdentity(client:ComposioClient,expected:AccountIdentity,readScopes:boolean):Promise<ComposioAccount> {
   inputValue(z.object({ accountId: providerId, userId: providerId, toolkitSlug, authConfigId: providerId }).strict(), expected);
-  const account = await getAccount(client, expected.accountId);
+  const account = await readExactAccount(client,expected.accountId,readScopes);
   const matches = (item: ComposioAccount) => item.id === expected.accountId && item.toolkitSlug === expected.toolkitSlug
     && item.authConfigId === expected.authConfigId && item.accountType !== 'SHARED' && !item.authConfigDisabled && !item.disabled;
   if (!matches(account) || (account.userId !== undefined && account.userId !== expected.userId)) identityError();
@@ -70,7 +78,7 @@ export async function verifyAccountIdentity(client: ComposioClient, expected: {
     const params = new URLSearchParams({ user_ids: expected.userId, connected_account_ids: expected.accountId, limit: '1' });
     const data = providerValue(pageSchema(accountSchema, 1), await client.request(`/connected_accounts?${params}`));
     if (data.items.length !== 1 || data.next_cursor) identityError();
-    const filtered = normalizeAccount(data.items[0]);
+    const filtered = normalizeAccount(data.items[0],readScopes);
     if (!matches(filtered) || (filtered.userId !== undefined && filtered.userId !== expected.userId)) identityError();
     // The list proves ownership, not absence of grants. A reduced list DTO must not
     // downgrade an explicitly reported scope list to unknown (or erase broader grants).
