@@ -73,6 +73,18 @@ it('no key/metadata/dispatch for wrong host, wrong account or invalid interactiv
   await expect(f.run.call(f.name,f.pin)).rejects.toMatchObject({executed:false,code:'PRIVATE_DESTINATION_REQUIRED'});
   for(const dependency of [listDirectAccounts,authorizeDirectAction,loadConnectorCredential,executeDirectTool,describeDirectTool]) expect(dependency).not.toHaveBeenCalled();
 });
+it('rejects retired inputs before resolving authority, describing a provider action or claiming a receipt', async () => {
+  const resolve = jest.fn(), runtime = createProviderDirectRuntime(resolve);
+  const stale = `report:${randomUUID()}:MAKINARI_METRICS`;
+  // Simulate an older client rather than weakening the current discovery type.
+  await expect(runtime.search(JSON.parse('{"tool_origin":"makinari_report"}'))).rejects.toMatchObject({code:'INVALID_FILTER'});
+  for (const ref of [stale, ' REPORT :malformed']) {
+    await expect(runtime.search({query:ref})).rejects.toMatchObject({code:'INVALID_FILTER'});
+    await expect(runtime.describe(ref)).rejects.toMatchObject({code:'INVALID_TOOL_REFERENCE'});
+    await expect(runtime.call(ref,{})).rejects.toMatchObject({code:'INVALID_TOOL_REFERENCE',executed:false,effectStarted:false});
+  }
+  for (const dep of [resolve,listDirectAccounts,authorizeDirectAction,describeDirectTool,executeDirectTool,claimDirectDispatch]) expect(dep).not.toHaveBeenCalled();
+});
 it('does not use the legacy read or native report when policy is missing',async()=>{
   const f=fixture();jest.mocked(authorizeDirectAction).mockRejectedValue(new ConnectorError('DIRECT_POLICY_REQUIRED','Not enrolled',403));
   await expect(f.run.call(f.name,f.pin)).rejects.toMatchObject({code:'DIRECT_POLICY_REQUIRED',executed:false});

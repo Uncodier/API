@@ -20,15 +20,13 @@ function connectorImports(file:string) {
   walk(src);return found;
 }
 
-it('isolates the explicitly scoped read branch from the generic runtime, never loading a legacy runtime or public-channel policy as a fallback',()=>{
+it('never loads the retired report, historical receipt runtime or public-channel policy from Ask',()=>{
   const visited=new Set<string>();
-  const scoped=path.join(base,'instance-scoped-read.ts');
   function visit(file:string) {if(!visited.has(file)){visited.add(file);for(const dep of connectorImports(file)){
-    if(dep===scoped) {expect(path.basename(file)).toBe('instance-connector-dispatcher.ts');continue;}
     visit(dep);
   }}}
   for(const entry of ['tool-resolver','host-context','skill-discovery']) visit(path.join(base,entry+'.ts'));
   const modules=[...visited].map(file=>path.basename(file,'.ts'));
   expect(modules).toEqual(expect.arrayContaining(['provider-direct-runtime','provider-direct-policy','provider-direct-transport','provider-direct-receipt']));
-  expect(modules.filter(name=>/^(?:runtime$|reviewed-|supabase-(?:report|select|analytics)|catalog-read-|support-runtime|private-report-choice$|action-policy$)/.test(name))).toEqual([]);
+  expect(modules.filter(name=>/^(?:runtime$|instance-(?:scoped-|report-sources)|reviewed-|supabase-(?:report|select|analytics)|catalog-read-|support-runtime|private-report-choice$|action-policy$)/.test(name))).toEqual([]);
 });

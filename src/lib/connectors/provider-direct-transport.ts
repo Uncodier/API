@@ -26,8 +26,11 @@ const metadataSchema = z.object({
   input_parameters: z.record(z.unknown()), output_parameters: z.record(z.unknown()).nullish(),
   no_auth: z.literal(false), is_deprecated: z.literal(false), deprecated: z.object({ is_deprecated: z.literal(false).optional() }).nullish(),
   // Provider prose and advertised scope requirements are neither arguments nor authority.
-  tags: z.array(safeText(100)).max(128).optional(),
+  // Tags only describe effects. If their shape is unfamiliar, use no hints,
+  // not a fabricated read classification or a denial of an authorized action.
+  tags: z.unknown(),
 });
+const effectTags = z.array(safeText(100)).max(128).catch([]);
 function changed(): never {
   throw new ConnectorError('CONNECTOR_SCHEMA_CHANGED', 'The pinned action, account or authorization changed. Describe it again.', 409);
 }
@@ -74,19 +77,18 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
   // For a database-bound connection, a project-management action may not select
   // a different project or enumerate all projects. Never infer a project from a slug/argument.
   if (connector.supabase_project_ref && /(?:^|_)PROJECTS?(?:_|$)/.test(slug.slice(connector.toolkit_slug.length + 1)) &&
-    !Object.hasOwn(injected,'project_ref')) unsupportedDirectTool();
+    !Object.hasOwn(injected,'project_ref') && !Object.hasOwn(injected,'ref')) unsupportedDirectTool();
   const toolkit = await getToolkit(client, connector.toolkit_slug);
   if (toolkit.toolkit_type !== 'api' || toolkit.enabled === false) unsupportedDirectTool();
   const account = await verifyDirectAccountIdentity(client, {accountId:connector.provider_account_id, userId:provider.provider_user_id,
     toolkitSlug:connector.toolkit_slug, authConfigId:connector.auth_config_id});
-  // Supabase's native API_KEY setup takes a Management PAT. A missing/masked
-  // origin is not evidence that the key is a business-data-only credential.
-  if (account.accountType !== 'PRIVATE' || (!account.oauth2 && !account.apiKeyAuth) || account.hostedSupabasePat ||
-    (account.toolkitSlug === 'supabase' && account.apiKeyAuth)) notReady();
+  // A credential scheme is not a grant or a denial. The exact enrolled account,
+  // resource boundary, project and tool policy have already been verified.
+  if (account.accountType !== 'PRIVATE' || (!account.oauth2 && !account.apiKeyAuth)) notReady();
   current(directProof.expiresAt);
   // Only the app decides its grants. The pin binds the execution contract to
   // this verified authority; it is not a cache of provider permission reports.
-  const effect = directEffect(tool.tags ?? [], toolkit.slug, slug);
+  const effect = directEffect(effectTags.parse(tool.tags), toolkit.slug, slug);
   // Projection must not expose server secrets/bindings even if upstream metadata
   // repeats them inside a seemingly ordinary field name or enum literal.
   const visible = JSON.stringify(parameters);

@@ -10,6 +10,7 @@ import {CONNECTOR_DOMAINS, getToolkitDomains} from './domains';
 import {ConnectorError, type ConnectorContext} from './types';
 import type {ConnectorFilters, ConnectorCandidate} from './connector-discovery-types';
 import type {DirectAuthorizedConnector} from './provider-direct-policy';
+import type {CatalogOnlyAccount} from './selected-catalog-account';
 import {directActionNameSafe} from './provider-direct-guards';
 
 // Cursors refer to metadata positions only, never authorization. Resume a bounded page using
@@ -35,7 +36,7 @@ function matches(item:Item, kit:string, name:string, filters:ConnectorFilters) {
 
 /** Receives only freshly authorized accounts from Policies. No module is imported based on the
  * toolkit, name or effect. Search text stays local; selected IDs are server-saved policy data. */
-export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFilters, targets:DirectAuthorizedConnector[]) {
+export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFilters, targets:(DirectAuthorizedConnector | CatalogOnlyAccount)[]) {
   const parsed = filtersSchema.safeParse(input);
   if (!parsed.success) throw new ConnectorError('INVALID_FILTER','Use bounded catalog search filters.',400);
   const {cursor,...filters} = parsed.data;
@@ -48,7 +49,7 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
     }).filter(({domains,category})=>(!filters.domain || domains.includes(filters.domain)) && (!filters.category || category===filters.category))
     .sort((a,b)=>a.target.connector.id.localeCompare(b.target.connector.id));
   const identity=digest([ctx.siteId,ctx.instanceId,ctx.userId,ctx.agentId,ctx.connectorIdHint,filters,
-    accounts.map(({target:t})=>[t.connector.id,t.connector.revision,t.provider.credential_revision,t.policy.revision,t.directProof.attestationId,t.directProof.directRevision])]);
+    accounts.map(({target:t})=>[t.connector.id,t.connector.revision,t.provider.credential_revision,t.policy.revision,...('directProof' in t?[t.directProof.attestationId,t.directProof.directRevision]:['catalog_only'])])]);
   let account=0, page=1, offset=0, observed='';
   if (cursor !== undefined) {
     const m=/^d1:([a-f0-9]{32}):(\d{1,5}):(\d{1,6}):(\d{1,2}):(-|[a-f0-9]{32})$/.exec(cursor);
@@ -80,8 +81,8 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
         const name=connectorToolRef(target.connector.id,i.slug);
         if (!matches(i,kit,name,filters)) continue;
         tools.push({name,toolkit:kit,tool_origin:'provider',...modelAccountIdentity(target.connector.id),
-          domains,category,availability:directActionNameSafe(kit,i.slug)?'describe_required':'manual_only',
-          description:`${i.slug.replaceAll('_',' ')}. Catalog metadata is not authorization.`});
+          domains,category,availability:'directProof' in target && directActionNameSafe(kit,i.slug)?'describe_required':'manual_only',
+          description:'directProof' in target ? `${i.slug.replaceAll('_',' ')}. Catalog metadata is not authorization.` : 'Provider catalog only. This account has no direct execution admission; do not call or substitute another tool.'});
       }
       observed = offset<items.length?fingerprint:'';
       if (!observed) {

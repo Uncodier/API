@@ -11,3 +11,8 @@ export function connectorToolRef(connectorId: string, toolSlug: string) {
   parseConnectorToolRef(name);
   return name;
 }
+// Retired references remain reserved, including malformed qualifications. Never
+// pass them through native discovery (including embeddings) or provider routing.
+export function retiredReportRef(value: unknown) {
+  return typeof value === 'string' && /^\s*report\s*:/i.test(value);
+}

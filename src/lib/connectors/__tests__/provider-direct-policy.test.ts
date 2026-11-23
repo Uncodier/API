@@ -33,18 +33,13 @@ it('uses one site-scoped browse check, or an exact account visibility check even
   await expect(listDirectAccounts({...ctx,connectorIdHint:id})).rejects.toMatchObject({code:'DIRECT_POLICY_REQUIRED'});expect(visible).toHaveBeenCalledWith(site,user,id);
   visible.mockRejectedValueOnce(new ConnectorError('NOT_FOUND','Connector not found.',404));await expect(target()).rejects.toMatchObject({status:404});
 });
-it('distinguishes the shared installation on a visible exact selection, without using a credential or provider',async()=>{
+it('does not classify an unenrolled account by project name or grant it direct execution',async()=>{
   const local='a'.repeat(20);
   visible.mockResolvedValue({...fresh().connector,toolkit_slug:'supabase',supabase_project_ref:local});
   rpc.mockImplementation((name:string)=>reply(name==='connector_direct_actor' ? true : []));
   evidence.mockImplementation(async check=>({allowed:await check(),localProjectRef:local}));
-  await expect(listDirectAccounts({...ctx,connectorIdHint:id})).rejects.toMatchObject({code:'ASK_SHARED_DATABASE'});
-  await expect(authorizeDirectAction(ctx,id,'SUPABASE_RUN_READ_ONLY_QUERY')).rejects.toMatchObject({code:'ASK_SHARED_DATABASE'});
-  for (const proof of [{allowed:false,localProjectRef:local},{allowed:true,localProjectRef:null},{allowed:true,localProjectRef:'b'.repeat(20)}]) {
-    evidence.mockResolvedValueOnce(proof);
-    await expect(listDirectAccounts({...ctx,connectorIdHint:id})).rejects.toMatchObject({code:'DIRECT_POLICY_REQUIRED'});
-  }
-  evidence.mockClear();
+  await expect(listDirectAccounts({...ctx,connectorIdHint:id})).rejects.toMatchObject({code:'DIRECT_POLICY_REQUIRED'});
+  await expect(authorizeDirectAction(ctx,id,'SUPABASE_RUN_READ_ONLY_QUERY')).rejects.toMatchObject({code:'DIRECT_POLICY_REQUIRED'});
   visible.mockRejectedValueOnce(new ConnectorError('NOT_FOUND','Connector not found.',404));
   await expect(listDirectAccounts({...ctx,connectorIdHint:id})).rejects.toMatchObject({code:'NOT_FOUND'});
   expect(await listDirectAccounts(ctx)).toEqual([]);
@@ -78,7 +73,7 @@ it('compares an independently attested database resource to fresh local installa
   await expect(authorizeDirectAction(ctx,id,'SUPABASE_RUN_READ_ONLY_QUERY')).rejects.toMatchObject({code:'DIRECT_ACTION_UNSUPPORTED'});
   for (const actual of [null,'c'.repeat(20),external]) {evidence.mockResolvedValueOnce({allowed:true,localProjectRef:actual});await expect(resolve()).rejects.toMatchObject({status:403});}
   db.local_installation_ref=external;evidence.mockResolvedValueOnce({allowed:true,localProjectRef:external});await expect(resolve()).rejects.toMatchObject({status:403});
-  db.local_installation_ref=null;db.connector.supabase_project_ref=null;await expect(resolve()).rejects.toMatchObject({status:403});
+  db.local_installation_ref=local;db.connector.supabase_project_ref=null;await expect(resolve()).rejects.toMatchObject({status:403});
 });
 
 it('never upgrades explicit unsafe capabilities to executable actions through all mode',async()=>{

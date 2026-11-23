@@ -31,7 +31,6 @@ const row = z.object({
 });
 const unavailable = () => new ConnectorError('DIRECT_POLICY_UNAVAILABLE','The direct connector policy could not be verified.',503);
 const denied = () => new ConnectorError('DIRECT_POLICY_REQUIRED','Direct use is not available for this account, action and interactive session.',403);
-const sharedDatabase = () => new ConnectorError('ASK_SHARED_DATABASE','Ask cannot use the shared Makinari database through this connection.',403);
 const missing = () => new ConnectorError('NOT_FOUND','Connector not found.',404);
 const deadline = () => AbortSignal.timeout(5_000);
 
@@ -43,8 +42,8 @@ async function admit(ctx:ConnectorContext, connectorId?:string, action?:string):
   if (connectorId!==undefined && (!uuid.safeParse(connectorId).success || (ctx.connectorIdHint!==undefined && connectorId!==ctx.connectorIdHint))) throw missing();
   if (action!==undefined && !slug.safeParse(action).success) throw denied();
   // Distinguish a visible but unavailable selection from foreign/hidden IDs without leaking policy information.
-  const selected = connectorId!==undefined ? await getVisibleConnector(ctx.siteId,ctx.userId,connectorId) : undefined;
-  if (connectorId===undefined) await requireConnectorSiteAccess(ctx.siteId,ctx.userId);
+  if (connectorId!==undefined) await getVisibleConnector(ctx.siteId,ctx.userId,connectorId);
+  else await requireConnectorSiteAccess(ctx.siteId,ctx.userId);
   const actor = {p_site_id:ctx.siteId,p_user_id:ctx.userId,p_instance_id:ctx.instanceId!,p_agent_id:ctx.agentId!};
   const actorEvidence = () => withDirectActorEvidence(async()=>{
     const {data,error} = await supabaseAdmin.rpc('connector_direct_actor',actor).abortSignal(deadline());
@@ -58,15 +57,6 @@ async function admit(ctx:ConnectorContext, connectorId?:string, action?:string):
   if (!parsed.success) throw unavailable();
   if (!parsed.data.length) {
     if (connectorId===undefined) return [];
-    // Explain this denial only for an already visible, explicitly selected account
-    // whose stored binding matches fresh evidence from the actor's own gateway.
-    // A missing admission alone says nothing about the credential or provider.
-    if (selected?.id===connectorId && selected.site_id===ctx.siteId && selected.toolkit_slug==='supabase' && ref.safeParse(selected.supabase_project_ref).success) {
-      const evidence=await actorEvidence();
-      if (evidence.allowed && evidence.localProjectRef===selected.supabase_project_ref) {
-        throw sharedDatabase();
-      }
-    }
     throw denied();
   }
 
@@ -88,7 +78,7 @@ async function admit(ctx:ConnectorContext, connectorId?:string, action?:string):
     // Missing evidence or a different local installation invalidates a database attestation.
     // Never infer locality from a manager's URL or adopt another account on a mismatch.
     if (p.credential_revision!==credential.revision || p.project_id!==project.projectId || Date.parse(r.expires_at)<=Date.now() ||
-        (c.toolkit_slug==='supabase' && !c.supabase_project_ref) ||
+        (r.local_installation_ref!==null && c.supabase_project_ref===null) ||
         (c.supabase_project_ref!==null && (r.resource_boundary!==c.supabase_project_ref || !r.local_installation_ref)) ||
         (r.local_installation_ref!==null && (!localRef || localRef!==r.local_installation_ref || localRef===r.resource_boundary))) {
       if (connectorId!==undefined) throw denied();

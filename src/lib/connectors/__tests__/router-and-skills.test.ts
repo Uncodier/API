@@ -86,24 +86,34 @@ test('invalid connector JSON returns a safe pre-dispatch correction without insp
   expect(JSON.stringify(out)).not.toContain(privateText);expect(runtime.call).not.toHaveBeenCalled();
 });
 
-test('report names use the same decorated private host boundary but never alias the native report or another account',async()=>{
+test('retired report inputs never reach provider or native; ordinary native report remains available',async()=>{
   const id=randomUUID(), reportName=`report:${id}:MAKINARI_METRICS`;
   const local={...native,name:'report',execute:jest.fn(async()=>({success:true,label:'native'}))};
-  const router=toolsRouterTool([local,connectorGateway(async()=>context)],scope);
-  await router.execute({action:'describe',name:reportName});expect(runtime.describe).toHaveBeenCalledWith(reportName);
-  await router.execute({action:'call',name:reportName,args:'{}'});expect(runtime.call).toHaveBeenCalledWith(reportName,{});
-  jest.clearAllMocks();
-  for(const args of [{name:reportName,tool_origin:'provider' as const},{name,tool_origin:'makinari_report' as const},
-    {name:reportName,connector_id:randomUUID()},{name:'report',tool_origin:'makinari_report' as const},{name:`report:${id}:SUPABASE_RUN_READ_ONLY_QUERY`}]) {
-    expect(await router.execute({action:'call',...args,args:'{}'})).toMatchObject({success:false,executed:false});
+  const gateway=connectorGateway(async()=>context);
+  const router=toolsRouterTool([local,gateway],scope);
+  for (const schema of [router.parameters,gateway.parameters]) {
+    expect(schema.properties.tool_origin.enum).toEqual(['provider']);
+    expect(JSON.stringify(schema)).not.toMatch(/MAKINARI_METRICS|makinari_report/);
   }
-  expect(runtime.call).not.toHaveBeenCalled();expect(local.execute).not.toHaveBeenCalled();
+  for (const action of ['call','describe'] as const) {
+    for(const args of [{name:reportName}, {name:' REPORT :malformed'}, {name,tool_origin:'makinari_report'}, {name:'report',tool_origin:'makinari_report'}]) {
+      expect(await router.execute({action,...args,args:'{}'})).toMatchObject({success:false,executed:false});
+      expect(await gateway.execute({action:action==='call'?'execute':action,action_name:args.name,tool_origin:args.tool_origin})).toMatchObject({success:false,executed:false});
+    }
+  }
+  for(const action of ['search','list'] as const) {
+    for(const args of [{query:reportName}, {query:'report',catalog_query:reportName}, {query:'report',tool_origin:'makinari_report'}]) {
+      expect(await router.execute({action,...args})).toMatchObject({success:false,tools:[]});
+    }
+  }
+  expect(createProviderDirectRuntime).not.toHaveBeenCalled();expect(local.execute).not.toHaveBeenCalled();
   const pinned=toolsRouterTool([local,connectorGateway(async()=>({...context,connectorIdHint:id}),true)],scope);
   expect(await pinned.execute({action:'call',name:'report',args:'{}'})).toMatchObject({code:'INVALID_TOOL_REFERENCE',executed:false});
   expect(runtime.call).not.toHaveBeenCalled();expect(local.execute).not.toHaveBeenCalled();
   const noGateway=toolsRouterTool([local],scope);
   expect(await noGateway.execute({action:'search',query:'report',tool_origin:'makinari_report',connector_id:id})).toMatchObject({code:'HOST_DISABLED',tools:[]});
-  expect((await noGateway.execute({action:'describe',name:'report'})).name).toBe('report');
+  expect(await noGateway.execute({action:'search',query:reportName})).toMatchObject({code:'HOST_DISABLED',tools:[]});
+  expect((await router.execute({action:'describe',name:'report'})).name).toBe('report');
 });
 
 test('host removal, fake gateway names, and blocked connector screen cannot bypass native screen policy', async () => {

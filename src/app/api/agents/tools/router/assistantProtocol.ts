@@ -23,7 +23,7 @@ import { injectThoughtProcess, isAlwaysOnToolName, NATIVE_ARGUMENT_SCHEMA } from
 export { DEFAULT_ALWAYS_ON_TOOL_NAMES, isAlwaysOnToolName } from './tool-routing-policy';
 
 import { shareQueryVector, withSearchContext } from './search-context';
-import { withConnectorResolver } from '@/lib/connectors/tool-resolver';
+import { retiredConnectorTarget, withConnectorResolver } from '@/lib/connectors/tool-resolver';
 import { EmbeddingsService } from '@/lib/services/embeddings-service';
 import { bindCatalogBatchActor } from '../catalog_commerce/batch-admin-tool';
 import {
@@ -163,7 +163,7 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
       required: ['action'],
     },
     execute: async (args: { action: 'list' | 'search' | 'describe' | 'call'; name?: string; args?: any; category?: string; query?: string;
-      domain?: string; connector_id?: string; connector_cursor?: string; catalog_query?: string; tool_origin?: 'provider'|'makinari_report' }) => {
+      domain?: string; connector_id?: string; connector_cursor?: string; catalog_query?: string; tool_origin?: unknown }) => {
       const { action } = args;
       const denied = () => screenAccessFailure(new ToolScreenAccessDenied(), true);
       const target = (action === 'describe' || action === 'call') && args.name ? byName.get(args.name) : undefined;
@@ -322,7 +322,7 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
   // The facade lazily loads provider/runtime code only after a real host binding.
   if (!routedTools.some(tool => (tool as any)[Symbol.for('makinari.connector-gateway')] === true)) {
     return {...nativeRouter,execute:(args:Parameters<typeof nativeRouter.execute>[0]) => {
-      if(args.tool_origin!==undefined || args.connector_id!==undefined || (typeof args.name==='string' && /^(?:connector|report):/.test(args.name))) {
+      if(retiredConnectorTarget(args) || args.tool_origin!==undefined || args.connector_id!==undefined || (typeof args.name==='string' && /^(?:connector|report):/.test(args.name))) {
         return Promise.resolve({success:false,code:'HOST_DISABLED',executed:false,effectStarted:false,tools:[],error:'This host cannot use account-qualified tools. Do not substitute a native tool.'});
       }
       return nativeRouter.execute(args);

@@ -23,7 +23,7 @@ turn. This is a read-only procedure, not authorization for sending or writing.
    search terms or account credentials belong in a catalog query.
 3. Describe the exact returned `connector:<id>:<SLUG>` reference. Check the
    operation and arguments; do not substitute a mutation, an unknown-effect
-   action, another account or an internal Makinari metrics report for the requested
+   action, another account or a native tool for the requested
    read. **All tools** permits compatible actions in Makinari; it does not expand the
    provider credential’s access. If the provider denies the read, stop on that account.
 4. Use the described `version`, `schema_hash` and `arguments` envelope on the

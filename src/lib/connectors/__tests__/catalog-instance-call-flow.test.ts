@@ -1,14 +1,14 @@
-import { attestedProject, byokRpc } from './byok-rpc-fixture';
+import { attestedProject, byokOrigin, byokRpc } from './byok-rpc-fixture';
 import { randomUUID } from 'node:crypto';
 import { toolsRouterTool } from '@/app/api/agents/tools/router/assistantProtocol';
 import { connectorGateway } from '../tool-resolver';
-import { getConnectorProvider, getVisibleConnector, loadConnectorCredential } from '../account-access';
+import { getConnectorPolicy, getMemberGrant, getConnectorProvider, getVisibleConnector, loadConnectorCredential } from '../account-access';
 import {withDirectActorEvidence} from '@/lib/database/hosted-project-identity';
 import { accountFixture, connectorFixture, providerFixture, toolkitFixture, toolFixture, secret, jsonResponse } from './composio-fixtures';
 
 const mockRpc = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (...args:unknown[]) => mockRpc(...args) } }));
-jest.mock('../account-access', () => ({ requireConnectorSiteAccess:jest.fn(), getVisibleConnector:jest.fn(), getConnectorProvider:jest.fn(), loadConnectorCredential:jest.fn() }));
+jest.mock('../account-access', () => ({ requireConnectorSiteAccess:jest.fn(), getVisibleConnector:jest.fn(), getConnectorPolicy:jest.fn(),getMemberGrant:jest.fn(), getConnectorProvider:jest.fn(), loadConnectorCredential:jest.fn() }));
 jest.mock('@/lib/database/hosted-project-identity',()=>({withDirectActorEvidence:jest.fn()}));
 jest.mock('@/app/api/agents/tools/router/screen-access', () => ({ ...jest.requireActual('@/app/api/agents/tools/router/screen-access'),
   assertToolScreenAccess: jest.fn(), loadToolScreenAccess: jest.fn(async () => ({isAdmin:true,blockedScreens:[]})) }));
@@ -23,29 +23,38 @@ afterEach(()=>{
 });
 
 // Network boundary only: real catalog parser, gateway, resolver, descriptor, adapter and failure recovery.
-it.each([true,false])('keeps shared-account connector discovery separate from explicitly requested reports (report admitted: %s)',async allowed=>{
+it.each([true,false])('keeps shared-account connector discovery metadata-only without a report fallback (catalog reads: %s)',async allowed=>{
   const siteId=randomUUID(), connectorId=randomUUID(), project='a'.repeat(20);
   const ctx={siteId,userId:randomUUID(),agentId:randomUUID(),requestId:randomUUID(),instanceId:randomUUID(),catalogUserSession:true as const,host:'assistant' as const};
-  const c={...connectorFixture(),id:connectorId,site_id:siteId,toolkit_slug:'supabase',supabase_project_ref:project,revocation_dispatched:false};
+  const c={...connectorFixture(),id:connectorId,site_id:siteId,access_mode:'workspace' as const,toolkit_slug:'supabase',supabase_project_ref:project,revocation_dispatched:false};
   const p={...providerFixture(),site_id:siteId,provider_user_id:siteId};
   jest.mocked(getVisibleConnector).mockResolvedValue(c);jest.mocked(getConnectorProvider).mockResolvedValue(p);
   jest.mocked(withDirectActorEvidence).mockImplementation(async check=>({allowed:await check(),localProjectRef:project}));
-  mockRpc.mockImplementation(name=>({abortSignal:async()=>({data:name==='connector_direct_accounts'?[]:name==='connector_instance_scoped_read'?
-    allowed?{connector_id:connectorId,connector_revision:c.revision,policy_revision:1,direct_revision:1,credential_revision:p.credential_revision,project_ref:project}:null:name==='connector_direct_actor',error:null})}));
+  process.env.CONNECTORS_WEB_ORIGIN=byokOrigin;
+  jest.mocked(getMemberGrant).mockResolvedValue(null);
+  jest.mocked(getConnectorPolicy).mockResolvedValue({allowed_hosts:['assistant'],allowed_tools:[],tool_access_mode:'all',catalog_reads:allowed,require_approval:false});
+  jest.mocked(loadConnectorCredential).mockResolvedValue({apiKey:secret(),revision:p.credential_revision,source:'byok'});
+  mockRpc.mockImplementation((name,args)=>name===byokRpc?attestedProject(p)(name,args):({abortSignal:async()=>({data:name==='connector_direct_accounts'?[]:name==='connector_direct_actor',error:null})}));
   const native={name:'report',description:'Local report',parameters:{type:'object'},execute:jest.fn()};
-  const http=jest.spyOn(globalThis,'fetch').mockRejectedValue(new Error('Unexpected network call'));
+  const http=jest.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+    expect(init?.method).toBe('GET');expect(new URL(String(url)).pathname).toBe('/api/v3.1/tools');
+    return jsonResponse({items:[{...toolFixture(),name:'Read',slug:'SUPABASE_RUN_READ_ONLY_QUERY',toolkit:{slug:'supabase'}}],next_cursor:null,total_items:1});
+  });
   const router=toolsRouterTool([native,connectorGateway(async()=>ctx)],ctx);
   const search={action:'search' as const,query:'investor KPIs',connector_id:connectorId};
-  expect(await router.execute(search)).toMatchObject({success:false,tools:[],connector_error:'ASK_SHARED_DATABASE'});
+  const inventory=await router.execute({...search,action:'list'});
+  if(allowed) expect(inventory).toMatchObject({success:true,count:1,tools:[{name:`connector:${connectorId}:SUPABASE_RUN_READ_ONLY_QUERY`,availability:'manual_only',tool_origin:'provider'}]});
+  else expect(inventory).toMatchObject({success:false,tools:[],connector_error:'DIRECT_POLICY_REQUIRED'});
+  expect(http).toHaveBeenCalledTimes(allowed?1:0);http.mockClear();jest.mocked(loadConnectorCredential).mockClear();
   const providerRef=`connector:${connectorId}:SUPABASE_RUN_READ_ONLY_QUERY`;
-  expect(await router.execute({action:'describe',name:providerRef})).toMatchObject({success:false,code:'ASK_SHARED_DATABASE'});
-  expect(await router.execute({action:'call',name:providerRef,args:JSON.stringify({version:'20261116_00',schema_hash:'0'.repeat(64),arguments:{scope:'workspace',query:'select count(*) from analytics.paid_sales'}})})).toMatchObject({success:false,code:'ASK_SHARED_DATABASE',executed:false});
+  expect(await router.execute({action:'describe',name:providerRef})).toMatchObject({success:false,code:'DIRECT_POLICY_REQUIRED'});
+  expect(await router.execute({action:'call',name:providerRef,args:JSON.stringify({version:'20261116_00',schema_hash:'0'.repeat(64),arguments:{scope:'workspace',query:'select count(*) from analytics.paid_sales'}})})).toMatchObject({success:false,code:'DIRECT_POLICY_REQUIRED',executed:false});
   expect(mockRpc).not.toHaveBeenCalledWith('connector_instance_scoped_read',expect.anything());
-  expect(await router.execute({...search,tool_origin:'makinari_report',connector_id:undefined})).toMatchObject({success:false,tools:[],connector_error:'REPORT_ACCOUNT_REQUIRED'});
-  const answer=await router.execute({...search,tool_origin:'makinari_report'});
-  if(allowed)expect(answer).toMatchObject({success:true,count:1,tools:[{name:`report:${connectorId}:MAKINARI_METRICS`,toolkit:'makinari',tool_origin:'makinari_report',availability:'describe_required'}]});
-  else expect(answer).toMatchObject({success:false,count:0,tools:[],connector_error:'SCOPED_READ_NOT_ALLOWED'});
-  expect(JSON.stringify(answer)).not.toContain(project);
+  mockRpc.mockClear();
+  for(const connector_id of [connectorId,undefined]) {
+    expect(await router.execute({...search,tool_origin:'makinari_report',connector_id})).toMatchObject({success:false,tools:[],executed:false});
+  }
+  expect(mockRpc).not.toHaveBeenCalled();
   expect(native.execute).not.toHaveBeenCalled(); expect(loadConnectorCredential).not.toHaveBeenCalled(); expect(http).not.toHaveBeenCalled();
 });
 

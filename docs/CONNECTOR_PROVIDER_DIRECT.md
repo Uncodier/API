@@ -35,15 +35,14 @@ decision never upgrades a read-only provider credential or overrides a 403.
 | User asks for | How to discover it | Exact reference to describe and call |
 | --- | --- | --- |
 | An action on a connected app (calendar, CRM, inbox, commerce, etc.) | `tools` search/list with `tool_origin: "provider"`; keep the selected `connector_id`. This is the default connector inventory. | `connector:<id>:<SLUG>` |
-| An internal Makinari metrics report | Explicit `tool_origin: "makinari_report"` on the intended account. A visible account is not proof the report or a particular source/scope is authorized. | `report:<id>:MAKINARI_METRICS` |
 
 Candidates and descriptors carry `tool_origin`, `toolkit`, `connector_id` (the **local** account UUID), and `account_label`. The label is `Account …` plus the last eight characters of the local ID, as shown in the Ask picker. Never interpolate `display_name`, a provider account ID, email, credential, or arbitrary account metadata into the prompt. The label is a hint, not a routing key. Keep the full ID and exact returned name through describe and call.
 
 For example, two calendar connections may both list the same update action. Without a selection, follow the cursor, including empty pages, before concluding there is just one candidate. If the member has not specified which account, ask which one to use. If suffixes collide, ask for a selection in the account picker. **All tools** is a Makinari policy for that account; it cannot turn a read-only credential into one that can update events. A missing tool, provider denial or partial page does not authorize use of the other account.
 
-A shared-project report is a distinct source, not an alias for the provider's `SUPABASE_RUN_READ_ONLY_QUERY`. Neither a failed provider call nor a search for that slug invokes the report compiler. Do not change source (including to the native `report` tool), account or data scope to make an unavailable operation succeed. If the source is ambiguous, clarify before acting. Support, approvals and opening historical private receipts retain their narrower contracts. None gains private Ask authority.
+**Retired Ask report (local cutover).** The scoped Makinari metrics report is no longer a connector action. Its old origin and qualified references cannot be searched, described or called. Do not substitute the native `report` tool, a provider query or a different account. The requester can still open authorized, unexpired historical private receipts. Report-qualified names remain private in diagnostics. The native `report` and ordinary provider discovery are unchanged.
 
-On describe, the internal report exposes `available_sources` by scope and a `scope` enum with only currently admitted scopes. An absent scope or source is not an invitation to supply it manually or to report totals from a narrower scope. The provider descriptor instead describes the provider's action: Makinari does not add internal report sources or scope arguments to it. Neither descriptor authorizes dispatch. The prerequisite `20261123080000_connector_instance_report_sources.sql` was applied to shared Makinari on November 23, 2026 at **07:44:43 UTC**, and independently verified at **07:44:52 UTC**. This was schema only; it did not deploy the API, worker or web or execute a provider action.
+Deploy compatible API, workers and web first and drain older workers before applying `20261123090000_retire_instance_scoped_report.sql`. The forward migration closes scoped-report discovery and new claims/stores; it does not revoke generic member authority, reset connector policies or delete receipts. No remote migration or deployment is part of this local retirement.
 
 ### Earlier instance authority and scoped reads: schema applied to shared Makinari
 
@@ -53,17 +52,8 @@ On describe, the internal report exposes `available_sources` by scope and a `sco
   older direct receipts become unavailable. Drain in-flight work and allow the
   receipt TTL to elapse before rollout. Historical non-direct receipts and
   autonomous Agents are unchanged. Never start a new write to recover an old one.
-- `20261123041000_connector_instance_scoped_reads.sql` is for a bounded read on
-  the **exact** Supabase account, not delegation of arbitrary SQL or of a shared
-  administrative credential. An account eligible for this capability no longer
-  disappears from selected-account searches merely because it targets the shared
-  project. Local discovery sends no user text, query or secret to the provider.
-  Describe/call check the actual tool and account; an opaque receipt is returned.
-- The requested source and scope matter even if the credential can read the
-  whole database. Workspace scope is tenant-filtered. Platform aggregates need
-  the separately issued platform entitlement; never silently shrink a requested
-  platform query to workspace totals. These migrations issue no such entitlement.
-- Both migrations and the OAuth onboarding migration committed at **07:05:54 UTC
+- `20261123041000_connector_instance_scoped_reads.sql` introduced the historical scoped read. The later `20261123080000_connector_instance_report_sources.sql` supplied its authorized sources; it was applied to shared Makinari at **07:44:43 UTC** on November 23, 2026 and independently verified at **07:44:52 UTC**. Neither migration granted platform access. Do not roll them back to retire the Ask action.
+- The member-authority, scoped-read and OAuth onboarding migrations committed at **07:05:54 UTC
   on November 23, 2026**. Independent PostgreSQL verification at **07:06:02 UTC**
   confirmed the exact sources, installed routines and server-only RPC permissions.
   No account was enrolled, no platform grant was issued, and no application
@@ -104,7 +94,7 @@ catalogue and tool policy and any explicit revocation, not a broader credential.
 3. Deploy the matching API, worker and workspace builds as one cutover. The old
    runtime is **not** a fallback for missing enrollment or a failed provider call.
    Without direct enrollment a connection cannot use the generic transport.
-   The independently authorized scoped read is not a generic enrollment. Managers can
+   The retired scoped read is not a generic enrollment. Managers can
    select individual actions or `all`, enable, and revoke the direct policy.
 4. Validate with two disposable accounts of the same toolkit: a newly discovered
    action, an authorized read and explicitly approved write, genuine upstream
@@ -132,17 +122,19 @@ on extra token claims, MFA, headers or live session state. Only the identical
 receipt-storage acknowledgment may be retried; never retry an uncertain provider
 action. See [Ask admission and reconciliation](ASSISTANT_RESPONSE_LIFECYCLE.md).
 
+For an explicitly selected active account without direct admission, private Ask can still list provider catalog metadata when the member can use that account and its saved catalog, assistant and tool policies allow it. These candidates are `manual_only`, not calls or report suggestions. Discovery does not grant access to provider data. This rule is independent of toolkit or project identity and does not require a database migration.
+
 ## Limitations
+
+**Which checks can stop `call`?** The saved member/host/tool policy (`all` or `selected`) controls who can request the operation. Separately, this runtime currently requires a verified interactive turn, a current direct enrollment and isolation proof for that exact account, a private supported auth configuration, and an immutable supported tool contract. It excludes control-plane actions, arbitrary code/SQL, network/file transports and credential or tenant selectors. These are implementation and isolation restrictions, **not** extra OAuth scopes or evidence of a provider denial. In particular, an authorized member alone cannot delegate a project-wide management PAT on the shared database. A provider rejection after dispatch is final for that account. No path should ask for a broader token to fix a local format error.
+
+Optional display labels and unfamiliar effect tags are not access controls. The generic input validator accepts local `definitions` and `$defs`, closed zero-argument objects, and string formats `date`, `date-time`, `email` and `uuid`. It validates the declared arguments, never resolves external references, and does not inject report-specific arguments into provider calls.
 
 Toolkits exposed only through custom MCP, automatic auth, proxies, workbenches,
 arbitrary code/SQL or implicit file loading are not generic business actions.
 A provider contract that cannot be validated or an output that cannot be safely
 shown is explicitly unavailable/limited, not an empty result. No assertion of
-execution coverage for every tool in Composio is made. A Supabase Management PAT
-against this installation is not an isolated user credential: only the explicitly
-requested, independently authorized Makinari report uses that connection for a constrained read. The
-generic transport rejects such PATs. Never substitute a service key for the
-user’s account or drop tenant isolation to run investor KPIs.
+execution coverage for every tool in Composio is made. A shared installation credential cannot satisfy independent workspace isolation proof. A private API key requires the same proof as any other credential; there is no special report exception. Never substitute a service key for a user’s account.
 
 This change replaces **execution**, not every provider's account setup. Existing
 OAuth configuration/verification, managed setup and the legacy PAT form remain

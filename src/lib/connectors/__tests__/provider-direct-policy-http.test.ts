@@ -1,7 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { GET, PATCH } from '@/app/api/connectors/connections/[id]/provider-direct/route';
 import { ConnectorError } from '../types';
-import * as identity from '@/lib/database/hosted-project-identity';
 const getUser=jest.fn(), access=jest.fn(), rpc=jest.fn();
 jest.mock('@/lib/database/supabase-client',()=>({supabaseAdmin:{auth:{getUser:(...v:unknown[])=>getUser(...v)},rpc:(...v:unknown[])=>rpc(...v)}}));
 jest.mock('../account-access',()=>({...jest.requireActual('../account-access'),requireConnectorSiteAccess:(...v:unknown[])=>access(...v)}));
@@ -35,17 +34,10 @@ it('reports pending setup as unavailable, never returns a project reference, and
   rpc.mockReturnValue(reply({...pending,setup_pending:false})); expect((await PATCH(req('',{...patch,enabled:false}),context)).status).toBe(200);
   rpc.mockReturnValue(reply({...pending,attested:true,enabled:true})); expect((await GET(req(query),context)).status).toBe(503);
 });
-it('a confirmed shared installation is never offered for Ask: reject enable before the write but accept cancel',async()=>{
-  const observe=jest.spyOn(identity,'withAskPolicyLocality').mockImplementation(async (_rpc,read)=>({status:await read(),shared:true}));
-  try {
-    rpc.mockReturnValue(reply({...stored,bound_supabase_ref:'b'.repeat(20),attested:false,enabled:false}));
-    const read=await GET(req(query),context); const display=await read.json();
-    expect(display).toMatchObject({enabled:false,unsupported_reason:'shared_makinari_project'});expect(display).not.toHaveProperty('bound_supabase_ref');
-    rpc.mockClear(); expect((await PATCH(req('',patch),context)).status).toBe(409);
-    expect(rpc.mock.calls.map(c=>c[0])).toEqual(['connector_ask_policy_status']);
-    expect((await PATCH(req('',{...patch,enabled:false}),context)).status).toBe(200);
-    expect(rpc.mock.calls.map(c=>c[0])).toEqual(['connector_ask_policy_status','connector_set_ask_policy']);
-  } finally {observe.mockRestore();}
+it('uses the same authoritative manager RPC even for a bound project and never returns its private reference',async()=>{
+  rpc.mockReturnValueOnce(reply({...stored,bound_supabase_ref:'b'.repeat(20)}));
+  expect(await (await PATCH(req('',patch),context)).json()).toEqual(status);
+  expect(rpc.mock.calls.map(c=>c[0])).toEqual(['connector_set_ask_policy']);
 });
 it('rejects attempts to self-attest, spoof users or change other policy, query pollution and unbounded requests',async()=>{
   for (const b of [{...patch,attested:true},{...patch,user_id:actor},{...patch,allowed_tools:[]},{...patch,expected_revision:0},{...patch,expected_direct_revision:0},{...patch,expected_direct_revision:undefined},{...patch,enabled:'true'}]) expect((await PATCH(req('',b),context)).status).toBe(400);
@@ -54,12 +46,12 @@ it('rejects attempts to self-attest, spoof users or change other policy, query p
 });
 it('returns clean conflicts without reflecting private DB errors; invalid receipts cannot confirm changes',async()=>{
   for (const [code,expected] of [['P0D01','DIRECT_ATTESTATION_REQUIRED'],['40001','REVISION_CONFLICT']]) {
-    rpc.mockReturnValueOnce(reply({...stored,enabled:false,direct_revision:11})).mockReturnValueOnce(reply(null,{code,message:key}));
+    rpc.mockReturnValueOnce(reply(null,{code,message:key}));
     const res=await PATCH(req('',patch),context);expect(res.status).toBe(409);
     expect((await res.json()).error.code).toBe(expected);
   }
   for (const stale of [{revision:9},{direct_revision:11},{direct_revision:undefined}]) {
-    rpc.mockReturnValueOnce(reply({...stored,enabled:false,direct_revision:11})).mockReturnValueOnce(reply({...stored,...stale}));
+    rpc.mockReturnValueOnce(reply({...stored,...stale}));
     expect((await PATCH(req('',patch),context)).status).toBe(503);
   }
 });

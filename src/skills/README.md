@@ -165,8 +165,6 @@ For explicit external CRM or inbox tasks, use
 [`connector-messaging`](connector-messaging/SKILL.md). These primary domain skills
 support `task`, `integration`, and `automation` discovery; those types do not grant
 execution or background delegation. These procedures request reads; they do not authorize writes. Follow private Ask
-provider discovery on the intended account, not the native reporting tool or
-`report:<id>:MAKINARI_METRICS`. Use the latter only for an explicitly requested
-internal metrics report, with `tool_origin: "makinari_report"` and the exact account.
+provider discovery on the intended account. Do not substitute a native tool.
 An ambiguous account or data source needs a user choice; neither a missing tool
 nor an upstream denial is permission to switch.

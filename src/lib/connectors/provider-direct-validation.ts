@@ -3,8 +3,13 @@ import { findToolArgumentIssue, schemaFieldPath, type ToolArgumentIssue } from '
 import { CONNECTOR_MAX_STRING_UNITS } from './public-input-schema';
 import { ConnectorArgumentError } from './connector-argument-error';
 import { ConnectorError } from './types';
+import { z } from 'zod';
 
 type Dict = Record<string, unknown>;
+const formats = {date:z.string().date(),'date-time':z.string().datetime({offset:true}),uuid:z.string().uuid(),email:z.string().email()};
+export function isDirectStringFormat(value:unknown): value is keyof typeof formats {
+  return typeof value==='string' && Object.hasOwn(formats,value);
+}
 const error = (issue: ToolArgumentIssue): never => {throw new ConnectorArgumentError(issue);};
 const unsafe = (): never => {throw new ConnectorError('CONNECTOR_UNSAFE_ARGUMENT','External targets, executable inputs and file paths are not supported.',409);};
 
@@ -51,6 +56,7 @@ export function assertDirectArguments(schema: Dict, args: unknown): asserts args
         /(?:[a-z][a-z\d+.-]{0,30}:\/\/|\b(?:file|data|javascript|vbscript):|\\|^(?:~?\/|\.{1,2}\/)|(?:^|\s)\.\.\/)/i.test(target) ||
         /<\/?script\b|^\s*(?:#!|-----BEGIN .*PRIVATE KEY-----)|\b(?:select\s+[^;]+\s+from|insert\s+into|delete\s+from|drop\s+(?:table|database)|alter\s+table)\b/i.test(v)) unsafe();
       const n=[...v].length;
+      if (s.format!==undefined && (!isDirectStringFormat(s.format) || !formats[s.format].safeParse(v).success)) error({path,rule:'contract'});
       if (typeof s.minLength==='number' && n<s.minLength) error({path,rule:'minLength',bound:s.minLength});
       if (typeof s.maxLength==='number' && n>s.maxLength) error({path,rule:'maxLength',bound:s.maxLength});
       if (s.pattern!==undefined && (!safeDirectPattern(s.pattern) || !new RegExp(s.pattern,'u').test(v))) error({path,rule:'contract'});

@@ -72,9 +72,9 @@ describe('node execution continuation workflow', () => {
     await h.run({userMessageLogId:'user-log',catalogUserSession:true,executionMode:'direct',callerSource:'interactive',
       connectorIdHint:selection === 'selected' ? id : selection === 'malformed' ? marker : undefined});
     const prompt = h.processAssistantTurn.mock.calls[0][0].systemPrompt;
-    expect(prompt).toContain('tool_origin="provider"'); expect(prompt).toContain('tool_origin="makinari_report"');
-    expect(prompt).toContain('report:<id>:MAKINARI_METRICS'); expect(prompt).toContain('ask which account');
-    expect(prompt).toMatch(/never substitute a report for a provider tool/i); expect(prompt).not.toContain(marker);
+    expect(prompt).toContain('tool_origin="provider"'); expect(prompt).not.toContain('makinari_report');
+    expect(prompt).not.toContain('MAKINARI_METRICS'); expect(prompt).toContain('ask which account');
+    expect(prompt).toMatch(/never substitute a native tool/i); expect(prompt).not.toContain(marker);
     if (selection === 'selected') expect(prompt).toContain(`connector_id is ${id}`);
     else expect(prompt).not.toContain(id);
   });

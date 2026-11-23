@@ -1,4 +1,5 @@
-import type { ToolOrigin } from './connector-discovery-types';
+// Includes historical origins for privacy projection, not current discovery.
+type ToolOrigin = 'provider' | 'makinari_report';
 
 // A lossy diagnostic, not a dispatch decision or receipt. All emitted strings
 // come from this module's enums, never account IDs, labels, slugs or queries.

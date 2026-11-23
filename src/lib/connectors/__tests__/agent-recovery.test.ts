@@ -9,18 +9,11 @@ it.each([
   ['CONNECTOR_SCOPE_UNSUPPORTED','alternate_route'], ['APP_RESOURCE_DENIED','ask_user'], ['ACCESS_DENIED','ask_manager'],
   ['PROVIDER_RATE_LIMITED','retry_later'], ['APP_RATE_LIMITED','retry_later'], ['CONNECTOR_SCHEMA_CHANGED','describe_again'],
   ['CONNECTOR_OUTCOME_UNKNOWN','reconcile'], ['CONNECTOR_RESULT_UNSUPPORTED','alternate_route'], ['STALE_CURSOR','restart_search'],
-  ['ASK_SHARED_DATABASE','ask_user'], ['REPORT_ACCOUNT_REQUIRED','ask_user'], ['DIRECT_POLICY_REQUIRED','ask_manager'],
+  ['DIRECT_POLICY_REQUIRED','ask_manager'],
 ])('guides %s without exposing diagnostics or automatically replaying a call', (code,action) => {
   const detail = secret(); const failure = failureForAgent(new ConnectorError(code, detail));
   expect(failure).toMatchObject({ code, success:false, automatic_retry:false, recovery:{ action } });
   expect(failure).not.toHaveProperty('executed'); expect(JSON.stringify(failure)).not.toContain(detail);
-});
-
-it('explains the shared database limit without suggesting a policy toggle, more credentials or fabricated KPI values',()=>{
-  const advice=agentRecovery('ASK_SHARED_DATABASE');
-  expect(advice.message).toMatch(/shared database/); expect(advice.message).toMatch(/only if the user explicitly wants an internal Makinari metrics report/i);
-  expect(advice.message).toContain('tool_origin="makinari_report"');
-  expect(advice.message).toMatch(/Do not request an admin token/); expect(advice.action).not.toBe('ask_manager');
 });
 
 it.each(['ANALYTICS_WORKSPACE_DENIED','ANALYTICS_SCOPE_DENIED'])('keeps %s on the requested report source without inferring intent', code => {

@@ -1,4 +1,4 @@
-export type ToolOrigin = 'provider' | 'makinari_report';
+export type ToolOrigin = 'provider';
 export type ConnectorFilters = { query?: string; catalog_query?: string; domain?: string; category?: string; connector_id?: string; cursor?: string; tool_origin?: ToolOrigin };
 export type ConnectorCandidate = {
   tool_origin?: ToolOrigin; account_label?: string;

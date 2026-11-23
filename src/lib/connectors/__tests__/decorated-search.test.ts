@@ -64,15 +64,15 @@ it('does not fall back to native actions or another account for an explicit sele
   const {router}=await build(); const filters={action:'search',query:'contactos',connector_id:id};
   const res=await router.execute(filters);expect(res.tools.every((t:RoutedTool)=>t.name.startsWith(`connector:${id}:`))).toBe(true);
   expect(embeds).not.toHaveBeenCalled();
-  jest.mocked(listDirectAccounts).mockRejectedValueOnce(new ConnectorError('DIRECT_POLICY_REQUIRED','Not admitted',403));
-  expect(await router.execute(filters)).toMatchObject({success:false,tools:[],connector_error:'DIRECT_POLICY_REQUIRED'});
+  jest.mocked(listDirectAccounts).mockRejectedValueOnce(new ConnectorError('ACCESS_DENIED','Not admitted',403));
+  expect(await router.execute(filters)).toMatchObject({success:false,tools:[],connector_error:'ACCESS_DENIED'});
 });
 
 it('preserves a server-pinned account when the agent omits the connector filter, even on denial',async()=>{
   const {router}=await build(id);
   expect((await router.execute({action:'list'})).tools.every((tool:{name:string})=>tool.name.startsWith(`connector:${id}:`))).toBe(true);
-  jest.mocked(listDirectAccounts).mockRejectedValueOnce(new ConnectorError('ASK_SHARED_DATABASE','Not a provider account',403));
-  expect(await router.execute({action:'search',query:'report'})).toMatchObject({success:false,connector_error:'ASK_SHARED_DATABASE',tools:[]});
+  jest.mocked(listDirectAccounts).mockRejectedValueOnce(new ConnectorError('ACCESS_DENIED','Not a provider account',403));
+  expect(await router.execute({action:'search',query:'report'})).toMatchObject({success:false,connector_error:'ACCESS_DENIED',tools:[]});
   expect(embeds).not.toHaveBeenCalled();
 });
 it('losing access invalidates old continuations; screen denial does not read account metadata',async()=>{

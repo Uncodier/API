@@ -16,12 +16,6 @@ export function agentRecovery(code: string): Advice {
       return advice('ask_manager', 'Ask a workspace manager to enable catalog reads for this connection in Connectors if appropriate.', manual);
     case 'PROVIDER_DIRECT_NOT_ENABLED': case 'DIRECT_POLICY_REQUIRED':
       return advice('ask_manager', 'Makinari did not authorize this connection or tool for this Ask turn. Check the signed-in member’s connection access and the saved tool permissions. This is not a rejection from the provider. Do not reconnect or switch accounts.');
-    case 'ASK_SHARED_DATABASE':
-      return advice('ask_user', 'Generic provider actions are unavailable on this shared database. Only if the user explicitly wants an internal Makinari metrics report, search the same connection with tool_origin="makinari_report". Do not request an admin token, switch accounts or substitute a report for a provider action.');
-    case 'REPORT_ACCOUNT_REQUIRED':
-      return advice('ask_user', 'Ask which connected account to use for the internal Makinari metrics report. Have the user select it in Ask; do not guess the connector_id or request a provider account ID or token.');
-    case 'SCOPED_READ_NOT_ALLOWED':
-      return advice('ask_manager','Makinari did not authorize this internal report for the signed-in member, connection and turn. This is not a provider rejection. A manager can check the saved account and report permissions. Do not switch accounts, request a broader provider token or claim the query returned no data.');
     case 'DIRECT_DISPATCH_ALREADY_CLAIMED':
       return advice('reconcile', 'This request already reserved the provider action. Check its private receipt or the connected application; do not dispatch it again.');
     case 'DIRECT_DISPATCH_UNCONFIRMED':

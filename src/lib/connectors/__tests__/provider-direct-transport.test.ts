@@ -90,7 +90,7 @@ it.each(['RUN_READ_ONLY_QUERY','EXECUTE_SQL','RUN_CODE','RAW_API_REQUEST','UPLOA
   expect(directActionNameSafe('another',f.slug)).toBe(false);
 });
 
-it.each(['tool','toolkit','version','deprecated','no_auth','custom','mcp','disabled_toolkit','account','owner','auth_config','inactive','shared','private_missing','scheme','management'])('denies mismatched live identity/capability: %s',async kind=>{
+it.each(['tool','toolkit','version','deprecated','no_auth','custom','mcp','disabled_toolkit','account','owner','auth_config','inactive','shared','private_missing','scheme'])('denies mismatched live identity/capability: %s',async kind=>{
   const f=fixture(); const d=await f.describe();
   if(kind==='tool')f.tool.slug+='_OTHER';if(kind==='toolkit')f.tool.toolkit.slug='other';if(kind==='version')f.tool.version='20261125_04';
   if(kind==='deprecated')Object.assign(f.tool,{deprecated:{is_deprecated:true}});if(kind==='no_auth')f.tool.no_auth=true;
@@ -98,26 +98,26 @@ it.each(['tool','toolkit','version','deprecated','no_auth','custom','mcp','disab
   if(kind==='account')f.account.id+='_other';if(kind==='owner')f.account.user_id=randomUUID();if(kind==='auth_config')f.account.auth_config.id+='_other';
   if(kind==='inactive')f.account.status='EXPIRED';if(kind==='shared')f.account.experimental.account_type='SHARED';if(kind==='private_missing')Object.assign(f.account,{experimental:undefined});
   if(kind==='scheme')f.account.state.authScheme='NONE';
-  if(kind==='management') {
-    // Independently of toolkit naming, exact detail must not establish a hosted control-plane PAT.
-    const g=fixture('supabase'); Object.assign(g.account,{state:{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}}});
-    g.queue(g.tool,g.toolkit,g.account);await expect(g.read()).rejects.toMatchObject({code:'CONNECTOR_NOT_READY'});noPost();return;
-  }
   f.queue(f.tool,f.toolkit,f.account); const before=jest.fn();
   await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:{query:'books'}},before)).rejects.toMatchObject({executed:false,effectStarted:false});
   expect(before).not.toHaveBeenCalled();noPost();
 });
 
-it.each(['exact origin', 'unreported origin'])('does not delegate a Supabase API_KEY on a bound external project (%s)', async kind => {
-  const account = fixture('supabase','LIST_TABLES'), ref = 'b'.repeat(20);
-  account.target.directProof.resourceBoundary = ref;
-  Object.assign(account.target.connector, {supabase_project_ref:ref});
-  Object.assign(account.target, {localProjectRef:'a'.repeat(20)});
-  Object.assign(account.tool, {input_parameters:{type:'object',properties:{project_ref:{type:'string'}},required:['project_ref']}});
-  Object.assign(account.account.state, {authScheme:'API_KEY',val:kind === 'exact origin' ? {full:'https://api.supabase.com'} : {}});
-  account.queue(account.tool,account.toolkit,account.account);
-  await expect(account.read()).rejects.toMatchObject({code:'CONNECTOR_NOT_READY'});
-  noPost();
+it.each([['supabase','ref'],['businessdata','ref'],['supabase','project_ref'],['businessdata','project_ref']])('uses a private API key on the attested external project for %s with the provider field %s',async (kit,field)=>{
+  const f=fixture(kit,'LIST_TABLES'), ref='b'.repeat(20);
+  f.target.directProof.resourceBoundary=ref;
+  Object.assign(f.target.connector,{supabase_project_ref:ref});Object.assign(f.target,{localProjectRef:'a'.repeat(20)});
+  Object.assign(f.tool,{input_parameters:{type:'object',properties:{[field]:{type:'string'}},required:[field]}});
+  Object.assign(f.account.state,{authScheme:'API_KEY',val:kit==='supabase'?{full:'https://api.supabase.com'}:{}});
+  const d=await f.describe();expect(d.parameters.properties).toEqual({});
+  const pin={version:d.version,schema_hash:d.schemaHash,arguments:{}};
+  f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{count:1}});
+  await expect(f.call(pin)).resolves.toEqual({data:{count:1}});
+  expect(JSON.parse(http.mock.calls[3][1].body)).toMatchObject({connected_account_id:f.account.id,arguments:{[field]:ref}});
+  http.mockReset();f.queue(f.tool,f.toolkit,f.account);
+  await expect(f.call({...pin,arguments:{[field]:'c'.repeat(20)}})).rejects.toMatchObject({executed:false});noPost();
+  http.mockReset();Object.assign(f.target,{localProjectRef:ref});
+  await expect(f.call(pin)).rejects.toMatchObject({code:'CONNECTOR_NOT_READY',executed:false});expect(http).not.toHaveBeenCalled();
 });
 
 it.each(['attestation','direct_revision','policy_revision','account_revision','new_account','resource','schema','default','effect','output','key','scheme'])('prevents replay after %s changes',async kind=>{
@@ -206,6 +206,34 @@ const published = [
   {kit:'hubspot',op:'LIST_COMPANIES',schema:companies,version:'20261116_01', args:{limit:8,properties:['name'],after:'cursor'}},
   {kit:'googlecalendar',op:'LIST_CALENDARS',schema:calendars,version:'20261116_00',args:{page_token:'cursor',max_results:6}},
 ];
+
+it.each(['calendar','orderdesk'])('dispatches the declared date and record ID on the selected %s account without treating schema annotations as grants', async kit=>{
+  const f=fixture(kit,'LIST_RECORDS');
+  const privateLabel=secret();
+  Object.assign(f.tool,{tags:{providerLabel:privateLabel},input_parameters:{type:'object',definitions:{
+    Day:{type:'string',format:'date'},
+  },properties:{day:{$ref:'#/definitions/Day'},record_id:{type:'string',format:'uuid',title:{en:privateLabel}}},required:['day','record_id']}});
+  const d=await f.describe(), args={day:'2026-09-30',record_id:randomUUID()};
+  expect(d.effect).toBe('unknown');expect(JSON.stringify(d)).not.toContain(privateLabel);
+  const before=jest.fn(async()=>{});
+  for (const bad of [{...args,day:'2026-02-30'},{...args,record_id:'not-a-uuid'}]) {
+    f.queue(f.tool,f.toolkit,f.account);
+    await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:bad},before)).rejects.toMatchObject({executed:false});
+    noPost();http.mockReset();
+  }
+  expect(before).not.toHaveBeenCalled();
+  f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{count:1}});
+  await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:args},before)).resolves.toEqual({data:{count:1}});
+  expect(before).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(http.mock.calls[3][1].body)).toMatchObject({connected_account_id:f.account.id,arguments:args});
+});
+
+it('executes an explicitly closed zero-argument tool without requiring a redundant properties object',async()=>{
+  const f=fixture('ledger','LIST_CURRENCIES');Object.assign(f.tool,{input_parameters:{type:'object',additionalProperties:false}});
+  const d=await f.describe();expect(d.parameters.properties).toEqual({});
+  f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{count:0}});
+  await expect(f.call({version:d.version,schema_hash:d.schemaHash,arguments:{}})).resolves.toEqual({data:{count:0}});
+});
 it.each(published)('passes the committed $kit schema (including annotations and output refs), without a special adapter',async sample=>{
   const f=fixture(sample.kit,sample.op);Object.assign(f.tool,sample.schema,{version:sample.version,description:'List provider records. Optional URLs, headers and response links are documented.'});
   f.target.policy.require_approval=true; // Missing-use review setting: this is already a fully authorized account.

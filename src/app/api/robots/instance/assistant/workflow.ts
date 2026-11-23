@@ -125,8 +125,7 @@ export async function runAssistantWorkflow(
 Connected accounts in private Ask:
 - For external app tasks (for example, list calendar events or update a CRM record), use tools search/list with tool_origin="provider". Use short public action terms, not customer data. A provider tool is connector:<id>:<SLUG>.
 - If the account is unclear, follow connector_next_cursor even on empty pages. If multiple accounts fit, ask which account to use (toolkit and account_label, or the account picker if labels collide). Do not pick the first. Use the full local connector_id for routing, not the label.
-- Only if the user wants an internal Makinari metrics report, search/list the intended connector_id with tool_origin="makinari_report". Its reference is report:<id>:MAKINARI_METRICS, not a provider action or the native report tool. If the source is unclear, ask which one the user wants.
-- Describe the exact returned reference, check its origin and account, and call only that reference with its pinned version and schema. Keep the requested data source and scope. Never substitute a report for a provider tool, switch accounts or downgrade platform to workspace after a denial or no match.
+- Describe the exact returned reference, check its origin and account, and call only that reference with its pinned version and schema. Keep the requested data source and scope. Never substitute a native tool or switch accounts after a denial or no match.
 - All tools is the saved Makinari tool policy, not the provider credential's permission to read or write a resource. A private receipt is a link for the user, not data you can summarize. Do not replay an unconfirmed call.`;
     if (context.connectorIdHint) {
       // Never insert a connector display name, provider identifier or malformed selection in a prompt.

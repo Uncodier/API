@@ -1,5 +1,5 @@
 import { validateJson } from './composio-transport';
-import { assertDirectArguments, safeDirectPattern } from './provider-direct-validation';
+import { assertDirectArguments, isDirectStringFormat, safeDirectPattern } from './provider-direct-validation';
 import { CONNECTOR_MAX_ARRAY_ITEMS, CONNECTOR_MAX_STRING_UNITS } from './public-input-schema';
 import { directFieldSafe, unsupportedDirectSchema } from './provider-direct-guards';
 import { ConnectorError } from './types';
@@ -68,20 +68,18 @@ export function directSchemaContract(schema: Dict): Dict {
 export function directParameterPlan(raw: unknown, projectRef?: string) {
   validateJson(raw);
   const injected: Dict = {};
-  const defs = obj(raw) && obj(raw.$defs) ? raw.$defs : {};
   const annotations = [...presentation, 'default'];
   let nodes = 0;
   function project(v: unknown, depth: number): Dict {
     if (!obj(v) || ++nodes > 400 || depth > 10) unsupportedDirectSchema();
-    for (const key of labels) if (v[key] != null) {
-      if (typeof v[key] !== 'string' || (v[key] as string).length > 16_000) unsupportedDirectSchema();
-    }
     if (v.$ref !== undefined) {
       // Bounded expansion of local child definitions only. No remote documents,
       // filesystem/URL resolution, arbitrary JSON pointers, ignored siblings or cycles.
-      const m = typeof v.$ref === 'string' && /^#\/\$defs\/([A-Za-z][A-Za-z0-9_]{0,63})$/.exec(v.$ref);
-      if (!m || !Object.hasOwn(defs,m[1]) || Object.keys(v).some(k => k !== '$ref' && !labels.includes(k))) unsupportedDirectSchema();
-      return project(defs[m[1]],depth+1);
+      const m = typeof v.$ref === 'string' && /^#\/(\$defs|definitions)\/([A-Za-z][A-Za-z0-9_]{0,63})$/.exec(v.$ref);
+      if (!m || m[0]!==v.$ref || !obj(raw) || Object.keys(v).some(k => k !== '$ref' && !presentation.includes(k))) unsupportedDirectSchema();
+      const defs = raw[m[1]];
+      if (!obj(defs) || !Object.hasOwn(defs,m[2])) unsupportedDirectSchema();
+      return project(defs[m[2]],depth+1);
     }
     let out: Dict;
     if (v.anyOf !== undefined) {
@@ -94,12 +92,12 @@ export function directParameterPlan(raw: unknown, projectRef?: string) {
         !types.every(t => typeof t === 'string' && allowedTypes.includes(t))) unsupportedDirectSchema();
       out = { type: v.type };
       const keys = new Set([...annotations, 'type', 'enum', 'const']);
-      if (depth === 0 && v.$defs !== undefined) { if (!obj(v.$defs)) unsupportedDirectSchema(); keys.add('$defs'); }
+      for (const key of ['$defs','definitions']) if (depth===0 && v[key]!==undefined) { if (!obj(v[key])) unsupportedDirectSchema(); keys.add(key); }
       if (types.includes('object')) {
         for (const k of ['properties', 'required', 'additionalProperties']) keys.add(k);
-        if (!obj(v.properties) || Object.keys(v.properties).length > 100 ||
+        const props = v.properties===undefined && v.additionalProperties===false ? {} : v.properties;
+        if (!obj(props) || Object.keys(props).length > 100 ||
           (v.additionalProperties !== undefined && v.additionalProperties !== false)) unsupportedDirectSchema();
-        const props = v.properties;
         if (v.required !== undefined) {
           if (!Array.isArray(v.required) || new Set(v.required).size !== v.required.length ||
             !v.required.every(name => typeof name === 'string' && Object.hasOwn(props, name))) unsupportedDirectSchema();
@@ -113,7 +111,7 @@ export function directParameterPlan(raw: unknown, projectRef?: string) {
             if (depth === 0 && name === 'project_ref' && !projectRef) unsupportedDirectSchema();
             const self = depth === 0 && (name === 'user_id' || name === 'mailbox') &&
               (child.default === 'me' || child.const === 'me');
-            const bound = depth === 0 && name === 'project_ref' && projectRef !== undefined;
+            const bound = depth === 0 && (name === 'project_ref' || name === 'ref') && projectRef !== undefined;
             if (self || bound) {
               const value = self ? 'me' : projectRef;
               const constraint = project(child,depth+1);
@@ -148,6 +146,7 @@ export function directParameterPlan(raw: unknown, projectRef?: string) {
       if (types.includes('array')) { keys.add('items'); out.items = project(v.items, depth + 1); bounds('minItems', 'maxItems', CONNECTOR_MAX_ARRAY_ITEMS); }
       if (types.includes('string')) {
         bounds('minLength', 'maxLength', CONNECTOR_MAX_STRING_UNITS);
+        if (v.format!==undefined) { if (!isDirectStringFormat(v.format)) unsupportedDirectSchema(); keys.add('format'); out.format=v.format; }
         if (v.pattern !== undefined) { if (!safeDirectPattern(v.pattern)) unsupportedDirectSchema(); keys.add('pattern'); out.pattern = v.pattern; }
       }
       if (types.includes('number') || types.includes('integer')) bounds('minimum', 'maximum');
