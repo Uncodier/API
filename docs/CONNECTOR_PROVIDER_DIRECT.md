@@ -23,6 +23,13 @@ shared Composio project key is transport authentication, not the permission to
 use someone else's downstream account. The model cannot create this proof,
 enable the connection, switch projects or acquire an administrative token.
 
+In private Ask, `require_approval` is not an onboarding requirement or a
+per-call prompt. Already-authorized members and agents use the saved tools
+without review. A caller without local use permission cannot execute; a
+supported review flow can accept a request for that action instead. Generic
+direct actions do not automatically produce review requests. A manager's
+decision never upgrades a read-only provider credential or overrides a 403.
+
 The former Supabase SQL compiler, report-view registry, curated read profiles
 and toolkit-name filter are **not on the private Robots execution path**. Old
 published-report links remain bound to their old hash and report-choice handler.
@@ -31,7 +38,27 @@ separate; a published channel cannot gain direct execution by guessing a slug.
 
 ## Cutover
 
-**Shared Makinari status:** both schema migrations were applied together on November 23, 2026 at **05:52:48 UTC**. The two preexisting connections remain unenrolled. Do not replay the SQL on this target. Matching application/worker deployment and the two-account external acceptance tests below are still pending.
+**Shared Makinari:** the policy and receipt migrations were applied together on November 23, 2026 at **05:52:48 UTC**. Do not replay them. A subsequent read-only incident check found two fresh keyed Ask turns, each stopped at tool search with `DIRECT_POLICY_REQUIRED`; the selected Supabase account was connected to the shared installation. No direct reservation was present. This was a local admission denial, not a downstream 403 or a query that returned no rows.
+
+**New-connection default (forward change, not applied in this investigation):**
+`20261123030000_connector_ask_on_connect.sql` enables one-step setup for eligible
+new OAuth accounts. Deploy this prerequisite before the updated API and web.
+The Connect screen discloses that authorized users/agents may use saved tools,
+including writes. Its `POST /api/connectors/auth-attempts/ask` handler records
+the authenticated manager's intent on the new attempt, without admitting any
+tool or generating evidence. Old clients, callbacks, historical accounts,
+managed auth-configuration creation and the Supabase Management PAT form do
+not create this intent. The first valid independent account proof may complete
+the setup. Revoking or cancelling must not be reversed by a later proof.
+
+The versioned manager RPCs `connector_ask_policy_status` and
+`connector_set_ask_policy` include `setup_pending` in addition to the two CAS
+revisions and effective status. Only the API sees the database binding. A
+successful exact gateway response may establish the shared-installation reason
+for the UI; absence of that evidence never permits execution. Ask returns a
+specific explanation for a confirmed shared database rather than recommending
+a permissions toggle, reconnection or wider token. For company-wide KPIs provide
+an independently authorized read-only source of the required aggregates.
 
 1. Verify the intended database target and stage `20261123010000_connector_provider_direct.sql`
    followed by `20261123020000_connector_direct_receipts.sql`. No old
@@ -41,7 +68,8 @@ separate; a published channel cannot gain direct execution by guessing a slug.
    participating connection through the operator process. Never attest a shared
    installation, broad project management PAT, arbitrary administrative tool,
    or credential whose scope cannot be independently established. Confirm the
-   original account owner understands that direct calls may write and incur cost.
+   connecting manager understands that calls may write and incur cost. After
+   the forward change, a pending first setup needs no second manager click.
 3. Deploy the matching API, worker and workspace builds as one cutover. The old
    runtime is **not** a fallback for missing enrollment or a failed provider call.
    Without direct enrollment a connection cannot be used through the new Robots

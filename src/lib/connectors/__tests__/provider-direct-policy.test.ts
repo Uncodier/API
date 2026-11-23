@@ -33,6 +33,23 @@ it('uses one site-scoped browse check, or an exact account visibility check even
   await expect(listDirectAccounts({...ctx,connectorIdHint:id})).rejects.toMatchObject({code:'DIRECT_POLICY_REQUIRED'});expect(visible).toHaveBeenCalledWith(site,user,id);
   visible.mockRejectedValueOnce(new ConnectorError('NOT_FOUND','Connector not found.',404));await expect(target()).rejects.toMatchObject({status:404});
 });
+it('distinguishes the shared installation on a visible exact selection, without using a credential or provider',async()=>{
+  const local='a'.repeat(20);
+  visible.mockResolvedValue({...fresh().connector,toolkit_slug:'supabase',supabase_project_ref:local});
+  rpc.mockImplementation((name:string)=>reply(name==='connector_direct_actor' ? true : []));
+  evidence.mockImplementation(async check=>({allowed:await check(),localProjectRef:local}));
+  await expect(listDirectAccounts({...ctx,connectorIdHint:id})).rejects.toMatchObject({code:'ASK_SHARED_DATABASE'});
+  await expect(authorizeDirectAction(ctx,id,'SUPABASE_RUN_READ_ONLY_QUERY')).rejects.toMatchObject({code:'ASK_SHARED_DATABASE'});
+  for (const proof of [{allowed:false,localProjectRef:local},{allowed:true,localProjectRef:null},{allowed:true,localProjectRef:'b'.repeat(20)}]) {
+    evidence.mockResolvedValueOnce(proof);
+    await expect(listDirectAccounts({...ctx,connectorIdHint:id})).rejects.toMatchObject({code:'DIRECT_POLICY_REQUIRED'});
+  }
+  evidence.mockClear();
+  visible.mockRejectedValueOnce(new ConnectorError('NOT_FOUND','Connector not found.',404));
+  await expect(listDirectAccounts({...ctx,connectorIdHint:id})).rejects.toMatchObject({code:'NOT_FOUND'});
+  expect(await listDirectAccounts(ctx)).toEqual([]);
+  expect(evidence).not.toHaveBeenCalled(); expect(load).not.toHaveBeenCalled(); expect(binding).not.toHaveBeenCalled();
+});
 it('rejects noninteractive/forged scopes and account hint substitutions before database access',async()=>{
   for (const patch of [{host:'workflow'}, {host:'direct'}, {catalogUserSession:undefined}, {agentId:''}, {instanceId:undefined}, {siteId:''}, {userId:''}, {connectorIdHint:randomUUID()}]) {
     await expect(authorizeDirectAction({...ctx,...patch} as ConnectorContext,id,'CRM_UPDATE_DEAL')).rejects.toBeInstanceOf(ConnectorError);

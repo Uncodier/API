@@ -95,7 +95,7 @@ export function withConnectorResolver(native: RoutedTool, tools: RoutedTool[], s
     const failure = external.success ? external.partial_error : external.code ?? 'CONNECTOR_UNAVAILABLE';
     const hint = failure ? agentRecovery(failure).message : !connectorTools.length && !external.next_cursor
       ? accountOnly ? 'No eligible match on this connection. Do not substitute a native report or another account.'
-        : 'No matching provider action on an authorized connection. Check the account and its provider-direct policy, not the credential of a different account.'
+        : 'No matching provider tool was found on a connection available to Ask. This is not a query result or proof of missing provider permissions.'
       : 'Continue with connector_next_cursor even if this page is empty. Describe the exact account reference before calling; a catalog match is not execution authority.';
     const merged = [...nativeTools.slice(0, args.action === 'search' ? 10 - connectorTools.length : nativeTools.length), ...connectorTools];
     return { ...result, ...(accountOnly && !external.success && { success: false }), tools: merged, count: merged.length,

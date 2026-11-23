@@ -5,6 +5,7 @@ import { attestedProject, byokRpc, byokOrigin } from './byok-rpc-fixture';
 const rpc = jest.fn();
 const proofRpc = jest.fn();
 const from = jest.fn();
+const insert = jest.fn();
 const complete = jest.fn();
 const verify = jest.fn();
 const link = jest.fn();
@@ -37,7 +38,7 @@ function result(data: unknown, error: unknown = null) {
   const chain: any = { then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data, error }).then(resolve) };
   for (const method of ['select', 'eq', 'maybeSingle', 'single', 'abortSignal']) chain[method] = () => chain;
   chain.update = (patch: Record<string, unknown>) => { updates.push(patch); return result(claimSucceeds ? { id: attemptId } : null); };
-  chain.insert = () => result({ id: attemptId, expires_at: new Date(Date.now() + 60_000).toISOString() });
+  chain.insert = (row:Record<string,unknown>) => { insert(row); return result({ id: attemptId, expires_at: new Date(Date.now() + 60_000).toISOString() }); };
   return chain;
 }
 
@@ -62,10 +63,13 @@ beforeEach(() => {
   link.mockResolvedValue({ accountId: 'ca_test', redirectUrl: 'https://connect.composio.dev/link', expiresAt: new Date(Date.now() + 60_000).toISOString() });
 });
 
-it('persists an attempt before asking the provider for an authorization link', async () => {
-  const value = await startConnectorAuth({ siteId, userId, toolkitSlug: 'gmail', authConfigId: 'ac_test', nonce });
+it.each([undefined,true] as const)('persists the onboarding intent only for the disclosed start (%s), before requesting OAuth', async askOnConnect => {
+  const value = await startConnectorAuth({ siteId, userId, toolkitSlug: 'gmail', authConfigId: 'ac_test', nonce, askOnConnect });
   expect(value).toEqual({ attempt_id: attemptId, redirect_url: 'https://connect.composio.dev/link' });
   expect(from.mock.invocationCallOrder[0]).toBeLessThan(link.mock.invocationCallOrder[0]);
+  expect(insert).toHaveBeenCalledTimes(1);
+  if (askOnConnect) expect(insert.mock.calls[0][0]).toMatchObject({ask_on_connect:true,user_id:userId,site_id:siteId});
+  else expect(insert.mock.calls[0][0]).not.toHaveProperty('ask_on_connect');
   expect(updates).toContainEqual(expect.objectContaining({ provider_account_id: 'ca_test' }));
   expect(JSON.stringify(value)).not.toContain(nonce);
 });

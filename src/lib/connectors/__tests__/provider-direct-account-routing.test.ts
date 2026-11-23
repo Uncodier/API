@@ -18,7 +18,8 @@ afterEach(() => {
   jest.resetAllMocks();
 });
 
-it.each(['http', 'downstream'] as const)('never falls back to the writable sibling after an account-specific %s 403', async denial => {
+it.each([['OAUTH2','http'],['OAUTH2','downstream'],['API_KEY','http'],['API_KEY','downstream']] as const)(
+  'uses provider permissions, not Makinari all mode, for a read-only %s account receiving a %s 403', async (scheme,denial) => {
   const site = randomUUID(), slug = 'PLANNING_CREATE_BOOKING', kit = 'planning';
   const transportKey = secret(), rev = secret(), receipt = randomUUID();
   const provider = {...providerFixture(),id:randomUUID(),site_id:site,provider_user_id:site,credential_revision:rev};
@@ -26,7 +27,8 @@ it.each(['http', 'downstream'] as const)('never falls back to the writable sibli
     return {attestation_id:randomUUID(),direct_revision:2,expires_at:new Date(Date.now()+3600000).toISOString(),local_installation_ref:null,
       resource_boundary:'dedicated-site',provider,connector:{...connectorFixture(),id:randomUUID(),site_id:site,provider_id:provider.id,
         toolkit_slug:kit,provider_account_id:`ca_${randomUUID()}`,revocation_dispatched:false,supabase_project_ref:null,access_mode:'workspace',created_by:randomUUID()},
-      policy:{revision:1,allowed_tools:[] as string[],allowed_hosts:['assistant'],require_approval:false,tool_access_mode:'all'}};
+      // Allows a request from a principal lacking use; it is not a per-write approval.
+      policy:{revision:1,allowed_tools:[] as string[],allowed_hosts:['assistant'],require_approval:true,tool_access_mode:'all'}};
   }
   const a = row(), b = row(), rows = [a,b];
   const tool = {...toolFixture(),toolkit:{slug:kit},slug,scopes:[],tags:['createHint'],
@@ -53,7 +55,7 @@ it.each(['http', 'downstream'] as const)('never falls back to the writable sibli
     if (init.method==='GET' && path.startsWith('/connected_accounts/')) {
       const id = path.split('/').at(-1)!; accounts.push(id);
       if (rows.some(r=>r.connector.provider_account_id===id)) return jsonResponse({...accountFixture(),id,user_id:site,
-        toolkit:{slug:kit},state:{authScheme:'OAUTH2',val:{scope:id===a.connector.provider_account_id?'write':'read'}}});
+        toolkit:{slug:kit},state:{authScheme:scheme,val:scheme==='API_KEY'?{}:{scope:id===a.connector.provider_account_id?'write':'read'}}});
     }
     if (init.method==='POST' && path===`/tools/execute/${slug}`) {
       const id = JSON.parse(String(init.body)).connected_account_id; posted.push(id);

@@ -1,5 +1,5 @@
 import { Resolver } from 'node:dns/promises';
-import { captureCatalogActorReply, captureDirectActorReply } from './supabase-admin';
+import { captureCatalogActorReply, captureDirectActorReply, captureAskPolicyReply, type AskPolicyRpc } from './supabase-admin';
 
 const hosted = /^([a-z]{20})\.supabase\.co$/;
 const label = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -49,3 +49,12 @@ async function withActorEvidence(capture: typeof captureCatalogActorReply, check
 }
 export const withCatalogActorEvidence = (check: () => Promise<boolean>) => withActorEvidence(captureCatalogActorReply, check);
 export const withDirectActorEvidence = (check: () => Promise<boolean>) => withActorEvidence(captureDirectActorReply, check);
+
+/** Presentation only, not an enrollment or execution grant. Observe only the
+ * exact authorized manager RPC. Avoid a DNS lookup for non-database accounts. */
+export async function withAskPolicyLocality<T extends {bound_supabase_ref:string|null}>(rpc:AskPolicyRpc, read:()=>Promise<T>) {
+  let status!:T;
+  const {reply}=await captureAskPolicyReply(rpc, async()=>{ status=await read(); return status.bound_supabase_ref!==null; });
+  const local=reply ? await projectRef(reply.baseUrl,reply.projectHeader).catch(()=>null) : null;
+  return {status,shared:!!local && local===status.bound_supabase_ref};
+}

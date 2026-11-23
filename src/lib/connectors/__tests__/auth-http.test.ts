@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { connectorAuthHandler } from '../auth-http';
+import { POST as startAsk } from '@/app/api/connectors/auth-attempts/ask/route';
+import { ConnectorError } from '../types';
 
 const getUser = jest.fn();
 const access = jest.fn();
@@ -43,6 +45,17 @@ it('binds the authenticated actor and requires current manager access', async ()
   expect(access).toHaveBeenCalledWith(siteId, userId, true);
   expect(start).toHaveBeenCalledWith({ siteId, userId, toolkitSlug: 'gmail', authConfigId: 'ac_test', nonce });
   expect(await response.text()).not.toContain(token);
+});
+
+it('only the disclosed start route records Ask intent; ordinary bodies and callbacks cannot supply it',async()=>{
+  expect((await startAsk(request(body(),null))).status).toBe(401);
+  access.mockRejectedValueOnce(new ConnectorError('ACCESS_DENIED','Manager required',403));
+  expect((await startAsk(request(body()))).status).toBe(403);
+  for(const route of ['start','start-ask'] as const) expect((await connectorAuthHandler(request({...body(),ask_on_connect:true}),route)).status).toBe(400);
+  expect((await connectorAuthHandler(request({site_id:siteId,nonce,session_uri:'opaque',ask_on_connect:true}),'complete',attemptId)).status).toBe(400);
+  expect(start).not.toHaveBeenCalled(); expect(finish).not.toHaveBeenCalled();
+  expect((await startAsk(request(body()))).status).toBe(201);
+  expect(start).toHaveBeenCalledWith({siteId,userId,toolkitSlug:'gmail',authConfigId:'ac_test',nonce,askOnConnect:true});
 });
 
 it('forwards only strict completion proof and denies URL account claims', async () => {

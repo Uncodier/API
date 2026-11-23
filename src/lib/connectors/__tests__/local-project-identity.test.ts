@@ -192,3 +192,15 @@ test('private direct evidence is bound to its own predicate, not interchangeable
   gateway(ref,'false'); expect(await withDirectActorEvidence(direct)).toEqual({allowed:false,localProjectRef:null});
   gateway(ref,'true'); expect(await withDirectActorEvidence(async ()=>(await direct()) && (await direct()))).toEqual(noProof);
 });
+
+test.each(['connector_ask_policy_status','connector_set_ask_policy'] as const)('identifies the shared database only from the exact successful %s reply', async rpcName=>{
+  const f=load(alias);
+  const {withAskPolicyLocality}=require('@/lib/database/hosted-project-identity') as typeof import('@/lib/database/hosted-project-identity');
+  const read=async()=>{const {data,error}=await f.admin.rpc(rpcName,args); if(error)throw new Error('Not visible'); return data;};
+  const status={bound_supabase_ref:ref}; gateway(ref,JSON.stringify(status));
+  expect(await withAskPolicyLocality(rpcName,read)).toEqual({status,shared:true});
+  expect((await withAskPolicyLocality(rpcName==='connector_ask_policy_status'?'connector_set_ask_policy':'connector_ask_policy_status',read)).shared).toBe(false);
+  mockCname.mockClear(); gateway(ref,JSON.stringify({bound_supabase_ref:null}));
+  expect((await withAskPolicyLocality(rpcName,read)).shared).toBe(false); expect(mockCname).not.toHaveBeenCalled();
+  gateway(ref,JSON.stringify({bound_supabase_ref:other}));expect((await withAskPolicyLocality(rpcName,read)).shared).toBe(false);
+});

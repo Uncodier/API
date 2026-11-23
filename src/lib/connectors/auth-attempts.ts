@@ -36,7 +36,7 @@ async function setUnknown(attemptId: string, previous: string) {
     .eq('id', attemptId).eq('status', previous).abortSignal(signal());
 }
 
-export async function startConnectorAuth(input: { siteId: string; userId: string; toolkitSlug: string; authConfigId: string; nonce: string }) {
+export async function startConnectorAuth(input: { siteId: string; userId: string; toolkitSlug: string; authConfigId: string; nonce: string; askOnConnect?:true }) {
   nonceSchema.parse(input.nonce);
   const { provider, credential, callbackUrl } = await prepareConnectorProvider(input.siteId, input.userId);
   const client = createComposioClient(credential.apiKey);
@@ -55,6 +55,7 @@ export async function startConnectorAuth(input: { siteId: string; userId: string
     site_id: input.siteId, provider_id: provider.id, user_id: input.userId,
     toolkit_slug: input.toolkitSlug, auth_config_id: input.authConfigId,
     nonce_hash: hash(input.nonce), credential_revision: credential.revision, status: 'pending',
+    ...(input.askOnConnect===true && {ask_on_connect:true}),
     expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
   }).select('id,expires_at').abortSignal(signal()).single();
   if (insert.error) connectorDatabaseError(insert.error);

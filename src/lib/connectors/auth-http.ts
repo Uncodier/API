@@ -22,7 +22,7 @@ async function actor(request: Request, siteId: string) {
   return data.user.id;
 }
 
-export async function connectorAuthHandler(request: Request, operation: 'start' | 'get' | 'complete', id?: string): Promise<Response> {
+export async function connectorAuthHandler(request: Request, operation: 'start' | 'start-ask' | 'get' | 'complete', id?: string): Promise<Response> {
   try {
     if (id) site.parse(id);
     if (operation === 'get') {
@@ -35,10 +35,12 @@ export async function connectorAuthHandler(request: Request, operation: 'start' 
     }
     if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw new ConnectorError('JSON_REQUIRED', 'JSON content type required.', 415);
     const body = await readCatalogJson(request, 16_384);
-    if (operation === 'start') {
+    if (operation === 'start' || operation === 'start-ask') {
+      if (new URL(request.url).search) throw new ConnectorError('INVALID_REQUEST','Send connection parameters in the request body.',400);
       const input = startSchema.parse(body);
       const userId = await actor(request, input.site_id);
-      return Response.json(await startConnectorAuth({ siteId: input.site_id, userId, toolkitSlug: input.toolkit_slug, authConfigId: input.auth_config_id, nonce: input.nonce }), { status: 201, headers });
+      return Response.json(await startConnectorAuth({ siteId: input.site_id, userId, toolkitSlug: input.toolkit_slug, authConfigId: input.auth_config_id,
+        nonce: input.nonce, ...(operation==='start-ask' && {askOnConnect:true as const}) }), { status: 201, headers });
     }
     const input = completeSchema.parse(body);
     const userId = await actor(request, input.site_id);
