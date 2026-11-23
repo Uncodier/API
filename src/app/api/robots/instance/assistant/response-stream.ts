@@ -112,7 +112,7 @@ export function assistantResponseStream(
   });
   return new Response(body, { headers: {
     'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
+    'Cache-Control': 'private, no-store, no-transform',
     'X-Workflow-Run-Id': run.runId,
     'X-Assistant-Stream-Version': '1',
   } });

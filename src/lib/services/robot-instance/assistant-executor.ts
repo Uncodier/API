@@ -57,11 +57,12 @@ export async function executeAssistantStep(
       
       const logOptions = options.executionBoundary ? { strict: true,
         redact: options.executionBoundary.redact?.bind(options.executionBoundary) } : undefined;
-      const streamingCallbacks = !options.executionBoundary && instance_id && site_id
+      if (options.ownerConnectorContext && options.instance_node_id) throw new Error('Private connector context requires a conversation turn');
+      const streamingCallbacks = !options.executionBoundary && !options.ownerConnectorContext && instance_id && site_id
           ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id)
           : undefined;
       
-      const thinkingStreamCallbacks = !options.executionBoundary && instance_id && site_id
+      const thinkingStreamCallbacks = !options.executionBoundary && !options.ownerConnectorContext && instance_id && site_id
         ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id)
         : undefined;
 
@@ -214,7 +215,7 @@ export async function executeAssistantStep(
                 tools: prepared.tools,
                 system: activeSystemPrompt,
                 messages: hydratedMessages,
-                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id, instance_node_id, logOptions),
+                onStep: options.ownerConnectorContext ? undefined : createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id, instance_node_id, logOptions),
                 stream: !options.executionBoundary && (!!streamingCallbacks || !!nodeWriter),
                 onStreamStart: wrappedOnStreamStart,
                 onStreamChunk: wrappedOnStreamChunk,

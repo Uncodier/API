@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { execution, recoveryDatabase, scope } from '../test-support/assistant-recovery-fixture';
 import { MAX_RECOVERY_MESSAGES_BYTES, MAX_RECOVERY_RESPAWNS } from '../assistant-recovery-schema';
@@ -336,5 +336,24 @@ it('never persists the live private wrapper arguments or reply at either checkpo
   expect(stored[4]).toMatchObject({tool_call_id:'private',content:expect.stringContaining('not an execution receipt')});
   expect(stored[6]).toMatchObject({tool_call_id:'inventory',content:expect.stringContaining('not an execution receipt')});
   expect(JSON.stringify(database.writes())).not.toContain('returned_count');
+  expect(JSON.stringify(messages)).toBe(original);
+});
+
+it('excludes the answer and all derived follow-up content from shared recovery state', async () => {
+  const text = randomBytes(24).toString('hex');
+  const connector = randomUUID(), claim = randomUUID();
+  const messages = [{role:'user',content:'Show my numbers'},
+    {role:'assistant',tool_calls:[{id:'sql',type:'function',function:{name:'tools',arguments:JSON.stringify({action:'call',name:`connector:${connector}:SUPABASE_RUN_READ_ONLY_QUERY`})}}]},
+    {role:'tool',tool_call_id:'sql',content:JSON.stringify({success:true,result_visibility:'ask_owner',result_connector_id:connector,result_claim_id:claim,result:{rows:[{label:text}]}})},
+    {role:'assistant',content:`Derived from ${text}`,reasoning_details:[{text}]}];
+  const original = JSON.stringify(messages);
+  await recovery.initializeAssistantRecovery(scope,{...execution,callerSource:'interactive',catalogUserSession:true});
+  await recovery.markAssistantRecoveryInFlight(scope,messages);
+  await recovery.runAssistantRecoveryTool(scope,'tools',{action:'search',query:text},async () => ({result:text}),true);
+  await recovery.checkpointAssistantRecovery(scope,{messages});
+  expect(JSON.stringify(database.writes())).not.toContain(text);
+  expect(JSON.stringify(database.writes())).not.toContain(claim);
+  expect(database.snapshot().messages).toEqual([{role:'user',content:'Show my numbers'},
+    {role:'assistant',content:expect.stringContaining('Do not replay')}]);
   expect(JSON.stringify(messages)).toBe(original);
 });

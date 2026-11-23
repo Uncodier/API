@@ -4,6 +4,7 @@ import { toolsRouterTool } from '@/app/api/agents/tools/router/assistantProtocol
 import { connectorGateway } from '../tool-resolver';
 import { getConnectorProvider, getVisibleConnector, listVisibleConnectors, loadConnectorCredential } from '../account-access';
 import { accountFixture, connectorFixture, providerFixture, toolkitFixture, toolFixture, secret, jsonResponse } from './composio-fixtures';
+import readOnlySql from './fixtures/supabase-report-20261116_00.json';
 
 const mockRpc = jest.fn(), mockFrom = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (...args:unknown[]) => mockRpc(...args), from: (table:string) => mockFrom(table) } }));
@@ -153,18 +154,91 @@ it.each(['all','selected'] as const)('dispatches a new %s-mode action on the cho
   // Separate explicit user operation, not automatic retry after a denial.
   ctx.requestId=randomUUID();
   const ok=await router.execute({action:'call',name,args});
-  expect(ok).toEqual({success:true,result:{count:1,has_more:true},
-    guidance:expect.stringContaining('Answer using the result facts')});
-  expect(JSON.stringify(ok)).not.toContain(String(privateRow)); expect(JSON.stringify(ok)).not.toContain(apiKey);
+  expect(ok).toMatchObject({success:true,result_visibility:'ask_owner',result:{count:1,has_more:true,items:[{id:privateRow}]}});
+  expect(JSON.stringify(ok)).not.toContain(apiKey);
   expect(mockRpc).not.toHaveBeenCalledWith('store_connector_account_result',expect.anything());
   expect(mockRpc).toHaveBeenCalledWith('confirm_connector_result_release',{p_claim_id:receiptId});
   expect(dispatches).toBe(2);
 
   ctx.requestId=randomUUID();
   const saved=await router.execute({action:'call',name,args:JSON.stringify({...JSON.parse(args),save_record:true})});
-  expect(saved).toMatchObject({success:true,result:{count:1,has_more:true},receipt:{status:'private_result_ready',url:`/connectors/results/${receiptId}`}});
-  expect(JSON.stringify(saved)).not.toContain(String(privateRow)); expect(JSON.stringify(saved)).not.toContain(apiKey);
+  expect(saved).toMatchObject({success:true,result:ok.result,receipt:{status:'private_result_ready',url:`/connectors/results/${receiptId}`}});
+  expect(JSON.stringify(saved)).not.toContain(apiKey);
   expect(mockRpc).toHaveBeenCalledWith('store_connector_account_result',expect.objectContaining({p_user_id:ctx.userId,
     p_report:expect.objectContaining({rows:[['$.items[0].id',String(privateRow)],['$.count','1'],['$.has_more','true']]})}));
   expect(dispatches).toBe(3);
+});
+
+it.each(['probe','beta report','read-only report'] as const)('delivers a confirmed Supabase %s through the Ask router', async mode => {
+  const siteId = randomUUID(), connectorId = randomUUID(), revision = secret(), apiKey = secret();
+  const ctx = {siteId,userId:randomUUID(),agentId:randomUUID(),requestId:randomUUID(),instanceId:randomUUID(),
+    connectorIdHint:connectorId,catalogUserSession:true as const,host:'assistant' as const};
+  const provider = {...providerFixture(),id:randomUUID(),site_id:siteId,provider_user_id:siteId,credential_revision:revision};
+  const project = 'a'.repeat(20), toolkit = 'supabase';
+  const dbRow = {connector:{...connectorFixture(),id:connectorId,site_id:siteId,toolkit_slug:toolkit,provider_id:provider.id,
+      access_mode:'workspace',supabase_project_ref:project,revocation_dispatched:false,created_by:ctx.userId},provider,
+    authority_kind:'verified_connection',connection_attempt_id:randomUUID(),direct_revision:3,
+    policy:{revision:1,tool_access_mode:'all',allowed_tools:[],allowed_hosts:['assistant'],require_approval:false}};
+  const probe = mode === 'probe', beta = mode !== 'read-only report';
+  const slug = beta ? 'SUPABASE_BETA_RUN_SQL_QUERY' : 'SUPABASE_RUN_READ_ONLY_QUERY';
+  const input_parameters = beta ? {type:'object',properties:{ref:{type:'string'},query:{type:'string'},read_only:{type:'boolean'}},required:['ref','query']} : readOnlySql.input_parameters;
+  const tool = {...toolFixture(),slug,toolkit:{slug:toolkit},version:'20261116_00',input_parameters,output_parameters:readOnlySql.output_parameters};
+  const account = {...accountFixture(),user_id:siteId,toolkit:{slug:toolkit},state:{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}}};
+  const args = {query:probe ? 'SELECT 1 AS connector_probe' : 'SELECT COUNT(*) AS paid_accounts FROM public.test_fixture', ...(beta && {read_only:true})};
+  const claimId = randomUUID(), receiptId = randomUUID(), paidAccounts = 68127;
+  const result = probe ? [{connector_probe:1}] : [{paid_accounts:paidAccounts}];
+  const diagnostic = secret();
+  let dispatches = 0;
+  process.env.CONNECTORS_WEB_ORIGIN = byokOrigin;
+  jest.mocked(loadConnectorCredential).mockResolvedValue({apiKey,revision,source:'byok'});
+  mockRpc.mockImplementation((name, params) => {
+    if (name === byokRpc) return attestedProject(provider)(name,params);
+    const done = (data:unknown) => ({abortSignal:async () => ({data,error:null})});
+    if (name === 'connector_ask_connections') return done([dbRow]);
+    if (name === 'claim_connector_account_dispatch') {
+      expect(params).toMatchObject({p_request_id:ctx.requestId,p_connector_id:connectorId,p_tool:slug,p_version:tool.version});
+      return done(claimId);
+    }
+    if (name === 'confirm_connector_result_release' && probe) return done(true);
+    if (name === 'store_connector_account_result' && !probe) {
+      expect(params).toMatchObject({p_claim_id:claimId,p_user_id:ctx.userId,p_report:{columns:['paid_accounts'],rows:[[String(paidAccounts)]]}});
+      expect(JSON.stringify(params.p_report)).not.toContain(diagnostic);
+      expect(JSON.stringify(params.p_report)).not.toContain(apiKey);
+      return done(receiptId);
+    }
+    throw new Error('Unexpected private result operation');
+  });
+  jest.spyOn(globalThis,'fetch').mockImplementation(async (url,init) => {
+    const u = new URL(String(url));
+    expect(u.origin).toBe('https://backend.composio.dev');
+    const route = u.pathname.replace('/api/v3.1','');
+    if (route === `/tools/${slug}`) return jsonResponse(tool);
+    if (route === `/toolkits/${toolkit}`) return jsonResponse({...toolkitFixture(),slug:toolkit,enabled:true});
+    if (route === `/connected_accounts/${account.id}`) return jsonResponse(account);
+    if (route === `/tools/execute/${slug}` && init?.method === 'POST') {
+      dispatches++;
+      expect(JSON.parse(String(init.body))).toEqual({connected_account_id:account.id,user_id:siteId,version:tool.version,arguments:{...args,ref:project}});
+      return jsonResponse({successfull:true,successful:true,error:null,version:tool.version,mercury_last_http_status_code:201,
+        is_latest_version:false,logs:[{message:diagnostic}],data:beta ? {command:'SELECT',composio_execution_message:null,result,rows_affected:1}
+          : {result,rows_returned:1}});
+    }
+    throw new Error('Unexpected offline provider request');
+  });
+  const router = toolsRouterTool([connectorGateway(async () => ctx,true)],ctx);
+  const name = `connector:${connectorId}:${slug}`;
+  const desc = await router.execute({action:'describe',name});
+  expect(desc).toMatchObject({success:true,version:tool.version});
+  const call = await router.execute({action:'call',name,args:JSON.stringify({version:desc.version,schema_hash:desc.schema_hash,arguments:args,save_record:!probe})});
+  if (probe) {
+    expect(call).toMatchObject({success:true,result:{rows:[{connector_probe:1}]}});
+    expect(call).not.toHaveProperty('result_omitted');
+    expect(call).not.toHaveProperty('receipt');
+    expect(mockRpc).toHaveBeenCalledWith('confirm_connector_result_release',{p_claim_id:claimId});
+  } else {
+    expect(call).toMatchObject({success:true,result_visibility:'ask_owner',result:{rows:[{paid_accounts:paidAccounts}]},
+      receipt:{status:'private_result_ready',url:`/connectors/results/${receiptId}`}});
+    expect(call).not.toHaveProperty('result_omitted');
+  }
+  for (const hidden of [diagnostic,apiKey,project,args.query]) expect(JSON.stringify(call)).not.toContain(hidden);
+  expect(dispatches).toBe(1);
 });

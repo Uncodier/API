@@ -119,6 +119,13 @@ async function processRoutedAssistantTurn(context: AssistantContext, messages: a
       userId: fileScope.userId }, fileScope.instanceId, assertFileContext) : [];
   const interactive = context.callerSource === 'interactive' && !context.instanceNodeId && !requirementHost
     && !context.executionOptions.plan_id && !context.executionOptions.step_id;
+  const ownerScope = interactive && context.catalogUserSession === true && (context.recoveryScope?.generation ?? 0) === 0
+    ? context.recoveryScope : undefined;
+  const ownerTranscript = ownerScope ? await import('@/lib/services/robot-instance/owner-connector-transcript') : undefined;
+  const ownerContext = ownerTranscript?.ownerConnectorTranscript(messages);
+  const privateAnswers = ownerScope ? await import('@/lib/services/robot-instance/owner-connector-answer') : undefined;
+  if (ownerContext) await privateAnswers!.confirmOwnerConnectorContext(ownerContext.claimIds);
+  const connectorReady = ownerContext !== undefined || Boolean(privateAnswers && await privateAnswers.ownerConnectorAnswerAvailable());
   const availableTools = context.conversationRecoveryOnly
     ? getConversationRecoveryTools(context.recoveryScope!)
     : context.preResponseOnly
@@ -151,11 +158,11 @@ async function processRoutedAssistantTurn(context: AssistantContext, messages: a
           ? tools => filterRequirementEnvironmentTools(fileContext.environment, tools) : undefined,
         interactive ? 'assistant' : 'workflow',
         context.connectorAgentId,
-        context.connectorIdHint,
+        ownerContext?.connectorId ?? context.connectorIdHint,
         interactive && context.recoveryScope && typeof context.initialMessage === 'string'
           ? createHash('sha256').update(context.initialMessage).digest('hex') : undefined,
         interactive ? context.leadBulkUserSession : undefined,
-        interactive ? context.catalogUserSession : undefined,
+        connectorReady ? true : undefined,
       );
   const trackedTools = context.toolExecutionTracker && !context.conversationRecoveryOnly
     ? instrumentWorkflowTools(availableTools, context.toolExecutionTracker)
@@ -166,6 +173,10 @@ async function processRoutedAssistantTurn(context: AssistantContext, messages: a
       if (readAssistantStepResult(context)) return { success: false, executed: false,
         error: { code: 'STEP_RESULT_ALREADY_REPORTED', message: 'The step result was reported; no further tools were executed.', effectStarted: false } };
       if (context.recoveryScope) await assertAssistantRecoveryActive(context.recoveryScope);
+      if (ownerContext && !ownerTranscript!.ownerConnectorFollowupAllowed(ownerContext.connectorId, tool.name, args[0])) {
+        return { success:false, executed:false, code:'PRIVATE_CONNECTOR_DESTINATION_REQUIRED',
+          error:'This turn contains private connector data. Answer the requester or continue on the same connection; do not send data to another tool or destination.' };
+      }
       if (binding && tool.name === 'tools' && args[0]?.action === 'call') assertPublishNodeToolAllowed(args[0]?.name);
       if (binding && tool.name !== 'tools') assertPublishNodeToolAllowed(tool.name);
       // Reapply the server-owned binding at the execution boundary, not only in
@@ -177,20 +188,24 @@ async function processRoutedAssistantTurn(context: AssistantContext, messages: a
         args[0] = { ...args[0], args: JSON.stringify(publishArgs) };
       }
       // Multi-output fan-outs have their own non-resumable boundary and parallel writers.
+      const execute = () => tool.execute(...args);
       return context.recoveryScope && (context.expectedResultsAmount ?? 1) === 1
-        ? runAssistantRecoveryTool(context.recoveryScope, tool.name, args[0], () => tool.execute(...args))
-        : tool.execute(...args);
+        ? ownerContext ? runAssistantRecoveryTool(context.recoveryScope, tool.name, args[0], execute, true)
+          : runAssistantRecoveryTool(context.recoveryScope, tool.name, args[0], execute)
+        : execute();
     },
   }));
   const options = {
     ...context.executionOptions,
     system_prompt: context.conversationRecoveryOnly ? `${context.systemPrompt}\n\n${CONVERSATION_RECOVERY_INSTRUCTION}`
-      : binding ? `${context.systemPrompt}\n${binding.instruction}` : context.systemPrompt,
-    custom_tools: fullTools,
+      : binding ? `${context.systemPrompt}\n${binding.instruction}` : ownerScope && !connectorReady
+        ? `${context.systemPrompt}\nPrivate answer delivery is temporarily unavailable. Do not substitute another account or tool for a requested connector.` : context.systemPrompt,
+    custom_tools: ownerContext ? fullTools.filter(tool => ['tools','use_composio_tools'].includes(tool.name)) : fullTools,
     instance_node_id: context.instanceNodeId,
     expected_results_amount: context.expectedResultsAmount,
     tool_overrides: binding?.toolOverrides ?? context.toolOverrides,
     node_continuation: context.nodeContinuation,
+    ...(ownerContext && { ownerConnectorContext:true as const }),
     ...(requirementHost ? {
       executionBoundary: requirementHost.boundary,
     } : {}),
@@ -224,6 +239,23 @@ async function processRoutedAssistantTurn(context: AssistantContext, messages: a
 
   if (result?.messages) {
     result.messages = dehydrateMessageImages(result.messages);
+  }
+  if (ownerContext || (result.messages && ownerTranscript?.ownerConnectorTranscript(result.messages))) {
+    // Raw data is needed only in the live workflow transcript. Never return a
+    // second copy in step telemetry or in the terminal HTTP response.
+    result.steps = result.steps?.map(step => ({ finishReason:step.finishReason }));
+    result.output = undefined;
+    if (ownerContext && ownerScope && result.isDone && result.text?.trim()) {
+      await assertAssistantRecoveryActive(ownerScope);
+      result.text = await privateAnswers!.publishOwnerConnectorAnswer(ownerScope, ownerContext.claimIds,
+        ownerTranscript!.appendOwnerRecordLinks(result.text, ownerContext.recordUrls));
+      const checkpoint = { messages:result.messages as unknown[] };
+      const { protectConnectorCheckpoint } = await import('@/lib/services/robot-instance/connector-recovery-checkpoint');
+      protectConnectorCheckpoint(checkpoint, true);
+      result.messages = checkpoint.messages;
+    } else {
+      result.text = '';
+    }
   }
   return result;
 }

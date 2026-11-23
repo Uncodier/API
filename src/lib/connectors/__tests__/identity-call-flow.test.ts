@@ -7,6 +7,7 @@ import { assistantConnectorContext } from '../host-context';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { buildToolExecutionContext } from '@/lib/services/tool-execution-context';
 import { bindDirectPromptAgentStep } from '@/app/api/robots/instance/assistant/direct-agent-step';
+import * as ownerTranscript from '@/lib/services/robot-instance/owner-connector-transcript';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
 jest.mock('../account-access', () => ({ requireConnectorSiteAccess: jest.fn(async () => undefined) }));
@@ -15,11 +16,12 @@ const action = randomUUID();
 const base = 'src/app/api/robots/instance/assistant/';
 const routing = { withAssistantRouting: (_s: unknown, _r: unknown, fn: () => unknown) => fn(),
   admitAssistantRouting: async () => ({ payer: 'platform', siteId: site }), validateAssistantInferenceAdmission: async () => true };
-let admitted: any, snapshot: any, principal: any, observed: any;
+let admitted: any, snapshot: any, principal: any, observed: any, privateAnswerReady: boolean;
 let run: (...args: any[]) => Promise<any>;
 
 beforeEach(() => {
   admitted = snapshot = observed = undefined;
+  privateAnswerReady = true;
   principal = { internal: false, userId: actor, siteId: null, userSession: true };
   jest.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
     const q: any = {};
@@ -42,6 +44,8 @@ beforeEach(() => {
       return { isDone: true, text: 'done', messages };
     } },
     '@/lib/services/robot-instance/vision-message-images': { hydrateMessageImages: async (v: any) => v, dehydrateMessageImages: (v: any) => v },
+    '@/lib/services/robot-instance/owner-connector-transcript': ownerTranscript,
+    '@/lib/services/robot-instance/owner-connector-answer': { ownerConnectorAnswerAvailable: async () => privateAnswerReady },
     './utils': { getInstanceAssistantTools: async (...args: any[]) => [{ name: 'connector', execute: async () => {
       try { return await assistantConnectorContext({ siteId: args[0], userId: args[1], instanceId: args[2], host: args[12], agentId: args[13], catalogUserSession: args[17] })(); }
       catch (e: any) { return { code: e.code }; }
@@ -115,6 +119,13 @@ test('internal service route cannot become interactive from body source or recov
   await route({ user_id: actor, callerSource: 'interactive' });
   expect(admitted.callerSource).toBe('background');
   expect(observed).toEqual({ code: 'HOST_DISABLED' });
+});
+
+test('does not admit connector execution if the private answer destination is not installed', async () => {
+  privateAnswerReady = false;
+  await route({});
+  expect(observed).not.toHaveProperty('catalogUserSession');
+  expect(observed).toMatchObject({ userId:actor, agentId:agent });
 });
 
 test('new chat with NULL raw agent reaches connectors using actual prompt agent', async () => {

@@ -45,13 +45,13 @@ it('saves an opted-in redacted record for the same claim without forwarding the 
   expect(desc.parameters.properties.save_record).toMatchObject({type:'boolean',default:false});
   expect(desc.parameters.required).not.toContain('save_record');
   const call=await f.run.call(f.name,{...f.pin,save_record:true});expect(f.posts()).toBe(1);
-  expect(call).toMatchObject({success:true,receipt:{url:`/connectors/results/${f.receipt}`},result_omitted:true});
-  expect(call).not.toHaveProperty('result');
+  expect(call).toMatchObject({success:true,receipt:{url:`/connectors/results/${f.receipt}`},result:{label:f.privateValue},
+    result_visibility:'ask_owner',result_claim_id:f.claim,result_fields_omitted:true});
   const stored=jest.mocked(storeDirectResult).mock.calls[0];expect(stored[5].rows).toEqual([['$.label',f.privateValue]]);expect(stored[6]).toBe(f.claim);
   expect(executeDirectTool).toHaveBeenCalledWith(expect.anything(),expect.anything(),f.slug,f.pin,expect.any(Function));
   expect(confirmDirectResultRelease).not.toHaveBeenCalled();
   expect(jest.mocked(claimDirectDispatch).mock.calls[0].at(-1)).toMatch(/^[a-f0-9]{64}$/);
-  expect(JSON.stringify(stored[5])).not.toContain(f.key);expect(JSON.stringify(call)).not.toContain(f.privateValue);
+  expect(JSON.stringify(stored[5])).not.toContain(f.key);expect(JSON.stringify(call)).not.toContain(f.key);
   expect(authorizeDirectAction).toHaveBeenCalledTimes(5);
 });
 it.each([{}, {save_record:false}])('returns Supabase inventory facts without storing a record (%j)', async options => {
@@ -65,12 +65,11 @@ it.each([{}, {save_record:false}])('returns Supabase inventory facts without sto
     await before(); return { data };
   });
   const out = await f.run.call(f.name, { ...f.pin, arguments:{}, ...options });
-  expect(out).toMatchObject({ success:true, result:{ returned_count:1, coverage:expect.stringMatching(/^Partial:/) } });
+  expect(out).toMatchObject({ success:true, result_facts:{ returned_count:1, coverage:expect.stringMatching(/^Partial:/) },
+    result:{schemas:[{tables:[{table_name:table},{table_name:'order_summary'}]}]} });
   expect(out).not.toHaveProperty('receipt');
   expect(out).not.toHaveProperty('record_status');
-  expect(out).not.toHaveProperty('result.total_count');
   expect(out).not.toHaveProperty('result_omitted');
-  expect(JSON.stringify(out)).not.toContain(table);
   expect(JSON.stringify(out)).not.toContain(f.privateValue);
   expect(JSON.stringify(out)).not.toContain(f.key);
   expect(storeDirectResult).not.toHaveBeenCalled();
@@ -82,8 +81,32 @@ it('counts the returned tables rather than the bounded private preview rows', as
   const f = fixture('supabase', 'SUPABASE_LIST_TABLES');
   const tables = Array.from({length:125}, (_, i) => ({schema:'public', name:`table_${i}`}));
   jest.mocked(executeDirectTool).mockImplementationOnce(async (_t,_c,_s,_p,before) => { await before(); return {data:{tables}}; });
-  await expect(f.run.call(f.name, {...f.pin,save_record:true})).resolves.toMatchObject({result:{returned_count:125},receipt:{status:'private_result_ready'}});
+  await expect(f.run.call(f.name, {...f.pin,save_record:true})).resolves.toMatchObject({result_facts:{returned_count:125},result_truncated:true,receipt:{status:'private_result_ready'}});
   expect(jest.mocked(storeDirectResult).mock.calls[0][5].rows).toHaveLength(100);
+});
+it.each([undefined, false, true])('returns SQL aggregates by default and independently saves a table on opt-in (%s)', async save_record => {
+  const f = fixture('supabase', 'SUPABASE_BETA_RUN_SQL_QUERY');
+  const data = {command:'SELECT',composio_execution_message:f.key,result:[{currency:'MXN',total:'987654321001.23',token:f.key}],rows_affected:1,count:987654321};
+  jest.mocked(executeDirectTool).mockImplementationOnce(async (_t,_c,_s,_p,before) => { await before(); return {data}; });
+  const descriptor = await f.run.describe(f.name);
+  expect(descriptor.expected_use).toContain('saving does not affect what you receive');
+  const call = await f.run.call(f.name, {...f.pin,...(save_record !== undefined && {save_record}),arguments:{query:'SELECT currency, SUM(amount)::text AS total FROM public.sales GROUP BY currency',read_only:true}});
+  expect(call).toMatchObject({success:true,result_visibility:'ask_owner',result:{rows:[{currency:'MXN',total:'987654321001.23'}]}});
+  expect(call).not.toHaveProperty('result_omitted');
+  expect(JSON.stringify(call)).not.toContain(f.key);
+  expect(call).not.toHaveProperty('result.count');
+  expect(executeDirectTool).toHaveBeenCalledTimes(1);
+  if (save_record) {
+    expect(call).toHaveProperty('receipt.url', `/connectors/results/${f.receipt}`);
+    const report = jest.mocked(storeDirectResult).mock.calls[0][5];
+    expect(report).toMatchObject({columns:['currency','total'],rows:[['MXN','987654321001.23']]});
+    expect(JSON.stringify(report)).not.toContain(f.key);
+    expect(confirmDirectResultRelease).not.toHaveBeenCalled();
+  } else {
+    expect(call).not.toHaveProperty('receipt');
+    expect(storeDirectResult).not.toHaveBeenCalled();
+    expect(confirmDirectResultRelease).toHaveBeenCalledWith(f.claim);
+  }
 });
 it.each([
   { data:{ tables:[] }, result:{ returned_count:0, coverage:expect.stringContaining('can be partial') } },
@@ -92,13 +115,17 @@ it.each([
   const f = fixture('supabase', 'SUPABASE_LIST_TABLES');
   jest.mocked(executeDirectTool).mockImplementationOnce(async (_t,_c,_s,_p,before) => { await before(); return { data }; });
   const out = await f.run.call(f.name, f.pin);
-  if (result) expect(out).toHaveProperty('result', result);
-  else {
-    expect(out).toMatchObject({ success:true, result_omitted:true });
-    expect(out).not.toHaveProperty('result');
-  }
+  if (result) expect(out).toHaveProperty('result_facts', result);
+  else expect(out).not.toHaveProperty('result_facts');
   expect(out).not.toHaveProperty('receipt');
   expect(storeDirectResult).not.toHaveBeenCalled();
+});
+it('distinguishes an exact empty SQL result from an unsupported body without inferring values', async () => {
+  const f = fixture('supabase', 'SUPABASE_BETA_RUN_SQL_QUERY');
+  jest.mocked(executeDirectTool).mockImplementationOnce(async (_t,_c,_s,_p,before) => { await before(); return {data:{command:'SELECT',result:[],rows_affected:0}}; })
+    .mockImplementationOnce(async (_t,_c,_s,_p,before) => { await before(); return {data:{command:'SELECT',rows_affected:0}}; });
+  await expect(f.run.call(f.name,f.pin)).resolves.toMatchObject({success:true,result:{rows:[]}});
+  await expect(f.run.call(f.name,f.pin)).resolves.toMatchObject({success:true,result_omitted:true,result_omission_reason:'no_supported_data'});
 });
 it('preserves an authorized provider result when an optional save fails, without retrying the provider', async () => {
   const f = fixture();

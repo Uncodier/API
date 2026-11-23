@@ -32,11 +32,16 @@ it('releases facts against the active claim and real parent RLS, without creatin
       GRANT authenticated TO service_role;
       CREATE SCHEMA auth;
       GRANT USAGE ON SCHEMA auth TO authenticated;
+      GRANT connector_result_reader TO CURRENT_USER;
+      GRANT authenticated TO connector_result_reader;
+      CREATE TABLE auth.users(id uuid PRIMARY KEY);
+      INSERT INTO auth.users VALUES ('${owner}');
       CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT current_setting('request.jwt.claims',true)::jsonb $$;
       CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT (auth.jwt()->>'sub')::uuid $$;
       CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $$ SELECT auth.jwt()->>'role' $$;
       CREATE SCHEMA connector_result_private;
       REVOKE ALL ON SCHEMA connector_result_private FROM PUBLIC,anon,authenticated,service_role;
+      GRANT USAGE ON SCHEMA connector_result_private TO connector_result_reader;
       CREATE SCHEMA connector_direct_rpc;
       REVOKE ALL ON SCHEMA connector_direct_rpc FROM PUBLIC,anon,authenticated;
       GRANT USAGE ON SCHEMA connector_direct_rpc TO service_role;
@@ -46,7 +51,7 @@ it('releases facts against the active claim and real parent RLS, without creatin
       CREATE POLICY fixture_owner_visibility ON public.remote_instances FOR SELECT TO authenticated
         USING (user_id=auth.uid() AND visible);
       CREATE TABLE public.instance_logs(id uuid PRIMARY KEY,site_id uuid,user_id uuid,instance_id uuid,
-        agent_id uuid,log_type text,trusted_user_action boolean,details jsonb);
+        agent_id uuid,log_type text,trusted_user_action boolean,details jsonb,level text,message text,parent_log_id uuid);
       CREATE TABLE public.site_connector_auth_attempts(id uuid,site_id uuid,connector_id uuid,status text);
       CREATE TABLE public.connectors(id uuid,site_id uuid,revision int);
       CREATE TABLE public.connector_members(site_id uuid,connector_id uuid,user_id uuid,expires_at timestamptz);
@@ -64,11 +69,13 @@ it('releases facts against the active claim and real parent RLS, without creatin
         SELECT FROM connector_result_private.fixture_grants g WHERE (g.connector_id,g.policy_revision)=(c.connector_id,c.policy_revision) AND g.enabled) $$;
       CREATE FUNCTION connector_result_private.check_direct_authority(c connector_result_private.direct_claims)
       RETURNS void LANGUAGE plpgsql AS $$ BEGIN RAISE insufficient_privilege; END $$;
+      CREATE FUNCTION connector_result_private.direct_claim_admitted(c connector_result_private.direct_claims)
+      RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT false $$;
       ${sqlFunction(accountReceipts, 'connector_result_private.lock_direct_write')}
       ${sqlFunction(accountReceipts, 'connector_result_private.check_dispatch_authority')}
       ${sqlFunction(receipts, 'connector_result_private.authorize_direct_parent')}
       INSERT INTO public.remote_instances VALUES ('${instance}','${site}','${owner}',true);
-      INSERT INTO public.instance_logs VALUES ('${action}','${site}','${owner}','${instance}','${agent}','user_action',true,
+      INSERT INTO public.instance_logs(id,site_id,user_id,instance_id,agent_id,log_type,trusted_user_action,details) VALUES ('${action}','${site}','${owner}','${instance}','${agent}','user_action',true,
         '{"ask_request_sha256":"${digest}","status":"running","assistant_recovery":{"version":1,"respawnCount":0,"inFlight":true,
         "inFlightKind":"turn","execution":{"catalogUserSession":true,"callerSource":"interactive","executionMode":"direct"}}}');
       INSERT INTO public.site_connector_auth_attempts VALUES ('${attempt}','${site}','${connector}','completed');
@@ -103,5 +110,31 @@ it('releases facts against the active claim and real parent RLS, without creatin
     changeDenies("UPDATE connector_result_private.direct_claims SET claimed_at=clock_timestamp()-interval '2 hours'");
     changeDenies(`INSERT INTO public.connector_members VALUES ('${site}','${connector}','${owner}',clock_timestamp()-interval '1 second')`);
     expect(db.query(asService(release)).split('\n').at(-1)).toBe('t');
+
+    db.query('ALTER TABLE public.instance_logs ALTER COLUMN id SET DEFAULT gen_random_uuid();');
+    db.migrate('20261123173000_connector_owner_ask_answers.sql');
+    const text = 'Paid accounts: 719', foreign = randomUUID();
+    const write = `SELECT public.store_connector_ask_answer('${action}',ARRAY['${claim}']::uuid[],'${text}');`;
+    const read = `SELECT public.read_connector_ask_answer('${action}');`;
+    const actor = (id:string, anonymous = false) => `SET ROLE authenticated; SET request.jwt.claims='{"sub":"${id}","role":"authenticated","is_anonymous":${anonymous}}';`;
+    expect(db.query(asService('SELECT public.connector_ask_answer_ready();')).split('\n').at(-1)).toBe('t');
+    denied(actor(owner)+write);
+    denied(asService(write.replace(claim,foreign)));
+    expect(db.query(asService(write)).split('\n').at(-1)).toBe('t');
+    expect(db.query(asService(write)).split('\n').at(-1)).toBe('t');
+    denied(asService(write.replace(text,'Different reply')));
+    expect(db.query('SELECT count(*) FROM public.instance_logs WHERE parent_log_id IS NOT NULL')).toBe('1');
+    const link = db.query('SELECT message FROM public.instance_logs WHERE parent_log_id IS NOT NULL');
+    expect(link).toContain(`/robots/private-answer/${action}`);
+    expect(link).not.toContain(text);
+    expect(db.query(actor(owner)+read).split('\n').at(-1)).toBe(text);
+    // The fixture's service role inherits authenticated for the RLS gate; the
+    // RPC still does not disclose the answer even with the owner's JWT claims.
+    expect(db.query(asService(`SET request.jwt.claims='{"sub":"${owner}","is_anonymous":false}'; ${read}`))).not.toContain(text);
+    expect(db.query(actor(foreign)+read)).not.toContain(text);
+    expect(db.query(actor(owner,true)+read)).not.toContain(text);
+    denied(actor(owner)+'SELECT answer FROM connector_result_private.ask_answers;');
+    expect(db.query('BEGIN; UPDATE public.remote_instances SET visible=false; '+actor(owner)+read+'ROLLBACK;')).not.toContain(text);
+    expect(db.query('BEGIN; UPDATE connector_result_private.fixture_grants SET enabled=false; '+actor(owner)+read+'ROLLBACK;')).not.toContain(text);
   } finally { db.stop(); }
 }, 20_000);

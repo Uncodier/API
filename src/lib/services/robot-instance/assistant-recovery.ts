@@ -207,9 +207,10 @@ export async function checkpointAssistantRecovery(
 
 /** Persist bounded evidence before/after an effect, without claiming it is a checkpoint. */
 export async function runAssistantRecoveryTool<T>(
-  scope: AssistantRecoveryScope, name: string, args: unknown, execute: () => Promise<T>,
+  scope: AssistantRecoveryScope, name: string, args: unknown, execute: () => Promise<T>, ownerConnectorContext = false,
 ): Promise<T> {
-  const observation = summarizeRecoveryTool({ name, args, outcome: 'unknown', observedAt: new Date().toISOString() });
+  const subject = ownerConnectorContext ? { name:'tools', args:{private_arguments:true} } : {name,args};
+  const observation = summarizeRecoveryTool({ ...subject, outcome: 'unknown', observedAt: new Date().toISOString() });
   await safeRecovery(async () => {
     const active = await readRecovery(scope);
     assertOwner(scope, active.snapshot);
@@ -227,8 +228,8 @@ export async function runAssistantRecoveryTool<T>(
     assertOwner(scope, active.snapshot);
     const observations = active.snapshot.toolObservations ?? [];
     if (canonicalRecoveryJson(observations.at(-1)) !== canonicalRecoveryJson(observation)) throw new RecoveryError('conflict');
-    const completed = summarizeRecoveryTool({ name, args, outcome: threw ? 'threw' : 'returned',
-      result: threw ? failure : result, observedAt: new Date().toISOString() });
+    const completed = summarizeRecoveryTool({ ...subject, outcome: threw ? 'threw' : 'returned',
+      result: ownerConnectorContext ? undefined : threw ? failure : result, observedAt: new Date().toISOString() });
     await compareAndSwap(scope, active, { ...active.snapshot, lastActivityAt: completed.observedAt,
       toolObservations: [...observations.slice(0, -1), completed] });
   });

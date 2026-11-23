@@ -53,29 +53,49 @@ registered for each catalog entry.
 | Direct policy | Current nonanonymous direct Ask session, parent owned by the user, the signed-in member’s connector-use grant, allowed host, local/account/provider state, exact resource binding and no explicit opt-out. The same-site active prompt agent is pinned to the turn, **not** a second connector-grant principal. `all` or exact `selected` (empty means none). |
 | Discovery | Query only admitted accounts' provider catalogs. Short bounded pages, no user search text or account secrets in provider search parameters. Domains are navigation metadata, not authorization. |
 | Transport | Fetch the actual action and input schema, verify the exact toolkit, private downstream account and auth configuration. Pin the live provider version/schema to this connection. Validate declared arguments without credential/account/project substitution or local file fetching/code evaluation. Provider tools may execute SQL, code, file and network operations within their actual permissions. Do not reconstruct data access from a list of OAuth scope names. |
-| Dispatch and delivery | Reauthorize after describe, before dispatch, before releasing facts and when opening a saved result. A durable request claim prevents replay regardless of whether a record is saved. The live model receives typed result facts when available, never the owner-only preview, provider envelope, credentials or raw diagnostics. |
+| Dispatch and delivery | Reauthorize before dispatch, before releasing data and when opening a saved result. A durable request claim prevents replay. The active model receives bounded business data, not the provider envelope or credentials. |
 
-An Ask call returns `result` on success when model-readable facts are available, and
-`result_omitted: true` otherwise. Generic actions expose only explicit top-level
-`count`, `total`, `total_count` and `has_more` of the expected types. For
-`SUPABASE_LIST_TABLES`, Ask gets `returned_count` and a coverage note from the
-recognized inventory, not table names, rows or diagnostics. A partial response
-or schema discovery fallback is not a project-wide total; an unrecognized inventory
-is not zero. Tool replies are still omitted
-from shared tool logs and recovery checkpoints; this does not change Support,
-approval, reconnect or dispatch permissions.
+An authorized Ask call returns useful provider data as `result` by default,
+independently of whether a record is saved. The bounded projection excludes
+credentials, transport diagnostics, hidden account bindings and unsupported
+values. It signals truncation or omitted fields; `result_omitted: true` with
+`no_supported_data` is not a provider failure or evidence of zero rows.
+`SUPABASE_LIST_TABLES` can include inventory plus separate coverage facts.
+Recognized Supabase SQL results have `result.rows`, including an explicit
+empty array. For KPIs, request aggregates for the selected scope and prefer
+the dedicated read-only action. The beta `read_only` flag is not a write
+prevention guarantee. Return exact decimals as SQL text when precision matters.
 
-No private report is created by default. To request one for this call, set the
+Tool results are available to the active model on the original turn only.
+After receiving data, the host limits follow-ups to the same authorized
+connection, rechecks release authority before inference, and does not publish
+assistant text, reasoning, or subsequent tool details to the shared log stream.
+The shared history and recovery checkpoint retain no derived answer or business
+rows; in-flight messages remain in the server's durable workflow state.
+Robots provides an owner-only answer link in the conversation, separate
+from any saved provider record. The private answer includes links to any
+records requested during that turn. The answer is tied to its original chat
+action and removed when that action or its instance is deleted. Opening it rechecks the owner, parent
+visibility, and the original connectors' current policy. After interruption,
+private context is not restored from the shared recovery checkpoint and tool
+effects must not be replayed. Support, public channels and approvals keep their
+existing output policies.
+
+No separate provider record is created by default. To request one for this call, set the
 optional boolean `save_record: true` beside `version`, `schema_hash` and `arguments`.
 It does not enter provider arguments or the dispatch digest. A successful save adds
 `receipt.url` for the same owner-only viewer. If saving cannot be confirmed, return
-`record_status: "unconfirmed"` and any available facts only after fresh release
+`record_status: "unconfirmed"` and any available data only after fresh release
 authorization. Never repeat the provider action to get a link afterward.
 
 Apply `20261123172000_connector_optional_result_records.sql` before deploying the
 matching Ask API/workers. It installs the no-report release check: the original
 claim and authenticated parent visibility are still checked, without a report write,
 retention cleanup, or per-owner report lock. Existing private links are unchanged.
+Apply `20261123173000_connector_owner_ask_answers.sql` next, and deploy the
+matching Robots web private-answer route with the API/workers. New Ask calls
+fail closed if the private delivery migration is unavailable. There is no remote
+migration, live result replay, or grant in this change.
 
 A direct connection delegates the **actual** permissions of the downstream
 credential. For the attested path it must be independently verified as dedicated to this site's

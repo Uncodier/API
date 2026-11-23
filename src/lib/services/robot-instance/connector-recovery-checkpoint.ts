@@ -1,9 +1,16 @@
 import { connectorObservation, observedToolName } from '@/lib/connectors/connector-observation';
 import { isRecord, type AssistantRecoverySnapshot } from './assistant-recovery-schema';
+import { ownerConnectorTranscript } from './owner-connector-transcript';
 
 /** Project only a detached, validated checkpoint copy. The live model still receives
  * its exact references/receipts. A respawn is not authorized to replay private calls. */
 export function protectConnectorCheckpoint(checkpoint: Pick<AssistantRecoverySnapshot, 'messages'>, privateAsk: boolean): void {
+  const owner = privateAsk ? ownerConnectorTranscript(checkpoint.messages) : undefined;
+  if (owner) {
+    checkpoint.messages = [...checkpoint.messages.slice(0, owner.start), {
+      role: 'assistant', content: 'The owner-only connector context was not saved here. Do not replay completed connector calls or infer their contents.',
+    }];
+  }
   // The host rebuilds its system prompt on every resume. Do not duplicate its
   // pinned-account instruction or decorated schema on a user-visible log row.
   if (privateAsk) checkpoint.messages = checkpoint.messages.filter(m => !isRecord(m) || m.role !== 'system');
