@@ -29,7 +29,7 @@ function normalizeAccount(data: z.infer<typeof accountSchema>) {
     // Project-scoped PAT dispatch requires a positive live origin/scheme proof. Never return the state or URL.
     hostedSupabasePat: data.toolkit.slug === 'supabase' && data.state?.authScheme === 'API_KEY' && hosted,
     // Unreported grants are unknown, not proof of either an empty grant or permission.
-    scopesKnown: rawScope != null, oauth2: data.state?.authScheme === 'OAUTH2',
+    scopesKnown: rawScope != null, oauth2: data.state?.authScheme === 'OAUTH2', apiKeyAuth: data.state?.authScheme === 'API_KEY',
     status: data.status, userId: data.user_id, scopes: [...new Set(scopes)], name: data.alias || undefined,
     authConfigDisabled: data.auth_config.is_disabled, disabled: data.is_disabled, accountType: data.experimental?.account_type,
   };

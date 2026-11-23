@@ -2,15 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { connectorGateway, withConnectorResolver } from '../tool-resolver';
 import { composioActionTool } from '@/app/api/agents/tools/composio/assistantProtocol';
 import { toolsRouterTool } from '@/app/api/agents/tools/router/assistantProtocol';
-import { createConnectorRuntime } from '../runtime';
+import { createProviderDirectRuntime } from '../provider-direct-runtime';
 import { ConnectorError } from '../types';
 import { loadToolScreenAccess, assertToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
 import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
 import { SkillsService } from '@/lib/services/skills-service';
-import { listUsableConnectors } from '../access';
+import { listDirectAccounts } from '../provider-direct-policy';
 
-jest.mock('../runtime', () => ({ createConnectorRuntime: jest.fn() }));
-jest.mock('../access', () => ({ listUsableConnectors: jest.fn() }));
+jest.mock('../provider-direct-runtime', () => ({ createProviderDirectRuntime: jest.fn() }));
+jest.mock('../provider-direct-policy', () => ({ listDirectAccounts: jest.fn() }));
 jest.mock('@/lib/services/skills-service', () => ({ SkillsService: { getSkillBySlugForSite: jest.fn(), listSkillsForSite: jest.fn() } }));
 jest.mock('@/app/api/agents/tools/sandbox/assistantProtocol', () => ({ deductSandboxToolCredits: jest.fn(async () => ({ success: true })) }));
 jest.mock('@/lib/services/embeddings-service', () => ({ EmbeddingsService: { generateEmbeddings: jest.fn(async () => { throw new Error('Offline'); }) } }));
@@ -20,7 +20,7 @@ jest.mock('@/app/api/agents/tools/router/screen-access', () => ({
 }));
 
 const scope = { siteId: randomUUID(), userId: randomUUID() };
-const context = { ...scope, agentId: randomUUID(), instanceId: randomUUID(), host: 'assistant' as const };
+const context = { ...scope, agentId: randomUUID(), instanceId: randomUUID(), host: 'assistant' as const, catalogUserSession:true as const };
 const name = `connector:${randomUUID()}:HUBSPOT_LIST_CONTACTS`;
 const candidate = { name, description: 'External CRM contacts', category: 'crm', domains: ['crm'], availability: 'describe_required' };
 const runtime = { search: jest.fn(), describe: jest.fn(), call: jest.fn() };
@@ -30,16 +30,16 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest.mocked(loadToolScreenAccess).mockResolvedValue({ isAdmin: false, blockedScreens: [] });
   jest.mocked(assertToolScreenAccess).mockResolvedValue();
-  jest.mocked(createConnectorRuntime).mockReturnValue(runtime as any);
+  jest.mocked(createProviderDirectRuntime).mockReturnValue(runtime as any);
   runtime.search.mockResolvedValue({ tools: [candidate], truncated: false });
   runtime.describe.mockResolvedValue({ name, parameters: { type: 'object' } });
   runtime.call.mockResolvedValue({ success: true, receipt: { status: 'completed' } });
-  jest.mocked(listUsableConnectors).mockResolvedValue([]);
+  jest.mocked(listDirectAccounts).mockResolvedValue([]);
 });
 
 test('actual normal tools search merges native and concrete connector candidates without schemas', async () => {
   const gateway = connectorGateway(async () => context);
-  expect(createConnectorRuntime).not.toHaveBeenCalled();
+  expect(createProviderDirectRuntime).not.toHaveBeenCalled();
   const router = toolsRouterTool([native, gateway], scope);
   const result = await router.execute({ action: 'search', query: 'CRM contacts' });
   expect(result.tools.map((tool: any) => tool.name)).toEqual(['leads', name]);
@@ -59,6 +59,22 @@ test('the exact decorated gateway retains host context/dry-run guards for concre
   expect(await router.execute({ action: 'call', name, args: '{}' })).toMatchObject({ code: 'HOST_DRY_RUN', executed: false });
   expect(decorate).toHaveBeenCalledWith(expect.objectContaining({ action: 'execute', action_name: name }));
   expect(runtime.call).not.toHaveBeenCalled();
+});
+
+test.each(['search','list'])('an explicit account %s never invokes native discovery or offers a native report on failure', async action => {
+  const connector_id = name.split(':')[1];
+  const nativeRouter = { ...native, name:'tools', execute:jest.fn(async()=>({success:true,tools:[{name:'report'}]})) };
+  const router = withConnectorResolver(nativeRouter,[connectorGateway(async()=>context)],scope);
+  const args = {action,query:'sales report',connector_id};
+  const hit = await router.execute(args);
+  expect(hit.tools.map((tool: {name:string})=>tool.name)).toEqual([name]);
+  expect(runtime.search).toHaveBeenCalledWith(expect.objectContaining({connector_id}));
+  runtime.search.mockResolvedValueOnce({tools:[],next_cursor:'next',truncated:true});
+  expect(await router.execute(args)).toMatchObject({success:true,tools:[],connector_next_cursor:'next'});
+  runtime.search.mockRejectedValueOnce(new ConnectorError('ACCESS_DENIED','Denied',403));
+  expect(await router.execute(args)).toMatchObject({success:false,tools:[],connector_error:'ACCESS_DENIED'});
+  expect(await withConnectorResolver(nativeRouter,[],scope).execute(args)).toMatchObject({success:false,tools:[],connector_error:'HOST_DISABLED'});
+  expect(nativeRouter.execute).not.toHaveBeenCalled();
 });
 
 test('invalid connector JSON returns a safe pre-dispatch correction without inspecting credentials or replaying',async()=>{
@@ -98,14 +114,14 @@ test('fatal host recovery exceptions still escape connector routing', async () =
 test('legacy api-key facade does not revive SDK/global-account execution', async () => {
   const result = await composioActionTool(scope.siteId, 'unused').execute({ action: 'execute', action_name: 'HUBSPOT_LIST_CONTACTS' });
   expect(result).toMatchObject({ success: false, code: 'HOST_DISABLED' });
-  expect(createConnectorRuntime).not.toHaveBeenCalled();
+  expect(createProviderDirectRuntime).not.toHaveBeenCalled();
 });
 
 test.each(['selected', 'all'] as const)('skill get bounds the authorized local appendix without remote schemas (%s)', async mode => {
   const skill = { slug: 'makinari-outbound-campaign', name: 'Outbound', description: 'Native procedure', content: '# Original procedure', types: ['marketing_campaign'] };
   jest.mocked(SkillsService.getSkillBySlugForSite).mockResolvedValue(skill as any);
   jest.mocked(SkillsService.listSkillsForSite).mockResolvedValue([skill] as any);
-  jest.mocked(listUsableConnectors).mockResolvedValue(Array.from({ length: 7 }, () => ({
+  jest.mocked(listDirectAccounts).mockResolvedValue(Array.from({ length: 7 }, () => ({
     connector: { id: randomUUID(), toolkit_slug: 'hubspot', granted_scopes: ['crm.objects.contacts.read'] },
     policy: { tool_access_mode: mode, allowed_tools: mode === 'all' ? [] : ['HUBSPOT_LIST_CONTACTS'] },
   })) as any);
@@ -122,7 +138,7 @@ test('blocked business screen or failed grants hide skill account references', a
   const skill = { slug: 'makinari-outbound-campaign', name: 'Outbound', content: 'Original', types: [] };
   jest.mocked(SkillsService.getSkillBySlugForSite).mockResolvedValue(skill as any);
   jest.mocked(SkillsService.listSkillsForSite).mockResolvedValue([skill] as any);
-  jest.mocked(listUsableConnectors).mockRejectedValue(new Error('Private database error'));
+  jest.mocked(listDirectAccounts).mockRejectedValue(new Error('Private database error'));
   const result = await skillLookupTool({ siteId: scope.siteId, connectorContext: async () => context }).execute({ action: 'get', skill_name: skill.slug });
   expect(result).toMatchObject({ content: 'Original', connector_capabilities: { status: 'unavailable', capabilities: [] } });
   expect(JSON.stringify(result)).not.toContain('Private database error');

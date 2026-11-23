@@ -1,13 +1,16 @@
 import { unsupportedScopes, type CatalogReadMetadata } from './catalog-read-metadata';
 import type { ComposioAccount } from './composio-accounts';
 import { assertReportContract, reportBinding, reportModelSchema, REPORT_SCOPE } from './supabase-report-contract';
-import { analyticsDatasetFingerprint, resolveAnalyticsCapability } from './supabase-analytics-sources';
-import { directQueryFields } from './supabase-direct-query';
+import { analyticsDatasetFingerprint, resolveAnalyticsCapability, scopedDataset } from './supabase-analytics-sources';
+import { directQueryFields, directQueryMode, projectAnalyticsResult } from './supabase-direct-query';
+import { compileAnalyticsSelect, type CompiledAnalyticsSelect } from './supabase-select-compiler';
+import { projectSupabaseCatalogResult } from './supabase-report-result';
+import type { ConnectorDescriptionInput } from './catalog-read-metadata';
 import { reportArguments } from './supabase-report-query';
 import { ConnectorError, type Connector } from './types';
 
 export { SUPABASE_CATALOG_SLUG } from './supabase-report-contract';
-export { projectSupabaseCatalogResult } from './supabase-report-result';
+export { projectSupabaseCatalogResult };
 
 const publishedOnly = 'Use view/after/limit only for an explicitly requested published report or inventory, not to answer a data question.';
 
@@ -33,6 +36,35 @@ export function supabaseCatalogArguments(connector: Connector, tool: CatalogRead
   return reportArguments(connector, args);
 }
 
+/** Compatibility for the Makinari reporting projection of one provider action. Never a toolkit-wide handler. */
+export async function prepareSupabaseReport(input: ConnectorDescriptionInput, tool: CatalogReadMetadata) {
+  const { connector } = input;
+  const plan = await describeSupabaseCatalogRead(connector, tool, input.localProjectRef);
+  let compiled: CompiledAnalyticsSelect | undefined;
+  return { modelSchema: plan.modelSchema, binding: plan.binding, description: plan.description,
+    confirmDataset: async () => {
+      if (!compiled || plan.capability.status !== 'ready' || plan.capability.dataset.kind !== 'external' || !('analytics' in plan.binding)) return;
+      const fresh = await resolveAnalyticsCapability(connector, input.localProjectRef);
+      if (fresh.status === 'unverified' || fresh.status === 'unavailable') {
+        throw new ConnectorError('CATALOG_AUTHORIZATION_UNAVAILABLE', 'The current analytics source could not be verified.', 503);
+      }
+      if (fresh.status !== 'ready' || analyticsDatasetFingerprint(fresh.dataset) !== plan.binding.analytics) {
+        throw new ConnectorError('ACCESS_CHANGED', 'The analytics source changed before query dispatch or private delivery.', 403);
+      }
+    },
+    prepare: async (args: Record<string, unknown>) => {
+      const scope = directQueryMode(args);
+      if (scope === null) return supabaseCatalogArguments(connector, tool, args);
+      if (!input.authorizeSelect) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED', 'A verified private SQL destination is required.', 403);
+      compiled = compileAnalyticsSelect(args.query, args.parameters, scopedDataset(plan.capability, scope));
+      const ref = connector.supabase_project_ref!;
+      await input.authorizeSelect({ scope, source: compiled.source, projectRef: ref });
+      return { ref, query: compiled.query, parameters: compiled.parameters };
+    },
+    project: (data: unknown, args: Record<string, unknown>) => compiled ? projectAnalyticsResult(data, compiled, input.credential.apiKey)
+      : projectSupabaseCatalogResult(data, connector, args, input.credential.apiKey) };
+}
+
 export function assertSupabaseCatalogAccount(connector: Connector, account: ComposioAccount, requiredScopes: readonly string[]) {
   reportBinding(connector);
   if (account.accountType !== 'PRIVATE' || account.id !== connector.provider_account_id || account.toolkitSlug !== 'supabase' ||
@@ -41,6 +73,5 @@ export function assertSupabaseCatalogAccount(connector: Connector, account: Comp
     throw new ConnectorError('CONNECTOR_ACCOUNT_MISMATCH', 'Use the verified private hosted Supabase token account for this project.', 409);
   }
   // The provider, not an invented OAuth grant, enforces this single pinned PAT operation's permission.
-  if (requiredScopes.some(s => s !== REPORT_SCOPE) || account.scopes.some(s => s !== REPORT_SCOPE) ||
-    connector.granted_scopes.some(s => s !== REPORT_SCOPE)) unsupportedScopes();
+  if (requiredScopes.some(s => s !== REPORT_SCOPE)) unsupportedScopes();
 }

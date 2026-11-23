@@ -2,11 +2,41 @@
 
 `POST /api/robots/instance/assistant` persists the user action before starting
 the workflow. It passes that server-created log ID into the workflow so the
-same turn is not inserted a second time. `request_id`, when supplied, is saved
-in the log details for client-side correlation; it is not a workflow
-idempotency key. Do not blindly retry an ambiguous started request.
+same turn is not inserted a second time. A verified interactive direct Ask
+requires a nonblank `request_id` (at most 200 characters), including at the
+`/connector` entry. Assign one per deliberate send, not one per delivery.
+Unkeyed legacy service or node callers have no cross-HTTP replay guarantee and
+do not gain private direct execution. Identical text with a fresh ID is new work.
 
-The response is SSE with `X-Assistant-Stream-Version: 1` and
+After authorization, the server derives the user-action UUID from the tenant,
+actor, caller class, instance and opaque request ID. A first send without an
+instance ID also derives the session UUID, so concurrent copies cannot create
+independent sessions. The existing writer inserts the action and a SHA-256 of
+the validated execution inputs. Only the successful inserter calls `start()`.
+After a unique violation, a fresh scoped lookup must confirm that exact action;
+the replay check never searches by time or text, updates the row or starts work.
+Current auth, visibility, credits and normal admission gates still apply.
+
+- Matching retries get HTTP `202` JSON: `code: ASSISTANT_REQUEST_RECORDED`,
+  `replayed: true`, `instance_id`, `user_log_id` and `action_status`. This is
+  evidence of admission, **not** a workflow result or proof a run started.
+- Changed content for a retained ID returns `409 ASSISTANT_REQUEST_CONFLICT`.
+  Unavailable confirmation or an erased winner returns no new action/start. A
+  first-send collision checks the existing parent’s current access and waits
+  briefly for its action; a crashed creator’s empty session is not adopted.
+- Insert and workflow start are not one transaction. A lost acknowledgement
+  or crash can leave a recorded turn without a running workflow. Do not retry
+  `start()`, mark the instance failed, or submit a fresh ID to recover it;
+  reconcile the original action and run first.
+
+Retained logs need no new column or index. Erasure-safe reservations and browser
+protection of `details.ask_request_sha256` require the Nov 23 receipt migration,
+applied to shared Makinari at 05:52 UTC. It records only the action UUID beyond
+deletion. On targets without it, dedupe is limited to retained, unmodified action
+rows. There is no third migration. Drain old API writers and in-flight
+requests before rollout; historical correlation-only rows are not backfilled.
+
+The first successful inserter's response is SSE with `X-Assistant-Stream-Version: 1` and
 `X-Workflow-Run-Id`. Events contain `type`, `run_id`, and `instance_id`:
 
 - `accepted`: `success: true`, `user_log_id`. The user action is saved and the
@@ -31,8 +61,8 @@ completion either.
 The connection has a bounded lifetime (750 seconds). Disconnecting stops
 status polling but does not cancel durable work. A timeout/unavailable status
 does **not** prove the workflow failed; its message instructs the client to
-check the session before retrying. HTTP startup failures use a JSON error and
-attempt a scoped error log without delaying that response indefinitely.
+check the session before retrying. Unknown startup outcomes return a JSON
+`503 ASSISTANT_START_UNCONFIRMED` without changing another run’s lifecycle.
 
 The browser application in the sibling `market-fit` repository has a matching
 SSE consumer and sends assistant requests through its authenticated same-origin
@@ -91,6 +121,6 @@ New offline suites cover `node-recovery-workflow`, `recovery-turn-guard`,
 `assistant-node-continuation`, and `assistant-recovery*`. They run with `npm test
 -- --runInBand <test-paths>` and mock all model/provider/database effects.
 
-Offline regression coverage: `route-lifecycle.test.ts`, `response-stream.test.ts`,
+Offline regression coverage: `ask-http-postgres.test.ts` (socket-only PostgreSQL, mocked workflow/authorization), `route-lifecycle.test.ts`, `response-stream.test.ts`,
 `user-message-log.test.ts`, and `plan-exhaustion.test.ts` under
 `src/app/api/robots/instance/assistant/__tests__`, included in `npm run test:harness`.

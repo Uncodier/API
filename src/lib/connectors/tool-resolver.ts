@@ -2,7 +2,7 @@ import type { RoutedTool } from '@/app/api/agents/tools/router/assistantProtocol
 import { assertToolScreenAccess, type ToolScreenScope } from '@/app/api/agents/tools/router/screen-access';
 import { ConnectorError } from './types';
 import type { ConnectorContextResolver } from './host-context';
-import type { ConnectorRuntime } from './runtime';
+import type { ProviderDirectRuntime } from './provider-direct-runtime';
 import { CONNECTOR_DOMAINS } from './domains';
 import { agentRecovery, failureForAgent } from './agent-recovery';
 import { argumentFailure } from '@/lib/tools/argument-contract';
@@ -16,10 +16,10 @@ const catalogQuery = { type: 'string', description: 'English tool keywords or an
 
 /** Lazy construction: merely building a host/skill catalog never loads a secret or schema. */
 export function connectorGateway(resolveContext?: ConnectorContextResolver): Gateway {
-  let runtime: Promise<ConnectorRuntime> | undefined;
+  let runtime: Promise<ProviderDirectRuntime> | undefined;
   const getRuntime = async () => {
     if (!resolveContext) throw new ConnectorError('HOST_DISABLED', 'This host has no verified connector binding.', 403);
-    runtime ??= import('./runtime').then(module => module.createConnectorRuntime(resolveContext));
+    runtime ??= import('./provider-direct-runtime').then(module => module.createProviderDirectRuntime(resolveContext));
     return runtime;
   };
   return {
@@ -69,7 +69,7 @@ export function withConnectorResolver(native: RoutedTool, tools: RoutedTool[], s
   };
   return { ...native, parameters: { ...native.parameters, properties: { ...native.parameters.properties,
     domain: { type: 'string', description: 'Optional connector business-domain filter. Classification is not a permission.' },
-    connector_id: { type: 'string', description: 'Optional exact local connector account ID; still subject to current grants.' },
+    connector_id: { type: 'string', description: 'Search or list only this exact local connector account, without native Makinari tools. Current grants still apply.' },
     catalog_query: catalogQuery,
     connector_cursor: { type: 'string', description: 'Continuation returned as connector_next_cursor; retain the same search filters.' },
   } }, execute: async (args: any) => {
@@ -77,21 +77,28 @@ export function withConnectorResolver(native: RoutedTool, tools: RoutedTool[], s
       return invoke({ action: args.action === 'call' ? 'execute' : 'describe', action_name: args.name,
         action_params: args.args, thought_process: args.thought_process });
     }
-    const result = await native.execute(args);
-    if (!gateway || !['search', 'list'].includes(args.action) || result?.success === false) return result;
+    if (!['search', 'list'].includes(args.action)) return native.execute(args);
+    const accountOnly = args.connector_id !== undefined;
+    if (accountOnly && args.action === 'search' && (typeof args.query !== 'string' || !args.query.trim())) {
+      return { success: false, error: 'Provide a search query, or use list to browse this account.' };
+    }
+    // An explicit external search must not substitute the local report tool, even on an outage.
+    const result = accountOnly ? { success: true, tools: [] } : await native.execute(args);
+    if ((!gateway && !accountOnly) || result?.success === false) return result;
     const external = await invoke({ action: 'search', search_intent: args.action === 'search' ? args.query : undefined,
       domain: args.domain, category: args.category, connector_id: args.connector_id,
       catalog_query: args.catalog_query, connector_cursor: args.connector_cursor, thought_process: args.thought_process });
     const compatibleCategories = args.domain ? CONNECTOR_DOMAINS.find(domain => domain.id === args.domain)?.categories ?? [] : null;
-    const nativeTools = (result.tools ?? []).filter((tool: any) => tool.name !== gateway.name &&
+    const nativeTools = (result.tools ?? []).filter((tool: any) => tool.name !== gateway?.name &&
       (!args.category || tool.category === args.category) && (!compatibleCategories || compatibleCategories.includes(tool.category)));
     const connectorTools = external.success ? external.tools ?? [] : [];
     const failure = external.success ? external.partial_error : external.code ?? 'CONNECTOR_UNAVAILABLE';
     const hint = failure ? agentRecovery(failure).message : !connectorTools.length && !external.next_cursor
-      ? 'No eligible connector match for this search. Ask the user to check the selected connection and catalog-read setting or offer an independently authorized same-scope native tool.'
-      : 'Use connector_next_cursor even for an empty page. Describe exact describe_required entries before calling. For manual_only entries, ask the user to perform the step; do not execute them.';
+      ? accountOnly ? 'No eligible match on this connection. Do not substitute a native report or another account.'
+        : 'No matching provider action on an authorized connection. Check the account and its provider-direct policy, not the credential of a different account.'
+      : 'Continue with connector_next_cursor even if this page is empty. Describe the exact account reference before calling; a catalog match is not execution authority.';
     const merged = [...nativeTools.slice(0, args.action === 'search' ? 10 - connectorTools.length : nativeTools.length), ...connectorTools];
-    return { ...result, tools: merged, count: merged.length,
+    return { ...result, ...(accountOnly && !external.success && { success: false }), tools: merged, count: merged.length,
       connector_status: external.success ? (failure ? 'partial' : 'available') : 'unavailable',
       ...(failure ? { connector_error: failure, connector_recovery: agentRecovery(failure) } : {}),
       connector_next_cursor: external.success ? external.next_cursor ?? null : null,

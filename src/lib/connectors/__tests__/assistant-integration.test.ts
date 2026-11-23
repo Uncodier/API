@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { instanceCatalog } from './instance-catalog-fixture';
 import { buildToolExecutionContext, readToolExecutionContext } from '@/lib/services/tool-execution-context';
 import { connectorGateway, withConnectorResolver } from '../tool-resolver';
-import { createConnectorRuntime } from '../runtime';
+import { createProviderDirectRuntime } from '../provider-direct-runtime';
 
-jest.mock('../runtime', () => ({ createConnectorRuntime: jest.fn() }));
+jest.mock('../provider-direct-runtime', () => ({ createProviderDirectRuntime: jest.fn() }));
 jest.mock('@/app/api/agents/tools/router/screen-access', () => ({ assertToolScreenAccess: jest.fn(async () => undefined) }));
 const context = { siteId: randomUUID(), userId: randomUUID(), agentId: randomUUID(), instanceId: randomUUID(), host: 'assistant' as const };
 const runtime = { search: jest.fn(async () => ({ tools: [], truncated: false })), describe: jest.fn(), call: jest.fn(async () => ({ success: true })) };
@@ -31,7 +31,7 @@ function catalog() {
     hostContext, resolve, privateInputs, routeTools };
 }
 
-beforeEach(() => { jest.clearAllMocks(); jest.mocked(createConnectorRuntime).mockReturnValue(runtime as any); });
+beforeEach(() => { jest.clearAllMocks(); jest.mocked(createProviderDirectRuntime).mockReturnValue(runtime as any); });
 
 test('assistant factory decorates gateway before closing router and preserves private tool context', async () => {
   const factory = catalog();
@@ -41,7 +41,7 @@ test('assistant factory decorates gateway before closing router and preserves pr
     'not-an-agent-identity', undefined, undefined, undefined, undefined, privateContext, undefined, decoration, 'assistant');
   expect(factory.hostContext).toHaveBeenCalledWith({ siteId: context.siteId, userId: context.userId, instanceId: context.instanceId, host: 'assistant' });
   expect(factory.resolve).not.toHaveBeenCalled();
-  expect(createConnectorRuntime).not.toHaveBeenCalled();
+  expect(createProviderDirectRuntime).not.toHaveBeenCalled();
   expect(decoration.mock.calls[0][0].some((tool: any) => tool.name === 'use_composio_tools')).toBe(true);
   await tools[0].execute({ action: 'call', name: `connector:${randomUUID()}:HUBSPOT_LIST_CONTACTS`, args: '{}' });
   expect(factory.privateInputs).toEqual([privateContext]);

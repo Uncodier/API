@@ -15,12 +15,13 @@ export function getSupabaseServiceRoleUrl(): string {
 }
 
 type GatewayReply = { baseUrl: string; projectHeader: string | null };
-type Capture = { open: boolean; calls: number; reply: GatewayReply | null };
+type ActorRpc = 'connector_catalog_read_actor' | 'connector_direct_actor';
+type Capture = { rpc: ActorRpc; open: boolean; calls: number; reply: GatewayReply | null };
 const actorCapture = new AsyncLocalStorage<Capture>();
 
 /** Internal transport boundary. The callback must return the exact actor RPC's boolean result. */
-export async function captureCatalogActorReply(check: () => Promise<boolean>) {
-  const capture: Capture = { open: true, calls: 0, reply: null };
+async function captureActorReply(rpc: ActorRpc, check: () => Promise<boolean>) {
+  const capture: Capture = { rpc, open: true, calls: 0, reply: null };
   try {
     const allowed = (await actorCapture.run(capture, check)) === true;
     return { allowed, reply: allowed && capture.calls === 1 ? capture.reply : null };
@@ -30,11 +31,15 @@ export async function captureCatalogActorReply(check: () => Promise<boolean>) {
   }
 }
 
+export const captureCatalogActorReply = (check: () => Promise<boolean>) => captureActorReply('connector_catalog_read_actor', check);
+export const captureDirectActorReply = (check: () => Promise<boolean>) => captureActorReply('connector_direct_actor', check);
+
 // Private to admin client construction. Never reread an origin from the environment at request time.
 function adminFetch(baseUrl: string): typeof fetch {
-  const actorUrl = `${baseUrl.replace(/\/$/, '')}/rest/v1/rpc/connector_catalog_read_actor`;
+  const actorBase = `${baseUrl.replace(/\/$/, '')}/rest/v1/rpc/`;
   return async (input, init) => {
     const capture = actorCapture.getStore();
+    const actorUrl = capture && actorBase + capture.rpc;
     // postgrest-js passes a string URL and Headers; do not reinterpret other request shapes.
     if (!capture?.open || input !== actorUrl || init?.method !== 'POST' ||
         !(init.headers instanceof Headers) || init.headers.get('content-profile') !== 'public') {

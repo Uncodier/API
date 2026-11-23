@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { start } from 'workflow/api';
+import { firstAskInstanceId } from '../ask-submission';
 import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 import { runAssistantWorkflow } from '../workflow';
 import { insertUserActionLog, markRemoteInstanceError } from '../user-message-log';
@@ -30,8 +31,8 @@ jest.mock('@/lib/security/site-access', () => ({ canAccessSite: jest.fn() }));
 jest.mock('@/lib/services/site-skill-access', () => ({ isSiteSkillManager: jest.fn() }));
 jest.mock('@/lib/security/tool-request-principal', () => ({ canToolPrincipalAccessSite: jest.fn(), resolveToolRequestPrincipal: jest.fn() }));
 
-jest.mock('@/lib/connectors/access', () => ({ getVisibleConnector: jest.fn() }));
-import { getVisibleConnector } from '@/lib/connectors/access';
+jest.mock('@/lib/connectors/account-access', () => ({ getVisibleConnector: jest.fn() }));
+import { getVisibleConnector } from '@/lib/connectors/account-access';
 
 const INSTANCE = '00000000-0000-4000-8000-000000000001';
 const SITE = '00000000-0000-4000-8000-000000000002';
@@ -50,15 +51,15 @@ beforeEach(() => {
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
   (CreditService.validateCredits as jest.Mock).mockResolvedValue(true);
-  (insertUserActionLog as jest.Mock).mockResolvedValue({ id: LOG });
+  (insertUserActionLog as jest.Mock).mockReset().mockImplementation(async ({ actionId }) => ({ id: actionId ?? LOG }));
   (markRemoteInstanceError as jest.Mock).mockResolvedValue(undefined);
   (resetRequirementOnUserAction as jest.Mock).mockResolvedValue(undefined);
   (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
     const query: any = {};
     for (const name of ['select', 'eq', 'insert']) query[name] = jest.fn(() => query);
-    const data = table === 'sites' ? { user_id: USER }
+    const data = table === 'sites' ? { id: SITE, user_id: USER }
       : { id: INSTANCE, site_id: SITE, user_id: USER, status: 'error' };
-    query.maybeSingle = query.single = jest.fn(async () => ({ data, error: null }));
+    query.maybeSingle = query.single = jest.fn(async () => ({ data: query.insert.mock.calls.length ? { ...data, id: query.insert.mock.calls[0][0].id ?? INSTANCE } : data, error: null }));
     return query;
   });
   (start as jest.Mock).mockResolvedValue({ runId: 'run', status: Promise.resolve('completed'),
@@ -70,22 +71,22 @@ it('persists a fresh turn before workflow start and sends its ID through the SSE
   const response = await POST(request(payload));
   const body = await response.text();
   expect(insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({
-    instanceId: INSTANCE, siteId: SITE, skipDuplicateCheck: true,
+    instanceId: INSTANCE, siteId: SITE, actionId: expect.any(String),
     details: expect.objectContaining({ request_id: 'request-2', status: 'running' }),
   }));
   expect((insertUserActionLog as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan((start as jest.Mock).mock.invocationCallOrder[0]);
   expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
-  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
+  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: (insertUserActionLog as jest.Mock).mock.lastCall![0].actionId ?? LOG });
   expect((start as jest.Mock).mock.calls[0][1][13].executionMode).toBe('direct');
   expect(insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ execution_mode: 'direct' }) }));
-  expect(body).toContain(`"user_log_id":"${LOG}"`);
+  expect(body).toContain(`"user_log_id":"${(insertUserActionLog as jest.Mock).mock.lastCall![0].actionId}"`);
   expect(body).toContain('event: completed');
 });
 
 it('persists an explicit harness request without bypassing the existing workflow admission', async () => {
   const response = await POST(request({ ...payload, execution_mode: 'harness' }));
   await response.text();
-  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG, executionMode: 'harness' });
+  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: (insertUserActionLog as jest.Mock).mock.lastCall![0].actionId ?? LOG, executionMode: 'harness' });
   expect(insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ execution_mode: 'harness' }) }));
   expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
 });
@@ -113,7 +114,7 @@ it('uses the same lifecycle for a newly created session', async () => {
   expect(body).toContain('event: accepted');
   expect(body).toContain('event: completed');
   expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
-  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
+  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: (insertUserActionLog as jest.Mock).mock.lastCall![0].actionId ?? LOG });
 });
 
 it.each([INSTANCE, undefined])('admits bulk leads only from a verified user session (%s)', async instance_id => {
@@ -181,7 +182,7 @@ it.each([
   const pendingResponse = POST(request({ ...payload, message }));
   await started;
   expect(insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({
-    instanceId: INSTANCE, siteId: SITE, message, skipDuplicateCheck: true,
+    instanceId: INSTANCE, siteId: SITE, message, actionId: expect.any(String),
   }));
   expect(start).not.toHaveBeenCalled();
   expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
@@ -190,7 +191,7 @@ it.each([
   expect(start).toHaveBeenCalledTimes(1);
   expect((start as jest.Mock).mock.calls[0][0]).toBe(runAssistantWorkflow);
   expect((start as jest.Mock).mock.calls[0][1][1]).toBe(message);
-  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
+  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: (insertUserActionLog as jest.Mock).mock.lastCall![0].actionId ?? LOG });
   expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
   expect(supabaseAdmin.from).not.toHaveBeenCalledWith('requirement_status');
   expect(await response.text()).toContain('event: completed');
@@ -202,27 +203,27 @@ it('delivers workflow failure to the client independently of durable log visibil
   expect(await response.text()).toContain('ASSISTANT_WORKFLOW_FAILED');
 });
 
-it('returns a startup error even when recording that error also fails', async () => {
+it('reports an unconfirmed start without marking the persisted turn failed', async () => {
   (start as jest.Mock).mockRejectedValue(new Error('PRIVATE_PROVIDER_PAYLOAD'));
   (markRemoteInstanceError as jest.Mock).mockRejectedValue(new Error('Database unavailable'));
   const response = await POST(request(payload));
-  expect(response.status).toBe(500);
+  expect(response.status).toBe(503);
   const body = await response.json();
-  expect(body.error.code).toBe('ASSISTANT_START_FAILED');
+  expect(body.error.code).toBe('ASSISTANT_START_UNCONFIRMED');
   expect(JSON.stringify(body)).not.toContain('PRIVATE_PROVIDER_PAYLOAD');
-  expect(markRemoteInstanceError).toHaveBeenCalledWith(expect.objectContaining({ instanceId: INSTANCE, siteId: SITE }));
+  expect(markRemoteInstanceError).not.toHaveBeenCalled();
 });
 
 it('does not acknowledge or start work when the user message could not be persisted', async () => {
   (insertUserActionLog as jest.Mock).mockRejectedValue(new Error('Database unavailable'));
   const response = await POST(request(payload));
-  expect(response.status).toBe(500);
+  expect(response.status).toBe(503);
   expect(start).not.toHaveBeenCalled();
-  expect(markRemoteInstanceError).toHaveBeenCalled();
+  expect(markRemoteInstanceError).not.toHaveBeenCalled();
 });
 
 it('returns conflict without marking the original runner as failed when cron owns execution', async () => {
-  (insertUserActionLog as jest.Mock).mockRejectedValue(new Error('Failed to persist user message: requirement_execution_busy'));
+  (insertUserActionLog as jest.Mock).mockRejectedValue(new Error('requirement_execution_busy'));
   const response = await POST(request(payload));
   expect(response.status).toBe(409);
   expect((await response.json()).error.code).toBe('REQUIREMENT_EXECUTION_BUSY');
@@ -249,7 +250,7 @@ it('rejects an archived instance before persisting or starting a new turn', asyn
 });
 
 it('does not revive an archived instance when archival races user-action admission', async () => {
-  (insertUserActionLog as jest.Mock).mockRejectedValue(new Error('Failed to persist user message: instance_archived'));
+  (insertUserActionLog as jest.Mock).mockRejectedValue(new Error('instance_archived'));
   const response = await POST(request(payload));
   expect(response.status).toBe(409);
   expect((await response.json()).error.code).toBe('INSTANCE_ARCHIVED');
@@ -334,7 +335,7 @@ it.each(['text', 'image', 'video', 'audio', 'audience'])('admits new and existin
     expect(response.status).toBe(200);
     expect(await response.text()).toContain('event: completed');
     const args = (start as jest.Mock).mock.calls[0][1];
-    expect(args[0]).toBe(INSTANCE);
+    expect(args[0]).toBe(instance_id ?? firstAskInstanceId(SITE, USER, true, payload.request_id));
     expect(args[9]).toBeUndefined();
     expect(args[10]).toBe(3);
     expect(args[11]).toBe(context);

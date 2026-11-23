@@ -1,4 +1,4 @@
-import { ConnectorError } from './types';
+import { ConnectorInputGuidance } from './types';
 
 // These server-owned strings are safe for the agent. Never echo a token, SQL fragment or provider error.
 const hints = {
@@ -28,8 +28,8 @@ const hints = {
   width: 'Use at most five projections, groups, or sort keys.',
 } as const;
 
-export class AnalyticsSelectInputError extends ConnectorError {
-  constructor(readonly reason: keyof typeof hints) { super('INVALID_TOOL_ARGUMENTS', hints[reason], 400); }
+export class AnalyticsSelectInputError extends ConnectorInputGuidance {
+  constructor(readonly reason: keyof typeof hints) { super(hints[reason]); }
   get hint(): string { return hints[this.reason]; }
 }
 

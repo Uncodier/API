@@ -6,10 +6,12 @@ import { parseRecoveryExecution } from '@/lib/services/robot-instance/assistant-
 import { assistantConnectorContext } from '../host-context';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { buildToolExecutionContext } from '@/lib/services/tool-execution-context';
+import { bindDirectPromptAgentStep } from '@/app/api/robots/instance/assistant/direct-agent-step';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
-jest.mock('../access', () => ({ requireConnectorSiteAccess: jest.fn(async () => undefined) }));
+jest.mock('../account-access', () => ({ requireConnectorSiteAccess: jest.fn(async () => undefined) }));
 const site = randomUUID(), actor = randomUUID(), instance = randomUUID(), agent = randomUUID(), spoof = randomUUID();
+const action = randomUUID();
 const base = 'src/app/api/robots/instance/assistant/';
 const routing = { withAssistantRouting: (_s: unknown, _r: unknown, fn: () => unknown) => fn(),
   admitAssistantRouting: async () => ({ payer: 'platform', siteId: site }), validateAssistantInferenceAdmission: async () => true };
@@ -21,7 +23,12 @@ beforeEach(() => {
   principal = { internal: false, userId: actor, siteId: null, userSession: true };
   jest.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
     const q: any = {};
-    for (const method of ['select', 'eq', 'abortSignal', 'insert']) q[method] = () => q;
+    for (const method of ['select', 'eq', 'abortSignal', 'insert','not','contains','or']) q[method] = () => q;
+    if (table === 'instance_logs') {
+      q.update = (patch:unknown) => { expect(patch).toEqual({agent_id:agent}); return q; };
+      q.maybeSingle = async () => ({error:null,data:{id:action,agent_id:agent}});
+      return q;
+    }
     q.maybeSingle = q.single = async () => ({ error: null, data: table === 'agents' ? { id: agent }
       : { id: instance, site_id: site, user_id: actor, agent_id: spoof, status: 'uninstantiated' } });
     return q;
@@ -54,7 +61,7 @@ beforeEach(() => {
   run = load<any>(base + 'workflow.ts', {
     workflow: {}, './assistant-turn': core, './execution-mode': {},
     '@/lib/services/robot-instance/assistant-failure-policy': { ASSISTANT_FAILURE_MESSAGE: 'failed' },
-    './steps': { prepareAssistantContext: async (_i: any, message: any, _s: any, userId: any) => ({
+    './steps': { bindDirectPromptAgentStep, prepareAssistantContext: async (_i: any, message: any, _s: any, userId: any) => ({
       executionOptions: { site_id: site, instance_id: instance, user_id: userId }, instance: {},
       connectorAgentId: agent, systemPrompt: 'Actual selected prompt', initialMessage: message, customTools: [], expectedResultsAmount: 1,
     }) },
@@ -80,7 +87,7 @@ async function route(body: Record<string, unknown>) {
     '@/lib/database/supabase-client': { supabaseAdmin },
     'workflow/api': { start: async (_fn: any, args: any[]) => ({ result: await run(...args) }) },
     './workflow': { runAssistantWorkflow: run },
-    './user-message-log': { insertUserActionLog: async () => ({ id: randomUUID() }), withRetries: (fn: () => any) => fn() },
+    './ask-submission': { claimAskSubmission: async () => ({ id: action, replay: false }), firstAskInstanceId: () => instance },
     './response-stream': { assistantResponseStream: (v: any) => NextResponse.json(v.result) },
     './publish-tool-overrides': {},
     './skill-selection': { assistantSkillSelectionSchema: z.object({}), approvedCommunityImport: () => null, resolveAssistantSkillSelection: async () => undefined },
@@ -92,7 +99,7 @@ async function route(body: Record<string, unknown>) {
     './execution-mode': { resolveAssistantRequestMode: () => 'direct' },
   });
   return POST(new NextRequest('https://example.test/api/robots/instance/assistant', {
-    method: 'POST', body: JSON.stringify({ instance_id: instance, site_id: site, message: 'Read contacts', ...body }),
+    method: 'POST', body: JSON.stringify({ instance_id: instance, site_id: site, message: 'Read contacts', request_id: randomUUID(), ...body }),
   }));
 }
 
@@ -114,6 +121,7 @@ test('new chat with NULL raw agent reaches connectors using actual prompt agent'
   const original = jest.mocked(supabaseAdmin.from).getMockImplementation()!;
   jest.mocked(supabaseAdmin.from).mockImplementation((table: any) => {
     const q: any = original(table);
+    if (table === 'sites') q.single = async () => ({ data: { id: site, user_id: actor } });
     if (table === 'remote_instances') q.single = q.maybeSingle = async () => ({ data: {
       id: instance, site_id: site, user_id: actor, agent_id: null, status: 'uninstantiated',
     } });

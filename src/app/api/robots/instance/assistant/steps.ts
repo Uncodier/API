@@ -1,4 +1,5 @@
 import { prepareAssistantContext as prepareContext } from './assistant-context';
+export { bindDirectPromptAgentStep } from './direct-agent-step';
 
 /** Durable transport wrapper; cron and interactive execution share the same core. */
 export async function prepareAssistantContext(...args: Parameters<typeof prepareContext>) {

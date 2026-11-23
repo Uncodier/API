@@ -1,5 +1,5 @@
 import { Resolver } from 'node:dns/promises';
-import { captureCatalogActorReply } from './supabase-admin';
+import { captureCatalogActorReply, captureDirectActorReply } from './supabase-admin';
 
 const hosted = /^([a-z]{20})\.supabase\.co$/;
 const label = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -41,9 +41,11 @@ async function projectRef(baseUrl: string, header: string | null): Promise<strin
   } finally { clearTimeout(timer); }
 }
 
-/** Observe only the existing server-owned actor RPC; failure to prove identity is not an actor denial. */
-export async function withCatalogActorEvidence(check: () => Promise<boolean>): Promise<{ allowed: boolean; localProjectRef: string | null }> {
-  const { allowed, reply } = await captureCatalogActorReply(check); // Preserve authorization errors.
+/** Observe only the named server-owned actor RPC. A legacy or unrelated RPC cannot supply direct evidence. */
+async function withActorEvidence(capture: typeof captureCatalogActorReply, check: () => Promise<boolean>) {
+  const { allowed, reply } = await capture(check); // Preserve authorization errors.
   const localProjectRef = reply ? await projectRef(reply.baseUrl, reply.projectHeader).catch(() => null) : null;
   return { allowed, localProjectRef };
 }
+export const withCatalogActorEvidence = (check: () => Promise<boolean>) => withActorEvidence(captureCatalogActorReply, check);
+export const withDirectActorEvidence = (check: () => Promise<boolean>) => withActorEvidence(captureDirectActorReply, check);

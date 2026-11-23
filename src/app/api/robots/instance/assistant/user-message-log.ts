@@ -9,12 +9,14 @@ export async function insertUserActionLog(params: {
   siteId: string;
   userId?: string | null;
   message: string;
+  /** Server-derived HTTP submission primary key; never a raw client log ID. */
+  actionId?: string;
   details?: Record<string, unknown>;
   skipDuplicateCheck?: boolean;
   agentId?: string | null;
   commandId?: string | null;
 }): Promise<{ id: string }> {
-  if (!params.skipDuplicateCheck) {
+  if (!params.actionId && !params.skipDuplicateCheck) {
     const since = new Date(Date.now() - DUPLICATE_WINDOW_MS).toISOString();
 
     const { data: existing, error: lookupError } = await supabaseAdmin
@@ -39,6 +41,7 @@ export async function insertUserActionLog(params: {
   const { data, error } = await supabaseAdmin
     .from('instance_logs')
     .insert({
+      ...(params.actionId ? { id: params.actionId } : {}),
       log_type: 'user_action',
       level: 'info',
       message: params.message,
@@ -56,7 +59,14 @@ export async function insertUserActionLog(params: {
     .select('id')
     .single();
 
-  if (error || !data?.id) {
+  if (params.actionId && error) {
+    // Keep SQLSTATE, not diagnostic row contents. The HTTP caller must verify
+    // the exact scoped incumbent before acknowledging a uniqueness conflict.
+    if (error.code === '23505') throw Object.assign(new Error('User action already reserved'), { code: error.code });
+    if (['requirement_execution_busy', 'instance_archived', 'original_instance_archived'].includes(error.message)) throw new Error(error.message);
+    throw new Error('User action insertion could not be confirmed');
+  }
+  if (error || !data?.id || (params.actionId && data.id !== params.actionId)) {
     throw new Error(`Failed to persist user message: ${error?.message || 'no row returned'}`);
   }
 

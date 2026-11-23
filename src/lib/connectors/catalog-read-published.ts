@@ -2,7 +2,7 @@
 // https://docs.composio.dev/api/tools/{slug}?version={version}. See the offline fixtures.
 // Membership selects a projection, never authorization. A new release needs fresh evidence.
 const calendarScope = 'https://www.googleapis.com/auth/calendar';
-export const calendarReadScopes = [`${calendarScope}.calendarlist.readonly`, `${calendarScope}.readonly`];
+const calendarReadScopes = [`${calendarScope}.calendarlist.readonly`, `${calendarScope}.readonly`];
 const calendarScopes = [calendarScope, `${calendarScope}.calendarlist`, ...calendarReadScopes];
 const crmList = (resource: 'companies' | 'deals', shape: string) => ({
   kind: 'hubspot' as const, toolkit: 'hubspot', resource, version: '20261116_01', shape,

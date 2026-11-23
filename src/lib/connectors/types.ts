@@ -5,6 +5,11 @@ export class ConnectorError extends Error {
   }
 }
 
+/** Trusted local validation guidance, independent of any toolkit or upstream error text. */
+export class ConnectorInputGuidance extends ConnectorError {
+  constructor(readonly correction: string) { super('INVALID_TOOL_ARGUMENTS', correction, 400); }
+}
+
 /** Trusted host context. Never construct authority from model arguments. */
 export type ConnectorContext = {
   siteId: string;

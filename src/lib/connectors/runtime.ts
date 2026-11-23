@@ -10,21 +10,17 @@ import { loadToolScreenAccess } from '@/app/api/agents/tools/router/screen-acces
 import type { ConnectorContextResolver } from './host-context';
 import { catalogDefinition, catalogGrant, catalogInstance, catalogScreens, instanceCatalogPage } from './instance-catalog-discovery';
 
-import { analyticsRelease } from './analytics-release';
-import { directQueryMode } from './supabase-direct-query';
 import { ConnectorArgumentError } from './connector-argument-error';
-import { SUPABASE_CATALOG_SLUG } from './supabase-report-contract';
+import { isSupabaseReportAction } from './provider-report-action';
 import { privateResultBinding, checkPrivateDestination, deliverPrivateResult } from './private-result-delivery';
 
-export type ConnectorFilters = { query?: string; catalog_query?: string; domain?: string; category?: string; connector_id?: string; cursor?: string };
-export type ConnectorCandidate = {
-  name: string; description: string; category: string; domains: string[];
-  connector_id: string; toolkit: string; availability: 'describe_required' | 'manual_only'; request_only?: true;
-};
+import type { ConnectorCandidate, ConnectorFilters } from './connector-discovery-types';
+export type { ConnectorCandidate, ConnectorFilters } from './connector-discovery-types';
 const binding = (value: AuthorizedConnector) => JSON.stringify([value.connector, value.provider, value.policy, value.requestOnly, value.localProjectRef]);
 const actor = (context: ConnectorContext) => JSON.stringify(context);
 
-/** Descriptions carry version/hash across turns, never authority or cached grants. */
+/** Historical restricted runtime. Production uses this only to reopen an owner's saved report
+ * choice, never as a fallback from the provider-direct Robots gateway. */
 export function createConnectorRuntime(resolveContext: ConnectorContextResolver) {
   const rankActions = createActionRanker();
   async function authorize(name: string) {
@@ -152,10 +148,9 @@ export function createConnectorRuntime(resolveContext: ConnectorContextResolver)
           }
         }
         const destination = context.host === 'assistant' ? privateResultBinding(context, authorized, tool.slug, dynamic) : null;
-        const requestedScope = dynamic && tool.slug === SUPABASE_CATALOG_SLUG ? directQueryMode(args) : null;
-        const project = authorized.connector.supabase_project_ref;
-        if (requestedScope && (!destination || !project)) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED','Direct SQL requires a private project-bound instance.',403);
-        const analytics = requestedScope && destination && project ? analyticsRelease(destination,project,requestedScope) : undefined;
+        const analytics = dynamic && isSupabaseReportAction(tool.toolkit, tool.slug)
+          ? (await import('./analytics-release')).prepareReportRelease(destination, authorized.connector.supabase_project_ref, args)
+          : undefined;
         const result = await executeConnectorTool({ credential, connector: authorized.connector, provider: authorized.provider,
           ...(dynamic && { catalogRead: true, localProjectRef: authorized.localProjectRef }), ...(analytics && { authorizeSelect: analytics.permit }),
           toolSlug: tool.slug, input: args, allowedTools: [tool.slug], toolkitVersion: envelope.version,

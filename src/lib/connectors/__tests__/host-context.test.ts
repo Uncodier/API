@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { assistantConnectorContext } from '../host-context';
-import { requireConnectorSiteAccess } from '../access';
+import { requireConnectorSiteAccess } from '../account-access';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
-jest.mock('../access', () => ({ requireConnectorSiteAccess: jest.fn() }));
+jest.mock('../account-access', () => ({ requireConnectorSiteAccess: jest.fn() }));
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
 const agentId = randomUUID();
 const scope = { agentId, siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(), host: 'assistant' as const };

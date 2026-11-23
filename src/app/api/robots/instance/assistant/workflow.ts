@@ -3,7 +3,7 @@ import { sleep } from 'workflow';
 
 import { processAssistantTurn } from './assistant-turn';
 import { ASSISTANT_FAILURE_MESSAGE } from '@/lib/services/robot-instance/assistant-failure-policy';
-import { prepareAssistantContext } from './steps';
+import { prepareAssistantContext, bindDirectPromptAgentStep } from './steps';
 import { getActiveInstancePlan, getAssistantPlanOwnershipStep, executePlanStep, acquirePlanExecutionLockStep, releasePlanExecutionLockStep } from './plan-steps';
 import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep, pauseUserMessageStep, pauseAssistantForCreditsStep } from './persist-and-fail-steps';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
@@ -115,11 +115,17 @@ export async function runAssistantWorkflow(
   context.callerSource = options?.callerSource;
   // A resumed workflow builds a new prompt and can select a different agent. Require
   // a new human turn for private connector reads; a snapshot is not fresh admission.
-  context.catalogUserSession = recovery.snapshot || options?.executionMode !== 'direct' ? undefined : options?.catalogUserSession;
+  context.catalogUserSession = !recovery.snapshot && !instanceNodeId && options?.executionMode === 'direct' &&
+    options.callerSource === 'interactive' && options.catalogUserSession === true &&
+    await bindDirectPromptAgentStep(recoveryScope, context.connectorAgentId) ? true : undefined;
   context.leadBulkUserSession = options?.leadBulkUserSession;
   context.connectorIdHint = options?.connectorIdHint;
   if (context.connectorIdHint) {
-    context.systemPrompt += '\nA connector account is selected for this turn. If relevant to the request, search the available connector tools. If the selected account has no suitable action, say so; do not substitute another account or project. The selection is not a request to execute anything.';
+    context.systemPrompt += '\nA connector account is selected for this turn. If relevant to the request, search the available connector tools.';
+    if (/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(context.connectorIdHint) && context.connectorIdHint.length === 36) {
+      context.systemPrompt += ` Set connector_id to ${context.connectorIdHint} in tools search/list to see only that connection, not native reporting tools.`;
+    }
+    context.systemPrompt += ' If the selected account has no suitable action, say so; do not substitute another account or project. The selection is not a request to execute anything.';
   }
   context.recoveryScope = recoveryScope;
   context.executionMode = options?.executionMode;

@@ -98,6 +98,17 @@ test('no SQL, project, foreign relation or unbound lookup can reach dispatch, in
   expect(call.beforeDispatch).not.toHaveBeenCalled();
 });
 
+it('does not impose an OAuth scope ceiling on a verified reporting PAT; respects a real provider denial', async () => {
+  const {call, tool, toolkit, account, queue} = await pinned();
+  const live = {...account, state:{...account.state, val:{...account.state.val,scope:'projects:read database_read'}}};
+  const connector = {...call.connector, granted_scopes:['projects:read']};
+  queue(tool, toolkit, live, {successful:false,error:'Denied',data:{status_code:403}});
+  await expect(executeConnectorTool({...call, connector})).rejects.toMatchObject({code:'APP_RESOURCE_DENIED'});
+  const posts = http.mock.calls.filter(([,init])=>init.method==='POST');
+  expect(posts).toHaveLength(1);
+  expect(JSON.parse(posts[0][1].body)).toMatchObject({connected_account_id:account.id,arguments:{ref:connector.supabase_project_ref}});
+});
+
 test('does not look up external facts for an unverified live account',async()=>{
   const lookup = jest.mocked(loadExternalDataset); lookup.mockClear();
   const f=fixture();f.queue(f.tool,f.toolkit,{...f.account,user_id:randomUUID()});

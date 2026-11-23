@@ -4,7 +4,8 @@ import { isBoundSupabaseProject } from './supabase-table-policy';
 import { ConnectorError, type Connector } from './types';
 
 // https://docs.composio.dev/toolkits/supabase — not the SQL, PostgREST or service-role tools.
-export const SUPABASE_CATALOG_SLUG = 'SUPABASE_RUN_READ_ONLY_QUERY';
+import { SUPABASE_CATALOG_SLUG } from './provider-report-action';
+export { SUPABASE_CATALOG_SLUG };
 export const REPORT_SCOPE = 'database_read';
 const version = '20261116_00';
 const tags = ['important', 'readOnlyHint', 'openWorldHint', 'Database'];

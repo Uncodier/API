@@ -120,15 +120,12 @@ it.each(['secrets','identities','credentials','api_keys','exports','members','sh
 
 it.each([
   { provider: 'custom', scheme: 'OAUTH2', expected: 'PROVIDER_INVALID_RESPONSE' },
-  { variant: 'mcp', expected: 'TOOL_UNREVIEWED' }, { state: null, expected: 'CONNECTOR_SCOPE_UNSUPPORTED' },
-  { grants: [], expected: 'CONNECTOR_SCOPE_MISSING' }, { grants: 'tasks.read', expected: 'CONNECTOR_SCOPE_MISSING' },
-  { grants: 'deliverables:read tasks.write', expected: 'CONNECTOR_SCOPE_UNSUPPORTED' }, { grants: 'deliverables:read users.read', expected: 'CONNECTOR_SCOPE_UNSUPPORTED' },
-  { grants: 'deliverables:read offline_access', expected:'CONNECTOR_SCOPE_UNSUPPORTED' }, { scheme: 'API_KEY', expected: 'CONNECTOR_SCOPE_UNSUPPORTED' },
+  { variant: 'mcp', expected: 'TOOL_UNREVIEWED' }, { scheme: 'unknown', expected: 'CONNECTOR_SCOPE_UNSUPPORTED' },
   { private: false, expected: 'CONNECTOR_ACCOUNT_MISMATCH' }, { owner: 'some_other_site', expected:'CONNECTOR_ACCOUNT_MISMATCH' },
 ])('checks live grants, account type, toolkit and owner: %j', async row => {
   const { tool, call, queue, api, account } = await pinned();
   const modified = { ...account, user_id: row.owner ?? account.user_id, experimental: row.private === false ? undefined : account.experimental,
-    state: { authScheme: row.scheme ?? 'OAUTH2', val: row.state === null ? {} : { scope: row.grants ?? account.state.val.scope } } };
+    state: { authScheme: row.scheme ?? 'OAUTH2', val: account.state.val } };
   queue(tool, { ...api, type: row.provider ?? api.type, toolkit_type: row.variant ?? 'api' }, modified);
   await expect(executeConnectorTool(call)).rejects.toMatchObject({ code: row.expected, executed: false, effectStarted: false });
   noPost(); expect(call.beforeDispatch).not.toHaveBeenCalled();
@@ -191,8 +188,28 @@ it('uses explicit structural application status only; no provider error, data, l
   expect(String(err)).not.toContain(sensitive); expect(http).toHaveBeenCalledTimes(4);
 });
 
+it('keeps two connections of the same toolkit distinct in the descriptor, dispatch and provider decision', async () => {
+  const first = fixture();
+  const secondId = randomUUID();
+  const second = { ...first,
+    input: { ...first.input, connector: { ...first.input.connector, id: randomUUID(), provider_account_id: secondId } },
+    account: { ...first.account, id: secondId },
+  };
+  const a = await pinned(first), b = await pinned(second);
+  expect(a.description.schemaHash).not.toBe(b.description.schemaHash);
+  b.queue(b.tool, b.api, b.account);
+  await expect(executeConnectorTool({...b.call,schemaHash:a.description.schemaHash})).rejects.toMatchObject({code:'CONNECTOR_SCHEMA_CHANGED',executed:false});
+  noPost();
+  http.mockReset(); a.queue(a.tool, a.api, a.account, {successful:true,error:null,data:{items:[{id:1}]}});
+  await expect(executeConnectorTool(a.call)).resolves.toMatchObject({data:{items:[{id:1}]}});
+  b.queue(b.tool, b.api, b.account, {successful:false,error:'Forbidden',data:{status_code:403}});
+  await expect(executeConnectorTool(b.call)).rejects.toMatchObject({code:'APP_RESOURCE_DENIED'});
+  expect(http.mock.calls.filter(([,init])=>init.method==='POST').map(([,init])=>JSON.parse(init.body).connected_account_id))
+    .toEqual([a.account.id, b.account.id]);
+});
 
-it('uses only a narrow provider-enforced OAuth portal read if scopes were omitted; an explicit empty/insufficient grant is never ignored', async () => {
+
+it('reports the provider decision for a bound portal read regardless of incomplete or broader local scope metadata', async () => {
   const f = published('companies');
   const unknown = { ...f.account, state: { authScheme: 'OAUTH2', val: {} } };
   f.queue(f.tool, f.api, unknown);
@@ -200,18 +217,20 @@ it('uses only a narrow provider-enforced OAuth portal read if scopes were omitte
   const call = { ...f.input, input:{limit:1}, schemaHash:descriptor.schemaHash, toolkitVersion:f.tool.version,
     allowedTools:[f.tool.slug], requiredScopes:[], beforeDispatch:jest.fn(async () => undefined) };
   for (const scope of [[], ['something:read'], ['crm.objects.companies.read','companies.write']]) {
-    http.mockReset(); f.queue(f.tool, f.api, { ...unknown, state: { authScheme:'OAUTH2', val:{scope} } });
-    await expect(executeConnectorTool(call)).rejects.toMatchObject({ executed:false, effectStarted:false }); noPost();
+    http.mockReset(); f.queue(f.tool, f.api, { ...unknown, state: { authScheme:'OAUTH2', val:{scope} } },
+      {successful:false,error:'Denied',data:{status_code:403}});
+    await expect(executeConnectorTool(call)).rejects.toMatchObject({code:'APP_RESOURCE_DENIED'});
+    expect(http.mock.calls.filter(([,init])=>init.method==='POST')).toHaveLength(1);
   }
   http.mockReset(); f.queue(f.tool, f.api, unknown, { successful:true,error:null,data:{results:[crmRow('name','Commercial')]} });
   await expect(executeConnectorTool(call)).resolves.toEqual({ successful:true,data:{items:[{id:'12',name:'Commercial'}]} });
 });
 
-it('does not replace explicit grant evidence from the exact account with a reduced owner-proof list DTO', async () => {
+it('uses the filtered account list only to prove ownership, not to synthesize resource permissions', async () => {
   const f = published('companies');
   const raw = { ...f.account, user_id:undefined, state:{ authScheme:'OAUTH2', val:{scope:[]} } };
   f.queue(f.tool, f.api, raw, { items:[{ ...raw, state:{authScheme:'OAUTH2', val:{}} }],next_cursor:null });
-  await expect(describeConnectorTool(f.input)).rejects.toMatchObject({code:'CONNECTOR_SCOPE_MISSING'}); noPost();
+  await expect(describeConnectorTool(f.input)).resolves.toMatchObject({slug:f.tool.slug}); noPost();
 });
 
 // Exact JSON from https://docs.composio.dev/api/tools/{slug}?version={version} (public docs viewer).
@@ -279,10 +298,11 @@ it('projects a CalendarList from the published data.calendars field without refl
     http.mockReset(); f.queue(f.tool,f.api,f.account);
     await expect(executeConnectorTool({...call,input:{max_results:2,...args}})).rejects.toMatchObject({ effectStarted:false });noPost();
   }
-  for(const [scope,code] of [[undefined,'CONNECTOR_SCOPE_UNSUPPORTED'], [[], 'CONNECTOR_SCOPE_MISSING'], [[gcal],'CONNECTOR_SCOPE_UNSUPPORTED'],
-    [[`${gcal}.readonly`,gcal], 'CONNECTOR_SCOPE_UNSUPPORTED'], [[`${gcal}.events.readonly`], 'CONNECTOR_SCOPE_UNSUPPORTED']] as const) {
-    http.mockReset();f.queue(f.tool,f.api,{...f.account,state:{authScheme:'OAUTH2',val:{scope}}});
-    await expect(executeConnectorTool({...call,input:{max_results:1}})).rejects.toMatchObject({code,effectStarted:false});noPost();
+  for(const scope of [undefined, [], [gcal], [`${gcal}.readonly`,gcal], [`${gcal}.events.readonly`]]) {
+    http.mockReset();f.queue(f.tool,f.api,{...f.account,state:{authScheme:'OAUTH2',val:{scope}}},
+      {successful:false,error:'Denied by account',data:{status_code:403}});
+    await expect(executeConnectorTool({...call,input:{max_results:1}})).rejects.toMatchObject({code:'APP_RESOURCE_DENIED'});
+    expect(http.mock.calls.filter(([,init])=>init.method==='POST')).toHaveLength(1);
   }
 });
 

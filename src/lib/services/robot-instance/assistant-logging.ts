@@ -3,6 +3,7 @@ import { type NodeResult, buildInitialNodeResult } from './node-result-collector
 import { assistantRuntimeProvenance } from './assistant-context-version';
 import type { NodeContextRef } from './assistant-streaming-logs';
 import { AssistantExecutionBoundaryError } from './assistant-execution-boundary';
+import { connectorObservation } from '@/lib/connectors/connector-observation';
 import {
   normalizeToolOperationResult,
   toolOperationOutcomeToSuccess,
@@ -128,12 +129,13 @@ export function createAssistantOnStepHandler(
       let failedToolCalls = 0;
 
       for (const toolCall of step.toolCalls) {
+        const loggedArgs = connectorObservation(toolCall.toolName,toolCall.args) ?? toolCall.args;
         // Extract and save thought_process as a thinking log if present
-        if (toolCall.args && typeof toolCall.args.thought_process === 'string' && toolCall.args.thought_process.trim() !== '') {
+        if (loggedArgs && typeof loggedArgs.thought_process === 'string' && loggedArgs.thought_process.trim() !== '') {
           const { error: thinkingLogError } = await supabaseAdmin.from('instance_logs').insert({
             log_type: 'thinking',
             level: 'info',
-            message: toolCall.args.thought_process,
+            message: loggedArgs.thought_process,
             details: {
               provider,
               response_type: 'reasoning',
@@ -177,10 +179,10 @@ export function createAssistantOnStepHandler(
         const { error: toolLogError } = await supabaseAdmin.from('instance_logs').insert({
           log_type: 'tool_call',
           level: 'info',
-          message: `${toolCall.toolName}: ${toolCall.args ? Object.entries(toolCall.args).map(([k, v]) => `${k}=${v}`).join(', ') : 'no args'}`,
+          message: `${toolCall.toolName}: ${loggedArgs ? Object.entries(loggedArgs).map(([k, v]) => `${k}=${v}`).join(', ') : 'no args'}`,
           tool_name: toolCall.toolName,
           tool_call_id: toolCall.id || toolCall.toolCallId,
-          tool_args: toolCall.args || {},
+          tool_args: loggedArgs || {},
           tool_result: toolResult ? {
             success: toolOperationOutcomeToSuccess(operation?.outcome),
             operation_outcome: operation?.outcome,

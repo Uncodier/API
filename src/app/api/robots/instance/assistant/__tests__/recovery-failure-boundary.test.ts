@@ -32,7 +32,7 @@ jest.unstable_mockModule('@/lib/database/supabase-client', () => ({
   supabaseAdmin: { from: (table: string) => db.from(table) },
 }));
 jest.unstable_mockModule('../assistant-turn', () => ({ processAssistantTurn: durableTurn }));
-jest.unstable_mockModule('../steps', () => ({ prepareAssistantContext: async () => ({
+jest.unstable_mockModule('../steps', () => ({ bindDirectPromptAgentStep: async () => { throw new Error('Not an interactive turn'); }, prepareAssistantContext: async () => ({
   instance: {}, initialMessage: 'Send the requested message', customTools: [], imageAssets: [],
   expectedResultsAmount: 1, systemPrompt: 'Original instructions', hasLinkedRequirement: false,
   executionOptions: { instance_id: scope.instanceId, site_id: scope.siteId, user_id: scope.userId },

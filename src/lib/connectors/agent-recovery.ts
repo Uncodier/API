@@ -1,5 +1,4 @@
-import { ConnectorError } from './types';
-import { AnalyticsSelectInputError } from './supabase-select-diagnostics';
+import { ConnectorError, ConnectorInputGuidance } from './types';
 import { ConnectorArgumentError } from './connector-argument-error';
 import { argumentFailure } from '@/lib/tools/argument-contract';
 import type { ToolArgumentIssue } from '@/lib/tools/argument-contract';
@@ -15,6 +14,16 @@ export function agentRecovery(code: string): Advice {
       return advice('ask_manager', 'Ask a workspace manager to check the member, agent and tool policy in Connectors. Do not request a token in chat.', manual);
     case 'CATALOG_READS_DISABLED': case 'CATALOG_OPT_IN_REQUIRED':
       return advice('ask_manager', 'Ask a workspace manager to enable catalog reads for this connection in Connectors if appropriate.', manual);
+    case 'PROVIDER_DIRECT_NOT_ENABLED': case 'DIRECT_POLICY_REQUIRED':
+      return advice('ask_manager', 'Direct policy does not admit this account or action. Ask the manager to check connection enrollment, member/agent use and the saved tool selection. Legacy catalog reads do not authorize provider actions. Do not switch accounts.');
+    case 'DIRECT_DISPATCH_ALREADY_CLAIMED':
+      return advice('reconcile', 'This request already reserved the provider action. Check its private receipt or the connected application; do not dispatch it again.');
+    case 'DIRECT_DISPATCH_UNCONFIRMED':
+      return advice('reconcile', 'The reservation could not be confirmed. Do not resubmit or change arguments; check the status of the original request.');
+    case 'DIRECT_POLICY_UNAVAILABLE':
+      return advice('retry_later', 'The account policy service is unavailable. Do not change credentials, switch connections or treat the failure as missing data.');
+    case 'DIRECT_RESULT_UNCONFIRMED':
+      return advice('reconcile', 'The provider action was sent but a private result could not be released. Check private results or the selected account. Do not repeat the action.');
     case 'CATALOG_SELECTION_CHANGED': return advice('ask_manager', 'Some saved actions are no longer in the current provider catalog. Ask a manager to refresh the selection; other returned actions are unaffected.');
     case 'NOT_FOUND': case 'APP_RESOURCE_UNAVAILABLE': case 'PROVIDER_NOT_FOUND':
       return advice('ask_user', 'Ask the user to verify the intended connection or resource. Missing and not visible may look identical.', manual);
@@ -62,7 +71,7 @@ export function agentRecovery(code: string): Advice {
       return advice('retry_later', 'Makinari could not verify connector access. Do not reconnect or change workspace permissions; contact Makinari support if this persists.', manual);
     case 'PROVIDER_TIMEOUT': case 'PROVIDER_UNAVAILABLE': case 'STORAGE_UNAVAILABLE': case 'HOST_IDENTITY_UNAVAILABLE': case 'TOOL_SCREEN_ACCESS_UNAVAILABLE':
       return advice('retry_later', 'A verification service is unavailable. This does not establish missing permissions. Offer to retry later.', manual);
-    case 'TOOL_UNREVIEWED': case 'SCHEMA_UNSUPPORTED': case 'SCOPES_UNSUPPORTED': case 'CONNECTOR_SCOPE_UNSUPPORTED': case 'CONNECTOR_UNSAFE_ARGUMENT':
+    case 'DIRECT_ACTION_UNSUPPORTED': case 'TOOL_UNREVIEWED': case 'SCHEMA_UNSUPPORTED': case 'SCOPES_UNSUPPORTED': case 'CONNECTOR_SCOPE_UNSUPPORTED': case 'CONNECTOR_UNSAFE_ARGUMENT':
       return advice('alternate_route', 'This operation cannot be verified for automatic execution. Offer the user a manual step or request the authorized result instead.', manual);
     default: return advice('ask_user', 'Explain that the connector did not return a usable result. Do not claim missing permissions or retry automatically.', manual);
   }
@@ -76,8 +85,8 @@ export function failureForAgent(error: unknown): AgentFailure {
   if (error instanceof ConnectorArgumentError && e?.effectStarted === false) return argumentFailure(error.issue);
   const code = error instanceof ConnectorError && /^[A-Z][A-Z_0-9]{0,70}$/.test(error.code) ? error.code :
     e?.code === 'TOOL_SCREEN_ACCESS_DENIED' || e?.code === 'TOOL_SCREEN_ACCESS_UNAVAILABLE' ? e.code : 'CONNECTOR_UNAVAILABLE';
-  let recovery = error instanceof AnalyticsSelectInputError && e?.effectStarted === false
-    ? advice('fix_arguments', `${error.hint} Correct the query on the same connection and scope; do not repeat it unchanged or substitute a report listing.`)
+  let recovery = error instanceof ConnectorInputGuidance && e?.effectStarted === false
+    ? advice('fix_arguments', `${error.correction} Correct the input on the same connection and scope; do not repeat it unchanged.`)
     : agentRecovery(code);
   if ((code === 'INVALID_TOOL_ARGUMENTS' || code === 'CONNECTOR_INVALID_INPUT') && e?.effectStarted !== false) {
     recovery = advice('reconcile', 'The operation was not confirmed as rejected before execution. Check its status before issuing another call; do not replay it based on an argument error.');

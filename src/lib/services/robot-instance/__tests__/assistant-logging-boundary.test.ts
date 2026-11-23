@@ -70,3 +70,11 @@ it('keeps legacy database error behavior without strict mode', async () => {
   failAt = 'agent_action';
   await expect(createAssistantOnStepHandler('instance', 'site', 'user', 'openrouter')(step())).resolves.toBeUndefined();
 });
+
+it.each(['tools','use_composio_tools'])('omits private connector arguments from shared log payload, message and reasoning for %s',async toolName=>{
+  const text=randomBytes(24).toString('hex');
+  const args={action:toolName==='tools'?'call':'execute',name:'connector:private',thought_process:text,args:JSON.stringify({arguments:{body:text}})};
+  await handler()({text:'',toolCalls:[{id:'stable',toolName,args}],toolResults:[{toolCallId:'stable',result:{success:true,receipt:{status:'private_result_ready'}}}]});
+  expect(writes).toHaveLength(2);expect(writes[1].tool_args).toEqual({action:'call',private_arguments:true});
+  expect(JSON.stringify(writes)).not.toContain(text);expect(args.thought_process).toBe(text);
+});

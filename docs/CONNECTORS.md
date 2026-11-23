@@ -8,15 +8,17 @@ and [access model](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/C
 - `src/lib/connectors/` owns provider transport, lifecycle, permissions, domain
   discovery and the lazy concrete tool resolver. Each HTTP route verifies a user
   bearer; metadata/service headers never select an actor.
-- `tools` search/describe/call uses exact connector references, effective member AND
-  agent permissions, reviewed action/business-screen policy, current OAuth scopes and
-  version/hash-bound schemas. Reviewed reads include Gmail, HubSpot, and table names for a verified, project-bound Supabase PAT in the instance assistant.
+- Interactive Robots `tools` search/describe/call uses **one provider-direct runtime**.
+  It consults account Policies, not a registry of executable toolkits or display
+  profiles. Support, approval decisions and opening old private report choices
+  remain separate, narrower consumers. The native `report` tool is unchanged.
 - New verified accounts inherit access for eligible workspace members and active
   same-site agents. Account-level restrictions override inheritance. Legacy
-  accounts retain explicit grants, enablement and policies. After the tool-mode migration, new verified accounts use `all` on the assistant
-  host: every runtime-compatible tool for that toolkit, subject to the other
-  checks above. Older policies stay `selected` (empty permits none). Neither
-  mode makes catalogue-only actions executable.
+  accounts retain explicit grants. Connecting an account or the historical read
+  opt-in does not enable provider-direct execution. Once enrolled, `all` does not
+  intersect the provider catalog with a manually reviewed slug list; `selected`
+  permits only the saved IDs (empty permits none). Both require the same current
+  actor, host, account binding, downstream resource scope and transport contract.
 - `connector-crm-operations` and `connector-messaging` are bundled operational
   procedures. Domains and skill selection confer no authority.
 - The catalogue applies the shared domain registry before paginating results.
@@ -57,6 +59,22 @@ and [access model](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/C
 
 ### Contract checks for Robots tool calls
 
+For private provider actions, Robots checks the current member, agent, account
+and tool policy. The connected application enforces the credential's data
+access. An upstream resource denial is not retried with another account. Native
+business reads and writes are distinct from automatic authorization, arbitrary
+network proxies, code execution, credential management or database administration.
+See [provider-direct rollout and acceptance](CONNECTOR_PROVIDER_DIRECT.md).
+
+An explicit `tools search/list` with `connector_id` returns only that connection's
+inventory, not native report suggestions, including on an outage or empty page.
+Without the account filter the usual mixed discovery is unchanged.
+Private Robots dispatch does not translate a provider tool into a Makinari
+report, SQL compiler or analytics-grant check. The legacy SQL reporting adapter
+is retained to open existing authorized report choices, not as an alternate
+executor. A project-wide management credential on the shared Makinari database
+does not supply a site-isolated data boundary for direct delegation.
+
 A locally rejected call can return `INVALID_TOOL_ARGUMENTS` with `argument_issue`
 (a declared path, rule and, where relevant, a type or bound), `executed: false`
 and `automatic_retry: false`. Unknown keys are reported at their declared
@@ -66,9 +84,9 @@ the arguments, keeping the account and requested scope. A changed version or
 schema instead requires a fresh description. Neither response grants access.
 
 Native tool preflight is conservative: unsupported schema constructs and
-legacy wire representations defer to the tool's own validator. Connector
-schemas and provider permissions are still checked strictly; local semantic
-checks (e.g. the SQL grammar) and privacy restrictions are not bypassed. A
+legacy wire representations defer to the tool's own validator. Provider-direct
+dispatch separately validates the versioned schema, current authority and
+technical capabilities. A
 permission denial, an upstream quota or an uncertain dispatch is not a reason
 to replay a call with different arguments. Public support keeps its minimal
 unavailable response rather than exposing the member's private contract.

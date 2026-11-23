@@ -5,6 +5,7 @@ import { inputValue, providerValue, safeText, scopesSchema, toolkitSlug, toolSlu
 import { validateJson, type ComposioClient } from './composio-transport';
 import { REVIEWED_CONNECTOR_TOOLS } from './reviewed-tools';
 import { publishedList, sameSet } from './catalog-read-published';
+import { isSupabaseReportAction } from './provider-report-action';
 
 export type ConnectorDescriptionInput = {
   /** Internal evidence from the authorization RPC; never copied from the request or provider descriptor. */
@@ -69,7 +70,7 @@ export async function readCatalogMetadata(client: ComposioClient, input: Connect
   inputValue(toolkitSlug, input.connector.toolkit_slug);
   const kit = input.connector.toolkit_slug;
   const profile = publishedList(kit, slug);
-  const report = kit === 'supabase' && slug === 'SUPABASE_RUN_READ_ONLY_QUERY';
+  const report = isSupabaseReportAction(kit, slug);
   const pin = report ? '20261116_00' : profile?.version;
   const version = input.toolkitVersion === undefined ? pin : inputValue(release, input.toolkitVersion);
   if (pin && version !== pin) changed();

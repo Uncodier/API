@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { redactRuntimeSecrets } from '@/app/api/cron/shared/runtime-log-context';
 import { sanitizeMigrationRepairContext } from '../apps-platform/migration-repair-policy';
+import { connectorObservation } from '@/lib/connectors/connector-observation';
 
 export type RecoveryToolObservation = {
   name: string;
@@ -148,9 +149,10 @@ export function summarizeRecoveryTool(input: {
 }): RecoveryToolObservation {
   const outcome = ownValue(input, 'outcome');
   const result = ownValue(input, 'result');
+  const name = ownValue(input,'name'), args = ownValue(input,'args');
   return {
-    name: summarize(ownValue(input, 'name'), NAME_BYTES),
-    args: summarize(ownValue(input, 'args')),
+    name: summarize(name, NAME_BYTES),
+    args: summarize(connectorObservation(name,args) ?? args),
     outcome: outcome === 'returned' || outcome === 'threw' ? outcome : 'unknown',
     ...(result === undefined ? {} : { result: summarize(result) }),
     observedAt: summarize(ownValue(input, 'observedAt'), 64),

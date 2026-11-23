@@ -1,12 +1,11 @@
 import type { CatalogReadMetadata } from './catalog-read-metadata';
 import { unsupportedAction, unsupportedScopes } from './catalog-read-metadata';
 import type { ComposioAccount } from './composio-accounts';
-import { calendarReadScopes, publishedList, type PublishedList } from './catalog-read-published';
-import { ConnectorError } from './types';
+import type { PublishedList } from './catalog-read-published';
 
 const infrastructure = /supabase|database|postgres|mysql|sqlite|mongo|snowflake|bigquery|cloud|aws|azure|gcp|kubernetes|docker|vault|iam|auth|okta|password|secret|admin|proxy|storage|filesystem|drive|dropbox|composio|shell|terminal|payment|bank|payroll|keychain|security/i;
 // Negative evidence is a veto, never proof. Positive proof additionally requires a native API,
-// a private OAuth2 account with exclusively resource-specific read grants, an exact read-only
+// a verified private provider account, a resource-specific, exact read-only
 // descriptor, and *both* a bounded page contract and an independently validated summary schema.
 const sensitiveRoots = [
   // Identity, secrets, tenancy and business-sensitive domains.
@@ -56,34 +55,11 @@ export function ordinaryCatalogResource(tool: CatalogReadMetadata) {
 }
 
 export function assertOrdinaryCatalogAccount(account: ComposioAccount, tool: CatalogReadMetadata, required: readonly string[]) {
-  if (account.accountType !== 'PRIVATE' || !account.oauth2) unsupportedScopes();
+  if (account.accountType !== 'PRIVATE' || (!account.oauth2 && !account.apiKeyAuth)) unsupportedScopes();
   if (!required.every(scope => tool.scopes.includes(scope))) unsupportedScopes();
-  const profile = publishedList(tool.toolkit.slug, tool.slug);
-  if (profile) {
-    if (profile.kind === 'calendar') {
-      // CalendarList.list accepts ANY of the four documented scopes. Only the
-      // two explicit read-only scopes in the live private account can authorize us.
-      if (!account.scopesKnown) unsupportedScopes();
-      // A writer may have provider access but is outside this profile; that is not a missing permission.
-      if (account.scopes.some(s => !calendarReadScopes.includes(s))) unsupportedScopes();
-      if (!account.scopes.some(s => calendarReadScopes.includes(s)) || !required.every(s => account.scopes.includes(s))) missingScope();
-      return;
-    }
-    // The exact pinned, portal-bound CRM list enforces its resource scope upstream.
-    // An omitted scope is not an explicit empty grant; never generalize to other actions.
-    if (!account.scopesKnown) return;
-    if (!tool.scopes.every(scope => account.scopes.includes(scope))) missingScope();
-    // HubSpot's required OAuth protocol scope is not authority for additional data.
-    if (account.scopes.some(s => s !== 'oauth' && !/^crm\.objects\.(?:companies|deals)\.read$/.test(s))) unsupportedScopes();
-    return;
-  }
-  if (!account.scopesKnown) unsupportedScopes();
-  if (!tool.scopes.every(scope => account.scopes.includes(scope))) missingScope();
-  if (account.scopes.some(scope => !scopeResource(scope, tool.toolkit.slug))) unsupportedScopes();
-}
-
-function missingScope(): never {
-  throw new ConnectorError('CONNECTOR_SCOPE_MISSING', 'The connected account does not report the required resource read permission. Review its OAuth grant.', 403);
+  // This path has already constrained the operation, selectors and output. Its actual data
+  // access is the provider's decision for this exact account, not a reconstruction from OAuth
+  // metadata (which can be omitted, grant broader authority, or not exist for API keys).
 }
 
 export function publishedArguments(profile: PublishedList, args: Record<string, unknown>) {

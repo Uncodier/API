@@ -8,10 +8,10 @@ import { CONNECTOR_DOMAINS, getToolkitDomains } from './domains';
 import { connectorToolRef, REVIEWED_CONNECTOR_TOOLS } from './reviewed-tools';
 import type { ConnectorCandidate, ConnectorFilters } from './runtime';
 import { ConnectorError, type AuthorizedConnector, type ConnectorContext } from './types';
+import { isSupabaseReportAction, SUPABASE_CATALOG_SLUG as REPORT } from './provider-report-action';
 
 const PAGE_SIZE = 5;
-const REPORT = 'SUPABASE_RUN_READ_ONLY_QUERY';
-const reportDescription = 'Calculate figures with a direct read-only SELECT on authorized analytics sources, or list published reports. Describe this tool to see queryable sources and scopes.';
+const reportDescription = 'Makinari reporting profile, not a general SQL console. Calculate figures on declared analytics sources or list published reports. Describe to see its queryable sources and scopes.';
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 24);
 const stale = () => new ConnectorError('STALE_CURSOR', 'Connector inventory changed. Restart the search without its cursor.', 409);
 
@@ -30,7 +30,7 @@ export function catalogDefinition(slug: string, toolkit: string) {
   const domains = getToolkitDomains(toolkit);
   const category = CONNECTOR_DOMAINS.find(d => d.id === domains[0])?.categories[0] ?? 'other';
   return { slug, toolkit, domains, category, requiredScreens: [], requiredScopes: [], description:
-    toolkit === 'supabase' && slug === REPORT ? reportDescription : `Provider catalog action: ${slug}. Inspect its validated contract before use.` };
+    isSupabaseReportAction(toolkit, slug) ? reportDescription : `Provider catalog action: ${slug}. Inspect its validated contract before use.` };
 }
 
 // Only server-owned public vocabulary may leave the site. Other search terms (including exact
@@ -54,7 +54,7 @@ function catalogRow(target: AuthorizedConnector, item: Awaited<ReturnType<typeof
   if (!catalogGrant(target, item.slug) || item.slug.startsWith('COMPOSIO_') || !/^[A-Z0-9][A-Z0-9_]{0,149}$/.test(item.slug) ||
     REVIEWED_CONNECTOR_TOOLS.some(t => t.slug === item.slug)) return null;
   const toolkit = target.connector.toolkit_slug;
-  const report = toolkit === 'supabase' && item.slug === REPORT;
+  const report = isSupabaseReportAction(toolkit, item.slug);
   const read = item.action_types.length === 1 && item.action_types[0] === 'read';
   const definition = catalogDefinition(item.slug, toolkit);
   // Catalog metadata is never a grant. Even read candidates need a fresh descriptor.

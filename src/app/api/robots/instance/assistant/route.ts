@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runAssistantWorkflow } from './workflow';
-import { insertUserActionLog, markRemoteInstanceError, withRetries } from './user-message-log';
+import { AskSubmissionError, claimAskSubmission, firstAskInstanceId } from './ask-submission';
 import { assistantResponseStream } from './response-stream';
 import { normalizePublishToolOverrides } from './publish-tool-overrides';
 import { approvedCommunityImport, assistantSkillSelectionSchema, resolveAssistantSkillSelection } from './skill-selection';
@@ -23,7 +23,7 @@ import { resolveAssistantRequestMode } from './execution-mode';
 export const maxDuration = 800; // 13 min (Pro + Fluid Compute); falls back to 300s without it
 
 const AssistantSchema = z.object({
-  instance_id: z.string().uuid('instance_id must be valid UUID').optional(),
+  instance_id: z.string().uuid('instance_id must be valid UUID').transform(value => value.toLowerCase()).optional(),
   connector_id_hint: z.string().uuid().transform(value => value.toLowerCase()).optional(),
   instance_node_id: z.string().uuid().optional(),
   expected_results_amount: z.number().int().min(1).max(20).optional().default(1),
@@ -35,13 +35,13 @@ const AssistantSchema = z.object({
   system_prompt: z.string().optional(),
   context: z.string().optional(),
   tool_overrides: z.record(z.any()).optional(),
-  request_id: z.string().min(1).max(200).optional(),
+  request_id: z.string().min(1).max(200).refine(value => value.trim().length > 0, 'request_id cannot be blank').optional(),
   execution_mode: z.enum(['direct', 'harness']).optional(),
   ...assistantSkillSelectionSchema.shape,
 });
 
 export async function POST(request: NextRequest) {
-  let failureContext: { instanceId: string; siteId: string; userId?: string | null; userMessageLogId?: string } | undefined;
+  let claimedTurn: { instance_id: string; user_log_id: string } | undefined;
   try {
     const principal = await resolveToolRequestPrincipal(request);
     if (!principal) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
@@ -119,6 +119,11 @@ export async function POST(request: NextRequest) {
     if (!selectionSiteId) return NextResponse.json({ error: 'site_id is required' }, { status: 400 });
     const verifiedUserId = principal.userId;
     const catalogUserSession = principal.userSession === true && !principal.internal && executionMode === 'direct' && !providedNodeId && expectedResults === 1;
+    if (catalogUserSession && !parsedBody.request_id) {
+      return NextResponse.json({ success: false, execution_started: false, error: {
+        code: 'ASSISTANT_REQUEST_ID_REQUIRED', message: 'A request ID is required for an interactive Ask submission.',
+      } }, { status: 400 });
+    }
     const leadBulkUserSession = principal.userSession === true && !principal.internal && !providedNodeId && expectedResults === 1;
     const leadBulkAdmission = leadBulkUserSession ? { lead_bulk_user_session: true } : {};
     const requestedImport = approvedCommunityImport(message);
@@ -139,147 +144,85 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid skill selection' }, { status: 400 });
     }
 
-    // CASE 1: No instance_id provided - Create new uninstantiated instance (FAST PATH - No Workflow needed for creation)
-    if (!providedInstanceId) {
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Creating new uninstantiated instance`);
-
-      if (!providedSiteId) {
-        return NextResponse.json(
-          { error: 'site_id is required when creating new instance' },
-          { status: 400 }
-        );
-      }
-
-      // Get site info to get user_id
-      const { data: site, error: siteError } = await supabaseAdmin
-        .from('sites')
-        .select('user_id')
-        .eq('id', providedSiteId)
-        .single();
-
-      if (siteError || !site) {
-        return NextResponse.json({ error: 'Site not found' }, { status: 404 });
-      }
-
-      const userId = principal.internal ? providedUserId || site.user_id : principal.userId!;
-
-      // Create uninstantiated instance
-      const { data: newInstance, error: instanceError } = await supabaseAdmin
-        .from('remote_instances')
-        .insert({
-          name: 'Assistant Session',
-          instance_type: 'ubuntu',
-          status: 'uninstantiated',
-          site_id: providedSiteId,
-          user_id: userId,
-          created_by: userId,
-          timeout_hours: 1,
-        })
-        .select()
-        .single();
-
-      if (instanceError || !newInstance) {
-        return NextResponse.json(
-          { error: 'Failed to create instance', details: instanceError },
-          { status: 500 }
-        );
-      }
-
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Created uninstantiated instance: ${newInstance.id}`);
-
-      failureContext = { instanceId: newInstance.id, siteId: providedSiteId, userId };
-      const userAction = await withRetries(() => insertUserActionLog({
-        instanceId: newInstance.id,
-        siteId: providedSiteId,
-        userId,
-        message,
-        details: { ...leadBulkAdmission, is_creation: true, request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId,
-          execution_mode: executionMode },
-      }));
-      failureContext.userMessageLogId = userAction.id;
-
-      const workflowRun = await start(runAssistantWorkflow, [
-        newInstance.id,
-        message,
-        providedSiteId,
-        userId,
-        customTools,
-        use_sdk_tools,
-        system_prompt,
-        undefined,
-        undefined,
-        providedNodeId,
-        expectedResults,
-        parsedBody.context,
-        normalizedToolOverrides,
-        { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode, executionRouting,
-          callerSource: principal.internal ? 'background' : 'interactive', ...(catalogUserSession ? { catalogUserSession: true } : {}), ...(leadBulkUserSession ? { leadBulkUserSession: true } : {}) }
-      ]);
-
-      return assistantResponseStream(workflowRun, newInstance.id, userAction.id, { signal: request.signal });
-    }
-
-    // CASE 2: Existing instance_id provided - Execute via Workflow
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Executing on existing instance: ${providedInstanceId}`);
-
-    // Get instance to verify existence and ownership
-    const { data: instance, error: instanceError } = await supabaseAdmin
-      .from('remote_instances')
-      .select('site_id, user_id, status, is_archived')
-      .eq('id', providedInstanceId)
-      .single();
-
-    if (instanceError || !instance) {
-      return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
-    }
-    if ((providedSiteId && providedSiteId !== instance.site_id) || !site_id_for_validation || site_id_for_validation !== instance.site_id) {
-      return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
-    }
-    const rowAccess = await assistantInstanceAccess(request,principal,{ ...instance,id:providedInstanceId });
-    if (rowAccess !== 200) return NextResponse.json({ error: rowAccess === 503 ? 'Instance verification unavailable' : 'Instance unavailable' }, {status:rowAccess});
-    if (instance.is_archived === true) {
-      return NextResponse.json({ success: false,
-        error: { code: 'INSTANCE_ARCHIVED', message: 'This instance is archived. Continue in the requirement’s active instance.' },
-      }, { status: 409 });
-    }
-
-    const site_id = instance.site_id;
-    const user_id = principal.internal ? providedUserId || instance.user_id : principal.userId!;
+    let instanceId = providedInstanceId;
+    let siteId = selectionSiteId;
+    let userId: string | undefined;
+    let instanceStatus: string | undefined;
+    let created = false;
+    let observeFirstSend = false;
     const connectorIdHint = parsedBody.connector_id_hint;
-    if (connectorIdHint) {
-      if (instance.site_id !== site_id || instance.user_id !== principal.userId) {
-        return NextResponse.json({ error: 'Selected account unavailable for this conversation.' }, { status: 403 });
-      }
-      const { getVisibleConnector } = await import('@/lib/connectors/access');
-      try { await getVisibleConnector(instance.site_id, principal.userId!, connectorIdHint); }
-      catch (error) {
-        const { ConnectorError } = await import('@/lib/connectors/types');
-        const status = error instanceof ConnectorError && error.status < 500 ? 404 : 503;
-        return NextResponse.json({ error: 'Selected account unavailable for this conversation.' }, { status });
+
+    if (!instanceId) {
+      const { data: site, error } = await supabaseAdmin.from('sites').select('id,user_id').eq('id', siteId).single();
+      if (error || !site) return NextResponse.json({ error: 'Site not found' }, { status: 404 });
+      siteId = site.id;
+      userId = principal.internal ? providedUserId || site.user_id : principal.userId!;
+      if (!userId) return NextResponse.json({ error: 'Assistant actor unavailable' }, { status: 403 });
+      const reservedId = parsedBody.request_id && firstAskInstanceId(siteId, userId, principal.internal, parsedBody.request_id);
+      const inserted = await supabaseAdmin.from('remote_instances').insert({
+        ...(reservedId ? { id: reservedId } : {}), name: 'Assistant Session', instance_type: 'ubuntu',
+        status: 'uninstantiated', site_id: siteId, user_id: userId, created_by: userId, timeout_hours: 1,
+      }).select('id').single();
+      if (!inserted.error && inserted.data?.id && (!reservedId || inserted.data.id === reservedId)) {
+        instanceId = inserted.data.id;
+        created = true;
+      } else if (reservedId && inserted.error?.code === '23505') {
+        // A concurrent creation must pass existing-row authorization as well.
+        instanceId = reservedId;
+        observeFirstSend = true;
+      } else {
+        throw new AskSubmissionError('ASSISTANT_ADMISSION_UNCONFIRMED');
       }
     }
-    failureContext = { instanceId: providedInstanceId, siteId: site_id, userId: user_id };
+    if (!instanceId) throw new AskSubmissionError('ASSISTANT_ADMISSION_UNCONFIRMED');
 
-    const userAction = await withRetries(() => insertUserActionLog({
-      instanceId: providedInstanceId,
-      siteId: site_id,
-      userId: user_id,
-      message,
-      skipDuplicateCheck: true,
-      details: { ...leadBulkAdmission, instance_status: instance.status || 'running', request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId,
-        execution_mode: executionMode },
-    }));
-    failureContext.userMessageLogId = userAction.id;
-    
+    if (!created) {
+      const { data: instance, error } = await supabaseAdmin.from('remote_instances')
+        .select('site_id, user_id, status, is_archived').eq('id', instanceId).single();
+      if (error || !instance || !site_id_for_validation || instance.site_id !== site_id_for_validation ||
+          (!providedInstanceId && instance.user_id !== userId)) {
+        return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
+      }
+      const rowAccess = await assistantInstanceAccess(request, principal, { ...instance, id: instanceId });
+      if (rowAccess !== 200) return NextResponse.json({ error: rowAccess === 503 ? 'Instance verification unavailable' : 'Instance unavailable' }, { status: rowAccess });
+      if (instance.is_archived === true) throw new Error('instance_archived');
+      siteId = instance.site_id;
+      userId = principal.internal ? providedUserId || instance.user_id : principal.userId!;
+      instanceStatus = instance.status || 'running';
+      if (connectorIdHint) {
+        if (instance.user_id !== principal.userId) {
+          return NextResponse.json({ error: 'Selected account unavailable for this conversation.' }, { status: 403 });
+        }
+        const { getVisibleConnector } = await import('@/lib/connectors/account-access');
+        try { await getVisibleConnector(siteId, principal.userId!, connectorIdHint); }
+        catch (error) {
+          const { ConnectorError } = await import('@/lib/connectors/types');
+          const status = error instanceof ConnectorError && error.status < 500 ? 404 : 503;
+          return NextResponse.json({ error: 'Selected account unavailable for this conversation.' }, { status });
+        }
+      }
+    }
+    if (!userId) return NextResponse.json({ error: 'Assistant actor unavailable' }, { status: 403 });
+    const userAction = await claimAskSubmission({ instanceId, siteId, userId, principal, body: parsedBody, observeFirstSend,
+      details: { ...leadBulkAdmission, ...(providedInstanceId ? { instance_status: instanceStatus } : { is_creation: true }),
+        status: 'running', instance_node_id: providedNodeId, execution_mode: executionMode } });
+    const turn = { instance_id: instanceId, user_log_id: userAction.id };
+    if (userAction.replay) {
+      // A durable admission is not a workflow result. Never start/join by
+      // timestamps, trust an unverified run ID, or return a previous answer.
+      return NextResponse.json({ replayed: true, ...turn, action_status: userAction.status,
+        code: 'ASSISTANT_REQUEST_RECORDED' }, { status: 202, headers: { 'Cache-Control': 'private, no-store' } });
+    }
+    claimedTurn = turn;
     // Persisting a conversational turn must not implicitly resume plans or advance
     // requirement execution, even for its owner. Changes and explicit retries go
     // through the requirements command queue, which arbitrates execution claims.
     // Start the interactive workflow with the trusted action identity only.
     const workflowRun = await start(runAssistantWorkflow, [
-      providedInstanceId,
+      instanceId,
       message,
-      site_id,
-      user_id,
+      siteId,
+      userId,
       customTools,
       use_sdk_tools,
       system_prompt,
@@ -294,9 +237,15 @@ export async function POST(request: NextRequest) {
         ...(catalogUserSession ? { catalogUserSession: true } : {}), ...(leadBulkUserSession ? { leadBulkUserSession: true } : {}) }
     ]);
 
-    return assistantResponseStream(workflowRun, providedInstanceId, userAction.id, { signal: request.signal });
+    return assistantResponseStream(workflowRun, instanceId, userAction.id, { signal: request.signal });
 
   } catch (err: any) {
+    if (claimedTurn) {
+      // The workflow SDK has no idempotency key. A rejected start may have
+      // committed: do not retry, mark the owner failed, or invite another send.
+      return NextResponse.json({ success: false, ...claimedTurn, error: { code: 'ASSISTANT_START_UNCONFIRMED',
+        message: 'The assistant turn was recorded but its start could not be confirmed. Check this conversation before sending again.' } }, { status: 503 });
+    }
     if (err instanceof Error && err.message.includes('instance_archived')) {
       // The database admission guard covers archival racing the preflight read.
       // Do not revive or mark the archived owner as failed after reassignment.
@@ -312,21 +261,10 @@ export async function POST(request: NextRequest) {
         error: { code: 'REQUIREMENT_EXECUTION_BUSY', message: 'This instance is already executing the requirement. Wait for the current cycle to finish before sending another instruction.' },
       }, { status: 409 });
     }
-    console.error('Error in POST /robots/instance/assistant:', err);
-    // A startup failure happens before the workflow's own catch can log it.
-    // Only write after loading the instance/site scope. Logging failure must
-    // never replace the HTTP error or keep the client waiting indefinitely.
-    if (failureContext) {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          markRemoteInstanceError({ ...failureContext, errorMessage: 'Assistant request could not be started. Please retry.' })
-            .catch(() => {}),
-          new Promise<void>(resolve => { timeout = setTimeout(resolve, 2000); }),
-        ]);
-      } finally { clearTimeout(timeout); }
+    if (err instanceof AskSubmissionError) {
+      return NextResponse.json({ success: false, error: { code: err.code, message: err.message } },
+        { status: err.code === 'ASSISTANT_REQUEST_CONFLICT' ? 409 : 503 });
     }
-    
     // Check if it's an insufficient credits error
     if (err?.name === 'InsufficientCreditsError' || err?.message?.includes('Insufficient credits')) {
       return NextResponse.json(

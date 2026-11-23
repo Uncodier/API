@@ -36,15 +36,5 @@ export function getReviewedTool(slug: string, toolkit?: string): ReviewedConnect
   return tool;
 }
 
-const reference = /^connector:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):((?!COMPOSIO_)[A-Z0-9][A-Z0-9_]{0,149})$/;
-export function parseConnectorToolRef(name: string): { connectorId: string; toolSlug: string } {
-  const match = reference.exec(name);
-  if (!match) throw new ConnectorError('INVALID_TOOL_REFERENCE', 'Use the exact connector tool reference returned by tools search.', 400);
-  return { connectorId: match[1], toolSlug: match[2] };
-}
-
-export function connectorToolRef(connectorId: string, toolSlug: string): string {
-  const name = `connector:${connectorId}:${toolSlug}`;
-  parseConnectorToolRef(name);
-  return name;
-}
+// Compatibility for existing channel approvals and historical private report choices.
+export { connectorToolRef, parseConnectorToolRef } from './connector-ref';

@@ -1,6 +1,6 @@
 import { authorizeAnalyticsResult, type AnalyticsAuthority } from './supabase-analytics-authorization';
 import type { AnalyticsScope } from './supabase-analytics-sources';
-import type { AnalyticsPermit } from './supabase-direct-query';
+import { directQueryMode, type AnalyticsPermit } from './supabase-direct-query';
 import type { privateResultBinding } from './private-result-delivery';
 import { ConnectorError } from './types';
 
@@ -18,4 +18,12 @@ export function analyticsRelease(binding:ReturnType<typeof privateResultBinding>
     if (fresh.grantId!==stamp.grantId || fresh.source!==stamp.source || fresh.scope!==stamp.scope || fresh.projectRef!==stamp.projectRef) throw changed();
     return fresh;
   } };
+}
+
+export function prepareReportRelease(binding: ReturnType<typeof privateResultBinding> | null,
+  project: string | null | undefined, args: Record<string, unknown>) {
+  const scope = directQueryMode(args);
+  if (scope === null) return;
+  if (!binding || !project) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED', 'Direct SQL requires a private project-bound instance.', 403);
+  return analyticsRelease(binding, project, scope);
 }

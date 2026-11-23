@@ -12,7 +12,7 @@ const prepare = jest.fn<(...args: any[]) => Promise<any>>();
 const complete = jest.fn<(...args: any[]) => Promise<void>>();
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: (table: string) => db.from(table) } }));
 jest.unstable_mockModule('../assistant-turn', () => ({ processAssistantTurn: model }));
-jest.unstable_mockModule('../steps', () => ({ prepareAssistantContext: prepare }));
+jest.unstable_mockModule('../steps', () => ({ prepareAssistantContext: prepare, bindDirectPromptAgentStep: async () => { throw new Error('Not an interactive turn'); } }));
 jest.unstable_mockModule('../plan-steps', () => ({
   getAssistantPlanOwnershipStep: jest.fn(),
   getActiveInstancePlan: async () => null, executePlanStep: jest.fn(), acquirePlanExecutionLockStep: jest.fn(), releasePlanExecutionLockStep: jest.fn(),

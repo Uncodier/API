@@ -14,7 +14,7 @@ export function assistantConnectorContext(scope: {
     if (!userId || !agentId || ![siteId, userId, instanceId, agentId].every(value => uuid.test(value))) {
       throw new ConnectorError('AGENT_REQUIRED', 'A verified interactive actor and agent are required.', 403);
     }
-    const { requireConnectorSiteAccess } = await import('./access');
+    const { requireConnectorSiteAccess } = await import('./account-access');
     await requireConnectorSiteAccess(siteId, userId);
     const { supabaseAdmin } = await import('@/lib/database/supabase-client');
     const { data, error } = await supabaseAdmin.from('remote_instances').select('id')

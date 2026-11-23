@@ -5,10 +5,7 @@ import { assertOrdinaryCatalogAccount, ordinaryCatalogResource, publishedArgumen
 import { catalogListSchema, catalogListOutput, publishedListSchema } from './catalog-read-schema';
 import { projectCatalogList, projectPublishedList, resultUnsupported } from './catalog-read-result';
 import { publishedList, sameSet } from './catalog-read-published';
-import { directQueryMode, projectAnalyticsResult } from './supabase-direct-query';
-import { analyticsDatasetFingerprint, resolveAnalyticsCapability, scopedDataset } from './supabase-analytics-sources';
-import { compileAnalyticsSelect } from './supabase-select-compiler';
-import type { CompiledAnalyticsSelect } from './supabase-select-types';
+import { isSupabaseReportAction } from './provider-report-action';
 import { verifyAccountIdentity } from './composio-accounts';
 import { getToolkit } from './composio-catalog';
 import { createComposioClient, type ComposioClient, validateJson } from './composio-transport';
@@ -26,38 +23,8 @@ function snapshotBinding(input: ConnectorDescriptionInput): ConnectorDescription
     credential: { ...input.credential }, provider: input.provider ? { ...input.provider } : undefined };
 }
 
-async function planRead(input: ConnectorDescriptionInput, tool: CatalogReadMetadata) {
+function planOrdinaryRead(input: ConnectorDescriptionInput, tool: CatalogReadMetadata) {
   const { connector } = input;
-  if (connector.toolkit_slug === 'supabase') {
-    const { SUPABASE_CATALOG_SLUG, describeSupabaseCatalogRead, supabaseCatalogArguments, projectSupabaseCatalogResult } = await import('./supabase-report-profile');
-    if (tool.slug !== SUPABASE_CATALOG_SLUG) unsupportedAction();
-    const plan = await describeSupabaseCatalogRead(connector, tool, input.localProjectRef);
-    // State belongs to exactly one prepared call; never cached or reused across requests.
-    let compiled: CompiledAnalyticsSelect | undefined;
-    return { modelSchema: plan.modelSchema, binding: plan.binding, description: plan.description,
-      confirmDataset: async () => {
-        if (!compiled || plan.capability.status !== 'ready' || plan.capability.dataset.kind !== 'external' || !('analytics' in plan.binding)) return;
-        const fresh = await resolveAnalyticsCapability(connector, input.localProjectRef);
-        if (fresh.status === 'unverified' || fresh.status === 'unavailable') {
-          throw new ConnectorError('CATALOG_AUTHORIZATION_UNAVAILABLE', 'The current analytics source could not be verified.', 503);
-        }
-        if (fresh.status !== 'ready' || analyticsDatasetFingerprint(fresh.dataset) !== plan.binding.analytics) {
-          throw new ConnectorError('ACCESS_CHANGED', 'The analytics source changed before query dispatch or private delivery.', 403);
-        }
-      },
-      prepare: async (args: Args) => {
-        const scope = directQueryMode(args);
-        if (scope === null) return supabaseCatalogArguments(connector, tool, args);
-        if (!input.authorizeSelect) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED','A verified private SQL destination is required.',403);
-        const dataset = scopedDataset(plan.capability,scope);
-        compiled = compileAnalyticsSelect(args.query,args.parameters,dataset);
-        const ref = connector.supabase_project_ref!;
-        await input.authorizeSelect({scope, source:compiled.source, projectRef:ref});
-        return { ref, query:compiled.query, parameters:compiled.parameters };
-      },
-      project: (data: unknown, args: Args) => compiled ? projectAnalyticsResult(data,compiled,input.credential.apiKey)
-        : projectSupabaseCatalogResult(data, connector, args, input.credential.apiKey) };
-  }
   const profile = publishedList(connector.toolkit_slug, tool.slug);
   if (profile) {
     if (tool.description !== profile.description) unsupportedAction();
@@ -83,19 +50,18 @@ async function prepareRead(client: ComposioClient, input: ConnectorDescriptionIn
   const provider = await verifyCatalogBinding(input);
   const tool = await readCatalogMetadata(client, input);
   const { connector } = input;
-  const isSupabase = connector.toolkit_slug === 'supabase';
-  // Ordinary contracts are pure; reject unsupported shapes before further metadata calls.
-  // For Supabase, don't look up any analytics sources until the live account is verified.
-  const ordinary = isSupabase ? undefined : await planRead(input, tool);
+  const report = isSupabaseReportAction(connector.toolkit_slug, tool.slug)
+    ? await import('./supabase-report-profile') : undefined;
+  const ordinary = report ? undefined : planOrdinaryRead(input, tool);
   // Catalogue slug alone does not imply native API (custom/MCP/disabled toolkits never qualify).
   const toolkit = await getToolkit(client, connector.toolkit_slug);
   if (toolkit.enabled === false || toolkit.toolkit_type !== 'api') unsupportedAction();
   const account = await verifyAccountIdentity(client, { accountId: connector.provider_account_id, userId: provider.provider_user_id,
     toolkitSlug: connector.toolkit_slug, authConfigId: connector.auth_config_id });
   if (account.accountType !== 'PRIVATE') throw new ConnectorError('CONNECTOR_ACCOUNT_MISMATCH', 'An explicitly private connected account is required.', 409);
-  if (isSupabase) (await import('./supabase-report-profile')).assertSupabaseCatalogAccount(connector, account, requiredScopes);
+  if (report) report.assertSupabaseCatalogAccount(connector, account, requiredScopes);
   else assertOrdinaryCatalogAccount(account, tool, requiredScopes);
-  const plan = ordinary ?? await planRead(input, tool);
+  const plan = ordinary ?? await report!.prepareSupabaseReport(input, tool);
   assertSupportedSchema(plan.modelSchema);
   // Hash the provider document independently: nested plan/authority data cannot alter its identity.
   const contractHash = hashConnectorSchema(tool);
@@ -109,7 +75,8 @@ async function prepareRead(client: ComposioClient, input: ConnectorDescriptionIn
   // Neither provider annotations, SQL templates, provider schema, nor config bindings go to the model.
   const descriptor: ConnectorToolDescription = { slug: tool.slug, toolkitSlug: tool.toolkit.slug, toolkitVersion: tool.version,
     description: plan.description, inputSchema: modelSchema, catalogModelSchema: modelSchema, scopeRequirements: null, scopes: tool.scopes, schemaHash };
-  return { descriptor, plan, accountId: account.id, providerUserId: provider.provider_user_id };
+  return { descriptor, plan, confirmDataset: 'confirmDataset' in plan ? plan.confirmDataset : undefined,
+    accountId: account.id, providerUserId: provider.provider_user_id };
 }
 
 export async function describeCatalogRead(raw: ConnectorDescriptionInput) {
@@ -131,12 +98,12 @@ export async function executeCatalogRead(raw: ConnectorExecutionInput): Promise<
     validateConnectorArguments(raw.input);
     const args = JSON.parse(JSON.stringify(raw.input)) as Args;
     const client = createComposioClient(input.credential.apiKey);
-    const { descriptor, plan, accountId, providerUserId } = await prepareRead(client, input, requiredScopes, schemaHash);
+    const { descriptor, plan, confirmDataset, accountId, providerUserId } = await prepareRead(client, input, requiredScopes, schemaHash);
     validateConnectorInput(descriptor.catalogModelSchema, args);
     const dispatchArgs = await plan.prepare(args);
     validateJson(dispatchArgs);
     const body = { connected_account_id: accountId, user_id: providerUserId, version: descriptor.toolkitVersion, arguments: dispatchArgs };
-    await plan.confirmDataset?.();
+    await confirmDataset?.();
     await beforeDispatch();
     dispatched = true;
     const response = await client.request(`/tools/execute/${descriptor.slug}`, { method: 'POST', body });
@@ -144,7 +111,7 @@ export async function executeCatalogRead(raw: ConnectorExecutionInput): Promise<
     const envelope = providerValue(z.object({ successful: z.literal(true), error: z.null(), data: z.unknown() }), response, true);
     if (!Object.hasOwn(envelope, 'data')) resultUnsupported();
     const data = await plan.project(envelope.data, args);
-    await plan.confirmDataset?.();
+    await confirmDataset?.();
     try { validateJson(data); } catch { resultUnsupported(); }
     const serialized = JSON.stringify(data);
     if (Buffer.byteLength(serialized) > 16_384 || serialized.includes(input.credential.apiKey)) resultUnsupported();

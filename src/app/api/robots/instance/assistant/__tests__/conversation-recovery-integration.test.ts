@@ -15,7 +15,7 @@ jest.unstable_mockModule('@/lib/services/workflow-robot/procurement-access', () 
 }));
 jest.unstable_mockModule('@/lib/services/robot-instance/assistant-executor', () => ({ executeAssistantStep: model }));
 jest.unstable_mockModule('../utils', () => ({ getInstanceAssistantTools: getTools }));
-jest.unstable_mockModule('../steps', () => ({ prepareAssistantContext: async () => ({
+jest.unstable_mockModule('../steps', () => ({ bindDirectPromptAgentStep: async () => { throw new Error('Not an interactive turn'); }, prepareAssistantContext: async () => ({
   instance: { status: 'pending' }, initialMessage: 'silent continuation', customTools: [{ name: 'sandbox' }],
   imageAssets: [], expectedResultsAmount: 1, systemPrompt: 'Original instructions', hasLinkedRequirement: false,
   executionOptions: { instance_id: scope.instanceId, site_id: scope.siteId, user_id: scope.userId, use_sdk_tools: false, provider: 'openrouter' },

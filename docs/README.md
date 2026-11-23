@@ -16,7 +16,8 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 ## Current architecture
 
-- [Private connector analytics datasets](CONNECTOR_ANALYTICS_DATASETS.md) — trusted sources, native and external project bindings, operator grants and saved-result revocation.
+- [Provider-direct Robots execution](CONNECTOR_PROVIDER_DIRECT.md) — shared discovery/dispatch, per-account policy, private delivery and rollout gates.
+- [Private connector analytics datasets](CONNECTOR_ANALYTICS_DATASETS.md) — legacy scoped analytics and saved-result revocation, not the direct connector execution contract.
 - [Connectors runtime and API](CONNECTORS.md) — per-account grants, category/skill discovery, pinned REST execution, local migrations and explicit live/deployment gates.
 - [Finder selected-list persistence](FINDER_SELECTED_LISTS.md) — authenticated selected-only creation, atomic append, durable request receipts and worker rollout boundaries.
 

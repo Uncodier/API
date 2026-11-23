@@ -24,6 +24,7 @@ function setup() {
   const getActiveInstancePlan = jest.fn<AsyncMock>().mockResolvedValue(null);
   const executePlanStep = jest.fn<AsyncMock>();
   const prepareAssistantContext = jest.fn<AsyncMock>().mockResolvedValue(context);
+  const bindDirectPromptAgentStep = jest.fn<AsyncMock>().mockResolvedValue(false);
   const result = (messages: any[], text = '', isDone = false) => ({
     messages, text, isDone, continuation: { responseNodeIds: ['response'] }, steps: [], usage: {}, output: null,
   });
@@ -32,7 +33,7 @@ function setup() {
     '@/lib/services/robot-instance/assistant-failure-policy': { ASSISTANT_FAILURE_MESSAGE },
     '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
     '@/lib/services/robot-instance/assistant-image-content': { buildAssistantUserContent },
-    './assistant-turn': { processAssistantTurn }, './steps': { prepareAssistantContext },
+    './assistant-turn': { processAssistantTurn }, './steps': { prepareAssistantContext, bindDirectPromptAgentStep },
     './plan-steps': { getActiveInstancePlan, executePlanStep },
     './persist-and-fail-steps': { completeUserMessageStep, pauseUserMessageStep, markAssistantFailedStep,
       persistUserMessageStep: async () => ({ id: 'user-log' }) },
@@ -49,10 +50,18 @@ function setup() {
   );
   return { run, context, execution, transcript, processAssistantTurn, prepareRecoveryStep, guardRecoveryStep,
     checkpointRecoveryStep, spawnSilentContinueStep, completeUserMessageStep, pauseUserMessageStep,
-    markAssistantFailedStep, prepareAssistantContext, getActiveInstancePlan, executePlanStep, result, sleep };
+    markAssistantFailedStep, prepareAssistantContext, bindDirectPromptAgentStep, getActiveInstancePlan, executePlanStep, result, sleep };
 }
 
 describe('node execution continuation workflow', () => {
+  it.each([true,false])('uses a private connector only when the actual prepared prompt agent was pinned: %s', async pinned => {
+    const h = setup(); h.context.instanceNodeId = undefined; h.context.connectorAgentId = 'prepared-agent';
+    h.bindDirectPromptAgentStep.mockResolvedValue(pinned);
+    h.processAssistantTurn.mockResolvedValue(h.result(h.transcript,'Done',true));
+    await h.run({userMessageLogId:'user-log',catalogUserSession:true,executionMode:'direct',callerSource:'interactive'});
+    expect(h.bindDirectPromptAgentStep).toHaveBeenCalledWith({instanceId:'instance',siteId:'site',userId:'user',userMessageLogId:'user-log'},'prepared-agent');
+    expect(h.processAssistantTurn.mock.calls[0][0].catalogUserSession).toBe(pinned ? true : undefined);
+  });
   it('a recovered conversation cannot inherit private connector execution with a newly prepared agent', async () => {
     const h = setup(); h.context.instanceNodeId = undefined;
     h.prepareRecoveryStep.mockResolvedValue({ ok:true, snapshot:{ messages:h.transcript, respawnCount:1,
@@ -61,6 +70,7 @@ describe('node execution continuation workflow', () => {
     await h.run({userMessageLogId:'user-log',resumeToken:'resume'});
     expect(h.processAssistantTurn).toHaveBeenCalled();
     expect(h.processAssistantTurn.mock.calls[0][0].catalogUserSession).toBeUndefined();
+    expect(h.bindDirectPromptAgentStep).not.toHaveBeenCalled();
   });
 
   it('retains an interrupted recovery checkpoint without failing the action or replaying its tools', async () => {

@@ -82,7 +82,7 @@ describe('assistant workflow build boundary', () => {
     // These calls must remain durable step references, not be removed with the
     // server implementations. Recovery and respawn behavior is still present.
     for (const step of [
-      'prepareRecoveryStep', 'guardRecoveryStep', 'checkpointRecoveryStep',
+      'prepareRecoveryStep', 'guardRecoveryStep', 'checkpointRecoveryStep', 'bindDirectPromptAgentStep',
       'processAssistantTurn', 'spawnSilentContinueStep',
       'getAssistantPlanOwnershipStep',
     ]) {
