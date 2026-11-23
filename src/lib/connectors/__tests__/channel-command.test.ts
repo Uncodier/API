@@ -50,3 +50,13 @@ it('never adds default-account SDK tools to a generic conversation command', asy
   expect(() => configureComposio({ enabled: true, apps: ['gmail'] })).toThrow();
   expect(await enrichWithComposioTools(cmd, { enabled: true, apps: ['gmail'] })).toEqual({ tools: [] });
 });
+
+it('lets the assigned agent propose a relevant operation without a visitor identity or an explicit request to use a tool',async()=>{
+  const text='I need help finding the right contact.';
+  const source={tools:[channelRequestTool]};
+  attachChannelRequestHost(source,{siteId:scope.siteId,agentId:scope.agentId,messageDigest:sourceDigest(text),resolve:async()=>scope});
+  const before=jest.mocked(proposeConversationConnectorAction).mock.calls.length;
+  await emitBoundCommand(source,saved,async()=>{expect(await invoke()).toEqual(channelRequestReceipt);});
+  expect(jest.mocked(proposeConversationConnectorAction).mock.calls.slice(before)).toEqual([[{...scope,source:{kind:'command',id:saved.id,digest:sourceDigest(text)}},proposal]]);
+  expect(channelRequestTool.description).toContain('The visitor does not need to ask for the tool or for approval');
+});

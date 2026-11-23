@@ -146,15 +146,18 @@ it('rejects capped or incomplete visibility and cannot select a connector from a
   await expect(getVisibleConnector(siteId, userId, agentId)).rejects.toMatchObject({ code: 'NOT_FOUND' });
 });
 
-it('inherits missing member and agent rows for active eligible identities', async () => {
+it('inherits member use but requires a current explicit agent assignment on workspace accounts', async () => {
   connector.access_mode = 'workspace';
   tableData.connector_members = null;
   tableData.connector_agents = null;
+  expect(await listUsableConnectors(context)).toEqual([]);
+  await expect(authorizeConnectorExecution(context, connectorId, 'GMAIL_FETCH_EMAILS')).rejects.toMatchObject({code:'ACCESS_DENIED'});
+  tableData.connector_agents = {agent_id:agentId,enabled:true,expires_at:null};
   expect(await listUsableConnectors(context)).toHaveLength(1);
   await expect(authorizeConnectorExecution(context, connectorId, 'GMAIL_FETCH_EMAILS')).resolves.toMatchObject({ connector });
 
   const agent = query(null);
-  from.mockImplementationOnce(() => query(null)).mockImplementationOnce(() => query(null)).mockReturnValueOnce(agent);
+  from.mockImplementationOnce(() => query(null)).mockImplementationOnce(() => query(tableData.connector_agents)).mockReturnValueOnce(agent);
   await expect(authorizeConnectorExecution(context, connectorId, 'GMAIL_FETCH_EMAILS')).rejects.toMatchObject({ code: 'ACCESS_DENIED' });
   expect(agent.eq.mock.calls).toEqual([['id', agentId], ['site_id', siteId], ['status', 'active']]);
 
@@ -173,7 +176,7 @@ it.each([
 ] as const)('never inherits past an existing %s exception (%j)', async (table, override) => {
   connector.access_mode = 'workspace';
   tableData.connector_members = null;
-  tableData.connector_agents = null;
+  tableData.connector_agents = {agent_id:agentId,enabled:true,expires_at:null};
   tableData[table] = override;
   await expect(authorizeConnectorExecution(context, connectorId, 'GMAIL_FETCH_EMAILS')).rejects.toMatchObject({ code: 'ACCESS_DENIED' });
   expect(await listUsableConnectors(context)).toEqual([]);
@@ -190,7 +193,7 @@ it.each(['connector_members', 'connector_agents'])('rechecks a new %s exception 
   connector.access_mode = 'workspace';
   connector.granted_scopes = ['https://www.googleapis.com/auth/gmail.readonly'];
   tableData.connector_members = null;
-  tableData.connector_agents = null;
+  tableData.connector_agents = {agent_id:agentId,enabled:true,expires_at:null};
   const descriptor = {
     slug: 'GMAIL_FETCH_EMAILS', toolkitSlug: 'gmail', toolkitVersion: '20261119_01',
     schemaHash: randomBytes(32).toString('hex'), description: 'Read email.', scopes: [], scopeRequirements: null,

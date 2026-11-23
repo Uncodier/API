@@ -35,10 +35,14 @@ it('discovers new tools including writes on a cloud-branded toolkit and does not
 it('uses only saved selected IDs, including with a cursor on an empty page; an empty policy does not access credentials',async()=>{
   const ids=Array.from({length:13},(_,i)=>`NOVELCLOUD_ITEM_${String(i).padStart(2,'0')}`);
   const account=target('selected',ids); selected.mockImplementation(async(_c,_k,ids)=>({items:ids.map(item),missing:false}));
-  const filters={catalog_query:'NOVELCLOUD_ITEM_12'};
+  const filters={catalog_query:'item 12'};
   const first=await searchDirectTools(ctx,filters,[account]); expect(first.tools).toEqual([]);
   const second=await searchDirectTools(ctx,{...filters,cursor:first.next_cursor!},[account]); expect(second.tools.map(t=>t.name)).toEqual([`connector:${account.connector.id}:${ids[12]}`]);
   expect(list).not.toHaveBeenCalled();expect(selected.mock.calls.flatMap(args=>args[2])).toEqual(ids);
+  selected.mockClear();
+  const exact=await searchDirectTools(ctx,{catalog_query:ids[12]},[account]);
+  expect(exact.tools).toEqual(second.tools);expect(exact.next_cursor).toBeNull();
+  expect(selected.mock.calls.map(a=>a[2])).toEqual([[ids[12]]]);
   jest.clearAllMocks();expect((await searchDirectTools(ctx,{},[target('selected')])).tools).toEqual([]);expect(loadConnectorCredential).not.toHaveBeenCalled();
 });
 it('does not use unselected accounts after filtered absence or provider failure',async()=>{
@@ -89,20 +93,36 @@ it('keeps distinct full local IDs when the visible account suffix collides', asy
   expect(first.name).toBe(`connector:${a.connector.id}:${slug}`); expect(second.name).toBe(`connector:${b.connector.id}:${slug}`);
 });
 
-it('describes only the bounded query on a host-selected shared project with member and tool use',async()=>{
-  const slug='SUPABASE_RUN_READ_ONLY_QUERY';
-  const {directProof,...base}=target('selected',[slug]);
-  const shared={...base,catalogOnly:true as const,connector:{...base.connector,toolkit_slug:'supabase',supabase_project_ref:'a'.repeat(20),revocation_dispatched:false},policy:{...base.policy,catalog_reads:true}};
-  const host={...ctx,connectorIdHint:shared.connector.id};
-  selected.mockResolvedValue({items:[item(slug)],missing:false});
-  for(const query of ['test connection',slug]) {
-    const page=await searchDirectTools(host,{query},[shared]);
-    expect(page.tools).toMatchObject([{name:`connector:${shared.connector.id}:${slug}`,availability:'describe_required',description:expect.stringContaining('SELECT 1')}]);
-    expect(page.next_cursor).toBeNull();
+it.each(['all','selected'] as const)('retains locally restricted tools, including exact searches on an admitted %s-mode account',async mode=>{
+  const slugs=['NOVELCLOUD_RUN_READ_ONLY_QUERY','NOVELCLOUD_EXECUTE_CODE','NOVELCLOUD_LIST_ORDERS'];
+  const account=target(mode,slugs), host={...ctx,connectorIdHint:account.connector.id};
+  list.mockResolvedValue({items:slugs.map(item),next_cursor:null,total:slugs.length});
+  selected.mockImplementation(async(_client,_kit,ids)=>({items:ids.map(item),missing:false}));
+  expect((await searchDirectTools(host,{},[account])).tools.map(t=>[t.name,t.availability]).sort()).toEqual(slugs.map((slug,i)=>[`connector:${account.connector.id}:${slug}`,i===2?'describe_required':'manual_only']).sort());
+  for (const slug of slugs.slice(0,2)) {
+    expect((await searchDirectTools(host,{catalog_query:slug},[account])).tools).toMatchObject([{name:`connector:${account.connector.id}:${slug}`,availability:'manual_only'}]);
   }
-  const withoutPin=await searchDirectTools(ctx,{connector_id:shared.connector.id,query:slug},[shared]);
-  expect(withoutPin.tools[0].availability).toBe('manual_only');
-  selected.mockImplementation(async(_c,_k,ids)=>({items:ids.map(item),missing:false}));
-  shared.policy.allowed_tools=['SUPABASE_GET_PROJECT'];
-  expect((await searchDirectTools(host,{query:slug},[shared])).tools).toEqual([]);
+});
+
+it('finds a delegated project’s table-listing tool as a candidate for schema verification',async()=>{
+  const account=target(), ref='abcdefghijklmnopqrst', slug='SUPABASE_LIST_TABLES';
+  account.localProjectRef='a'.repeat(20);account.connector.toolkit_slug='supabase';account.connector.supabase_project_ref=ref;
+  account.directProof={...account.directProof,toolkitSlug:'supabase',kind:'connected_account',authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:ref};
+  list.mockResolvedValue({items:[item(slug)],next_cursor:null,total:1});
+  expect((await searchDirectTools(ctx,{catalog_query:slug},[account])).tools).toMatchObject([
+    {name:`connector:${account.connector.id}:${slug}`,availability:'describe_required'}]);
+});
+
+it('invalidates an ordinary continuation on reauthorization or change of authority kind, even at the same revision',async()=>{
+  const account=target(), d=account.directProof;
+  if(d.kind==='connected_account')throw Error('Expected attested fixture');
+  const {attestationId,expiresAt,resourceBoundary,...pin}=d;
+  const ordinary={...account,directProof:{...pin,kind:'connected_account' as const,authorizationId:attestationId}};
+  list.mockResolvedValue({items:Array.from({length:8},(_,i)=>item(`NOVELCLOUD_UPDATE_ITEM_${i}`)),next_cursor:null,total:8});
+  const page=await searchDirectTools(ctx,{},[ordinary]);
+  const cursor=page.next_cursor!;expect(cursor).toBeTruthy();
+  for(const changed of [account,{...ordinary,directProof:{...ordinary.directProof,authorizationId:randomUUID()}},
+    {...ordinary,directProof:{...ordinary.directProof,authScheme:'API_KEY' as const,boundProjectRef:null}}]) {
+    await expect(searchDirectTools(ctx,{cursor},[changed])).rejects.toMatchObject({code:'STALE_CURSOR'});
+  }
 });

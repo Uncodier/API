@@ -15,7 +15,7 @@ export function getSupabaseServiceRoleUrl(): string {
 }
 
 type GatewayReply = { baseUrl: string; projectHeader: string | null };
-type ActorRpc = 'connector_catalog_read_actor' | 'connector_direct_actor';
+type ActorRpc = 'connector_catalog_read_actor' | 'connector_direct_actor' | 'connector_support_agent_account_v2';
 type Capture = { rpc: ActorRpc; open: boolean; calls: number; reply: GatewayReply | null };
 const actorCapture = new AsyncLocalStorage<Capture>();
 
@@ -33,6 +33,8 @@ async function captureActorReply(rpc: ActorRpc, check: () => Promise<boolean>) {
 
 export const captureCatalogActorReply = (check: () => Promise<boolean>) => captureActorReply('connector_catalog_read_actor', check);
 export const captureDirectActorReply = (check: () => Promise<boolean>) => captureActorReply('connector_direct_actor', check);
+
+export const captureSupportAccountReply = (check: () => Promise<boolean>) => captureActorReply('connector_support_agent_account_v2', check);
 
 // Private to admin client construction. Never reread an origin from the environment at request time.
 function adminFetch(baseUrl: string): typeof fetch {

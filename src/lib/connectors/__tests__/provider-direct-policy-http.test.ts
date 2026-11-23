@@ -57,3 +57,10 @@ it('returns clean conflicts without reflecting private DB errors; invalid receip
     expect((await PATCH(req('',patch),context)).status).toBe(503);
   }
 });
+
+it('reports connected-account authority without claiming resource attestation',async()=>{
+  const dto={...stored,authority_kind:'connected_account',authorization_mode:'member_policy',explicitly_disabled:false,attested:false,enabled:true};
+  rpc.mockReturnValue(reply(dto));expect(await (await GET(req(query),context)).json()).toEqual({...status,attested:false,authority_kind:'connected_account',authorization_mode:'member_policy',explicitly_disabled:false});
+  rpc.mockReturnValue(reply({...dto,bound_supabase_ref:'a'.repeat(20)}));expect((await GET(req(query),context)).status).toBe(503);
+  rpc.mockReturnValue(reply({...dto,attested:true}));expect((await GET(req(query),context)).status).toBe(503);
+});

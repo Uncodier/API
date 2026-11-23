@@ -18,14 +18,17 @@ afterEach(() => {
   jest.resetAllMocks();
 });
 
-it.each([['OAUTH2','http'],['OAUTH2','downstream'],['API_KEY','http'],['API_KEY','downstream']] as const)(
-  'uses provider permissions, not Makinari all mode, for a read-only %s account receiving a %s 403', async (scheme,denial) => {
-  const site = randomUUID(), slug = 'PLANNING_CREATE_BOOKING', kit = 'planning';
+it.each((['attested','delegated'] as const).flatMap(authority=>(['OAUTH2','API_KEY'] as const).flatMap(scheme=>
+  (['http','downstream'] as const).map(denial=>({authority,scheme,denial})))))(
+  'uses provider permissions, not Makinari all mode, for $authority $scheme and $denial 403', async ({scheme,denial,authority}) => {
+  // A different provider action at each run cannot have a compiled-in adapter.
+  const site = randomUUID(), kit = 'planning', slug = `PLANNING_CREATE_BOOKING_${randomUUID().replaceAll('-','').toUpperCase()}`;
   const transportKey = secret(), rev = secret(), receipt = randomUUID();
   const provider = {...providerFixture(),id:randomUUID(),site_id:site,provider_user_id:site,credential_revision:rev};
   function row() {
-    return {attestation_id:randomUUID(),direct_revision:2,expires_at:new Date(Date.now()+3600000).toISOString(),local_installation_ref:null,
-      resource_boundary:'dedicated-site',provider,connector:{...connectorFixture(),id:randomUUID(),site_id:site,provider_id:provider.id,
+    return {...(authority==='attested' ? {attestation_id:randomUUID(),expires_at:new Date(Date.now()+3600000).toISOString(),
+      local_installation_ref:null,resource_boundary:'dedicated-site'} : {authority_kind:'connected_account',authorization_id:randomUUID(),auth_scheme:scheme,bound_project_ref:null}),
+      direct_revision:2,provider,connector:{...connectorFixture(),id:randomUUID(),site_id:site,provider_id:provider.id,
         toolkit_slug:kit,provider_account_id:`ca_${randomUUID()}`,revocation_dispatched:false,supabase_project_ref:null,access_mode:'workspace',created_by:randomUUID()},
       // Allows a request from a principal lacking use; it is not a per-write approval.
       policy:{revision:1,allowed_tools:[] as string[],allowed_hosts:['assistant'],require_approval:true,tool_access_mode:'all'}};
@@ -44,10 +47,10 @@ it.each([['OAUTH2','http'],['OAUTH2','downstream'],['API_KEY','http'],['API_KEY'
   mockRpc.mockImplementation((name:string, args:Record<string,string>) => {
     if (name === byokRpc) return attestedProject(provider)(name,args);
     const id = args.p_connector_id;
-    if (name === 'connector_direct_accounts') return reply(rows.filter(r=>enabled.has(r.connector.id) && (!id || r.connector.id===id) &&
+    if (name === 'connector_direct_accounts_v2') return reply(rows.filter(r=>enabled.has(r.connector.id) && (!id || r.connector.id===id) &&
       (r.policy.tool_access_mode==='all' || r.policy.allowed_tools.includes(args.p_slug))));
-    if (name === 'claim_connector_direct_dispatch') { claims.push(id); return reply(randomUUID()); }
-    if (name === 'store_connector_direct_result') { stored.push(id); return reply(receipt); }
+    if (name === (authority==='attested'?'claim_connector_direct_dispatch':'claim_connector_account_dispatch')) { claims.push(id); return reply(randomUUID()); }
+    if (name === (authority==='attested'?'store_connector_direct_result':'store_connector_account_result')) { stored.push(id); return reply(receipt); }
     throw new Error('Unexpected RPC');
   });
   const fetch = jest.fn(async (url:string, init:RequestInit) => {

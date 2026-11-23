@@ -1,14 +1,18 @@
 import { randomUUID, randomBytes } from 'node:crypto';
-import { requireConversationAgent, proposeConversationConnectorAction, proposeExactSupportAction, proposeInteractiveConnectorAction, requireSupportOrigin } from '../approval-proposals';
+import { requireConversationAgent, proposeConversationConnectorAction, proposeInteractiveConnectorAction, requireSupportOrigin } from '../approval-proposals';
 import { requestProposal } from '../approval-store';
-import { resolveConnectorPolicy, loadConnectorCredential, requireConnectorAgent } from '../access';
-import { describeConnectorTool, executeConnectorTool } from '../composio-sessions';
+import {loadConnectorCredential} from '../account-access';
+import {describeDirectTool,executeDirectTool} from '../provider-direct-transport';
+import {genericReviewTarget,uniqueAgentReviewAccount} from '../generic-review-target';
+import type {DirectAuthorizedConnector} from '../provider-direct-policy';
+
 import { ConnectorError, type AuthorizedConnector } from '../types';
 const from = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: (name:string) => from(name) } }));
 jest.mock('../approval-store', () => ({ requestProposal: jest.fn() }));
-jest.mock('../access', () => ({ resolveConnectorPolicy: jest.fn(), loadConnectorCredential: jest.fn(), requireConnectorAgent: jest.fn() }));
-jest.mock('../composio-sessions', () => ({ ...jest.requireActual('../composio-sessions'), describeConnectorTool: jest.fn(), executeConnectorTool: jest.fn() }));
+jest.mock('../account-access',()=>({...jest.requireActual('../account-access'),loadConnectorCredential:jest.fn()}));
+jest.mock('../generic-review-target',()=>({...jest.requireActual('../generic-review-target'),genericReviewTarget:jest.fn(),uniqueAgentReviewAccount:jest.fn()}));
+jest.mock('../provider-direct-transport',()=>({describeDirectTool:jest.fn(),executeDirectTool:jest.fn()}));
 const scope = { siteId:randomUUID(), agentId:randomUUID(), conversationId:randomUUID(), idempotencyKey:randomUUID() };
 const descriptor = { slug:'HUBSPOT_LIST_CONTACTS', toolkitSlug:'hubspot', toolkitVersion:'20261119', schemaHash:randomBytes(32).toString('hex'),
   inputSchema:{type:'object',properties:{limit:{type:'integer'}}}, description:'', scopes:['crm.objects.contacts.read'], scopeRequirements:null };
@@ -24,33 +28,34 @@ beforeEach(() => {
       abortSignal:jest.fn().mockImplementation(() => name !== 'connectors' ? query : Promise.resolve(reply)), maybeSingle:jest.fn().mockResolvedValue(reply) };
     return query;
   });
-  jest.mocked(resolveConnectorPolicy).mockResolvedValue(authority);
+  jest.mocked(uniqueAgentReviewAccount).mockResolvedValue(connector.id);
+  jest.mocked(genericReviewTarget).mockResolvedValue({target:authority as DirectAuthorizedConnector,screens:null});
   jest.mocked(loadConnectorCredential).mockResolvedValue({revision:'r1', source:'byok', apiKey:randomBytes(32).toString('hex')});
-  jest.mocked(describeConnectorTool).mockResolvedValue(descriptor);
+  jest.mocked(describeDirectTool).mockResolvedValue({parameters:descriptor.inputSchema,version:descriptor.toolkitVersion,schemaHash:descriptor.schemaHash,effect:'read',description:'Read records'});
   jest.mocked(requestProposal).mockResolvedValue({status:'pending'});
 });
-test.each(['selected', 'all'] as const)('opted-in customer host only proposes (%s)', async mode => {
-  jest.mocked(resolveConnectorPolicy).mockResolvedValue({ ...authority, policy: { ...authority.policy, tool_access_mode: mode,
-    allowed_tools: mode === 'all' ? [] : [descriptor.slug] } });
-  expect(await proposeConversationConnectorAction(scope,input)).toEqual({status:'pending'});
-  expect(requireConnectorAgent).toHaveBeenCalledWith(connector,scope.agentId,true);
-  expect(resolveConnectorPolicy).toHaveBeenCalledWith(connector,'assistant');
-  expect(requestProposal).toHaveBeenCalledWith(scope,expect.objectContaining({ origin:{kind:'channel_public', lead_id:null}, version:descriptor.toolkitVersion,
-    arguments:input.arguments, schema_hash:descriptor.schemaHash, connector_id:connector.id }));
-  expect(executeConnectorTool).not.toHaveBeenCalled();
+test.each(['selected', 'all'] as const)('anonymous review can pin a new provider slug without executing (%s)', async mode => {
+  const slug='RECORDS_LIST_'+randomUUID().replaceAll('-','').toUpperCase();
+  const target={...authority,policy:{...authority.policy,tool_access_mode:mode,allowed_tools:mode==='all'?[]:[slug]}} as DirectAuthorizedConnector;
+  jest.mocked(genericReviewTarget).mockResolvedValue({target,screens:null});
+  expect(await proposeConversationConnectorAction(scope,{...input,tool_slug:slug})).toEqual({status:'pending'});
+  expect(genericReviewTarget).toHaveBeenCalledWith(scope.siteId,scope.agentId,connector.id,slug,undefined,'requester');
+  expect(requestProposal).toHaveBeenCalledWith(scope,expect.objectContaining({execution:'provider', tool_slug:slug, origin:{kind:'channel_public',lead_id:null},version:descriptor.toolkitVersion,
+    arguments:input.arguments,schema_hash:descriptor.schemaHash,connector_id:connector.id}));
+  expect(executeDirectTool).not.toHaveBeenCalled();
 });
-test.each(['not opted in','ambiguous','foreign conversation','disabled agent','unreviewed tool','malicious envelope','URL argument','wrong fields'])('rejects %s without queueing or executing',async reason => {
-  let args: unknown = input;
-  if (reason === 'not opted in') jest.mocked(resolveConnectorPolicy).mockResolvedValue({...authority,policy:{...authority.policy,require_approval:false}});
-  if (reason === 'ambiguous') accounts = [connector, {...connector,id:randomUUID()}];
-  if (reason === 'foreign conversation') sameAgent = false;
-  if (reason === 'disabled agent') jest.mocked(requireConnectorAgent).mockRejectedValue(new ConnectorError('ACCESS_DENIED','Denied',403));
-  if (reason === 'unreviewed tool') args = { ...input, tool_slug:'HTTP_REQUEST' };
-  if (reason === 'malicious envelope') args = { ...input, approved:true, connector_id:randomUUID() };
-  if (reason === 'URL argument') args = { ...input, arguments:{url:'https://example.test/'} };
-  if (reason === 'wrong fields') args = { ...input, arguments:{pass:true} };
+test.each(['not opted in','ambiguous','foreign conversation','disabled agent','scope revoked','malicious envelope','URL argument','wrong fields'])('rejects %s without queueing or executing',async reason=>{
+  let args:unknown=input;
+  const denied=new ConnectorError('APPROVAL_UNAVAILABLE','Unavailable',409);
+  if(reason==='ambiguous')jest.mocked(uniqueAgentReviewAccount).mockRejectedValue(denied);
+  if(reason==='not opted in'||reason==='disabled agent')jest.mocked(genericReviewTarget).mockRejectedValue(denied);
+  if(reason==='scope revoked')jest.mocked(genericReviewTarget).mockResolvedValueOnce({target:authority as DirectAuthorizedConnector,screens:null}).mockRejectedValueOnce(denied);
+  if(reason==='foreign conversation')sameAgent=false;
+  if(reason==='malicious envelope')args={...input,approved:true,connector_id:randomUUID()};
+  if(reason==='URL argument')args={...input,arguments:{url:'https://example.test/'}};
+  if(reason==='wrong fields')args={...input,arguments:{pass:true}};
   await expect(proposeConversationConnectorAction(scope,args)).rejects.toThrow();
-  expect(requestProposal).not.toHaveBeenCalled(); expect(executeConnectorTool).not.toHaveBeenCalled();
+  expect(requestProposal).not.toHaveBeenCalled();expect(executeDirectTool).not.toHaveBeenCalled();
 });
 test('identical interactive turn/action gives same key, actor pinned and context proof required',async () => {
   const context = { siteId:scope.siteId,userId:randomUUID(),agentId:scope.agentId,instanceId:randomUUID(),requestId:randomUUID(),sourceDigest:randomBytes(32).toString('hex'),host:'assistant' as const };
@@ -62,21 +67,6 @@ test('identical interactive turn/action gives same key, actor pinned and context
   expect(calls[0][1].origin).toEqual({ kind:'interactive',instance_id:context.instanceId,user_id:context.userId });
 });
 
-
-test('customer channels cannot probe for a connected database or propose table discovery', async () => {
-  await expect(proposeConversationConnectorAction(scope, { tool_slug: 'SUPABASE_LIST_TABLES', arguments: {} }))
-    .rejects.toMatchObject({ code: 'APPROVAL_UNAVAILABLE' });
-  expect(from).not.toHaveBeenCalled(); expect(describeConnectorTool).not.toHaveBeenCalled();
-  expect(requestProposal).not.toHaveBeenCalled(); expect(executeConnectorTool).not.toHaveBeenCalled();
-});
-
-test('member support cannot queue an instance-only tool even with an exact account and approval policy', async () => {
-  const access = { ...authority, connector: { ...authority.connector, toolkit_slug: 'supabase' },
-    policy: { ...authority.policy, require_approval: true } };
-  await expect(proposeExactSupportAction(scope, { kind: 'support_member', user_id: randomUUID() }, access,
-    { ...descriptor, toolkitSlug: 'supabase', slug: 'SUPABASE_LIST_TABLES' }, {})).rejects.toMatchObject({ code: 'APPROVAL_UNAVAILABLE' });
-  expect(requestProposal).not.toHaveBeenCalled();
-});
 
 // Evaluate the actual query predicates against local rows; no Supabase or provider connection.
 const owner = randomUUID(), lead = randomUUID();
@@ -112,7 +102,7 @@ test('an internal review conversation is never the source of a public channel ca
   supportRows({ channel: 'internal_review' });
   await expect(requireConversationAgent(scope.siteId,scope.conversationId,scope.agentId,{ kind:'channel_public', lead_id:null })).rejects.toMatchObject({ code:'APPROVAL_UNAVAILABLE' });
   await expect(checkOrigin({ kind:'support_publication', publication_hash:randomBytes(32).toString('hex'), audience:'anonymous', lead_id:null })).rejects.toMatchObject({ code:'APPROVAL_UNAVAILABLE' });
-  expect(describeConnectorTool).not.toHaveBeenCalled();
+  expect(describeDirectTool).not.toHaveBeenCalled();
 });
 
 test('verified publication binds its lead; anonymous publication does not borrow a member identity', async () => {

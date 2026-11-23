@@ -44,7 +44,9 @@ function fixture(kit='planning', operation='SEARCH_DELIVERABLES') {
   return {slug,target,credential,tool,toolkit,account,queue,read,describe,call};
 }
 
-it.each([['cloudplanner','SEARCH_LEASES','API_KEY'],['maildesk','CREATE_DRAFT','OAUTH2']])(
+it.each([['cloudplanner','SEARCH_LEASES','API_KEY'],['maildesk','CREATE_DRAFT','OAUTH2'],['salesdesk','LIST_CUSTOMER_ACCOUNTS','OAUTH2'],['retail','GET_PRODUCT_CODE','API_KEY'],
+  ['marketplace','GET_SETTINGS','OAUTH2'],['planner','LIST_WORKSPACES','API_KEY'],['retail','GET_SHIPPING_CONFIGURATION','OAUTH2'],
+  ['directory','GET_ADMIN_ROLE','OAUTH2']])(
   'uses one pinned transport for new %s %s business actions with %s', async (kit,op,scheme) => {
     const f=fixture(kit,op); Object.assign(f.target.policy,{tool_access_mode:'all',allowed_tools:[]});
     f.account.state.authScheme=scheme; if (scheme==='API_KEY') Object.assign(f.account.state,{val:{}});
@@ -67,6 +69,19 @@ it.each([['cloudplanner','SEARCH_LEASES','API_KEY'],['maildesk','CREATE_DRAFT','
     expect(http).toHaveBeenCalledTimes(4);
   });
 
+it.each(['selected','all'])('dispatches a delegated QUERY_ORDERS with structured filters under %s and rejects open query input',async mode=>{
+  const f=fixture('shop','QUERY_ORDERS');Object.assign(f.target.connector,{supabase_project_ref:null});Object.assign(f.target.policy,{tool_access_mode:mode});
+  Object.assign(f.target,{directProof:{...f.target.directProof,kind:'connected_account',authorizationId:randomUUID(),authScheme:'OAUTH2',boundProjectRef:null}});
+  Object.assign(f.tool,{input_parameters:{type:'object',properties:{since:{type:'string',format:'date'}},required:['since']}});
+  const d=await f.describe();f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{orders:[]}});
+  const pin={version:d.version,schema_hash:d.schemaHash,arguments:{since:'2026-11-23'}};
+  await expect(f.call(pin)).resolves.toEqual({data:{orders:[]}});
+  const posts=http.mock.calls.filter(([,o])=>o.method==='POST');expect(posts).toHaveLength(1);
+  expect(posts[0][0]).toMatch(/tools\/execute\/SHOP_QUERY_ORDERS$/);expect(JSON.parse(posts[0][1].body)).toMatchObject({connected_account_id:f.account.id,arguments:pin.arguments});
+  http.mockReset();f.queue({...f.tool,input_parameters:{type:'object',properties:{query:{type:'string'}}}});
+  await expect(f.call(pin)).rejects.toMatchObject({code:'SCHEMA_UNSUPPORTED',executed:false});noPost();
+});
+
 it('treats flat/structured permissions, including missing/extra OAuth grants, as provider-owned (never grants or blockers)', async()=>{
   const f=fixture();Object.assign(f.tool,{scopes:undefined});Object.assign(f.account.state,{val:{}});
   const d=await f.describe(); f.queue(f.tool,f.toolkit,f.account,{successful:false,error:secret(),data:{status_code:403}});
@@ -85,7 +100,7 @@ it.each(['createHint','updateHint','destructiveHint'])('never labels a recognize
   expect(directEffect(['idempotentHint'],'test','TEST_GET_RECORDS')).toBe('unknown');
 });
 
-it.each(['RUN_READ_ONLY_QUERY','EXECUTE_SQL','RUN_CODE','RAW_API_REQUEST','UPLOAD_FILE','GET_CREDENTIALS','SET_WEBHOOK','UPDATE_PERMISSIONS'])('rejects non-business operation %s without fetching provider metadata', async op=>{
+it.each(['RUN_READ_ONLY_QUERY','EXECUTE_SQL','RUN_CODE','PORT_SCAN','HTTP_GET','TRACEROUTE','RAW_API_REQUEST','UPLOAD_FILE','GET_CREDENTIALS','SET_WEBHOOK','UPDATE_PERMISSIONS'])('rejects non-business operation %s without fetching provider metadata', async op=>{
   const f=fixture('drivecloud',op);await expect(f.read()).rejects.toMatchObject({code:'TOOL_UNREVIEWED'});expect(http).not.toHaveBeenCalled();
   expect(directActionNameSafe('another',f.slug)).toBe(false);
 });
@@ -344,9 +359,55 @@ it('describes Stripe promotion-code retrieval by stored ID, not executable code'
   for (const op of ['RETRIEVE_CODE','RUN_CODE','RETRIEVE_PROMOTION_CODE_AND_RUN_SCRIPT']) {
     expect(directActionNameSafe('stripe', `STRIPE_${op}`)).toBe(false);
   }
-  expect(directActionNameSafe('other', 'OTHER_RETRIEVE_PROMOTION_CODE')).toBe(false);
+  expect(directActionNameSafe('other', 'OTHER_RETRIEVE_PROMOTION_CODE')).toBe(true);
+  expect(directActionNameSafe('other','OTHER_EXECUTE_PROMOTION_CODE_SCRIPT')).toBe(false);
   http.mockReset();
   f.queue(f.tool, f.toolkit, f.account);
   await expect(f.call({...pin,arguments:{...pin.arguments,code:'not an ID'}})).rejects.toMatchObject({effectStarted:false});
   noPost();
+});
+
+it('dispatches LIST_TABLES once with the delegated external project and account, not a caller-supplied ref',async()=>{
+  const f=fixture('supabase','LIST_TABLES'),project='b'.repeat(20);
+  Object.assign(f.target,{localProjectRef:'a'.repeat(20),directProof:{...f.target.directProof,kind:'connected_account',
+    authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:project}});
+  Object.assign(f.target.policy,{tool_access_mode:'all',allowed_tools:[]});Object.assign(f.target.connector,{supabase_project_ref:project});
+  Object.assign(f.account.state,{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}});
+  Object.assign(f.tool,{input_parameters:{type:'object',required:['project_ref'],properties:{project_ref:{type:'string',pattern:'^[a-z]+$'},
+    schemas:{type:'array',items:{type:'string'}},include_metadata:{type:'boolean',default:true},include_views:{type:'boolean',default:true},
+    include_system_schemas:{type:'boolean',default:false}}}});
+  const d=await f.describe(),pin={version:d.version,schema_hash:d.schemaHash,arguments:{}};
+  f.queue(f.tool,f.toolkit,f.account);await expect(f.call({...pin,arguments:{project_ref:'c'.repeat(20)}})).rejects.toMatchObject({executed:false});noPost();
+  const data={tables:[{name:'orders'}]};f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data});
+  await expect(f.call(pin)).resolves.toEqual({data});const posts=http.mock.calls.filter(([,o])=>o.method==='POST');expect(posts).toHaveLength(1);
+  expect(posts[0][0]).toMatch(/\/tools\/execute\/SUPABASE_LIST_TABLES$/);expect(JSON.parse(posts[0][1].body)).toMatchObject({
+    connected_account_id:f.target.connector.provider_account_id,arguments:{project_ref:project}});
+});
+
+it.each(['shared','external'])('injects the sole project ref for a delegated %s database metadata read and withholds other fields', async location=>{
+  const f=fixture('supabase','GET_PROJECT'), project='b'.repeat(20);
+  Object.assign(f.target,{localProjectRef:location==='shared'?project:'a'.repeat(20),directProof:{...f.target.directProof,
+    kind:'connected_account',authorizationId:randomUUID(),authScheme:'API_KEY',boundProjectRef:project}});
+  Object.assign(f.target.connector,{supabase_project_ref:project});
+  const schema={type:'object',required:['ref'],properties:{ref:{type:'string'}}};
+  Object.assign(f.tool,{input_parameters:schema});Object.assign(f.account.state,{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}});
+  const d=await f.describe(),pin={version:d.version,schema_hash:d.schemaHash,arguments:{}};
+  expect(d.parameters.properties).toEqual({});
+  f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{id:project,ref:project,status:'ACTIVE_HEALTHY',owner_email:'private',rows:[secret()]}});
+  await expect(f.call(pin)).resolves.toEqual({data:{project_verified:true,status:'ACTIVE_HEALTHY'}});
+  expect(JSON.parse(http.mock.calls[3][1].body).arguments).toEqual({ref:project});
+  for (const patch of [{input_parameters:{type:'object',properties:{}}},{input_parameters:{...schema,required:[]}},
+    {input_parameters:{...schema,properties:{...schema.properties,table:{type:'string'}}}},{tags:['readOnlyHint','updateHint']}]) {
+    http.mockReset();f.queue({...f.tool,...patch},f.toolkit,f.account);await expect(f.call(pin)).rejects.toMatchObject({executed:false});noPost();
+  }
+  for (const state of [{authScheme:'OAUTH2',val:{}},{authScheme:'API_KEY',val:{full:'https://other.example.test'}}]) {
+    http.mockReset();f.queue(f.tool,f.toolkit,{...f.account,state});await expect(f.call(pin)).rejects.toMatchObject({executed:false});noPost();
+  }
+  http.mockReset();f.queue(f.tool,f.toolkit,f.account);await expect(f.call({...pin,arguments:{ref:'c'.repeat(20)}})).rejects.toMatchObject({executed:false});noPost();
+  http.mockReset();f.queue(f.tool,f.toolkit,f.account,{successful:true,error:null,data:{ref:'c'.repeat(20),id:project}});
+  await expect(f.call(pin)).rejects.toBeInstanceOf(ConnectorError);
+});
+
+it('refuses an executable toolkit with an opaque operation name before fetching metadata',async()=>{
+  const f=fixture('code_interpreter','RUN');await expect(f.read()).rejects.toMatchObject({code:'TOOL_UNREVIEWED'});expect(http).not.toHaveBeenCalled();
 });

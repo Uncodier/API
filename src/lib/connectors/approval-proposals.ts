@@ -2,20 +2,19 @@ import { z } from 'zod';
 import { approvalSource } from './approval-source';
 import { isPrivateSupportThread } from './support-thread';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { connectorDatabaseError, loadConnectorCredential, resolveConnectorAction, requireConnectorAgent, resolveConnectorPolicy } from './access';
+import { connectorDatabaseError, loadConnectorCredential } from './account-access';
 import { actionSnapshot, unavailable, type Descriptor, type StoredAction } from './approval-action';
 import { requestProposal, type ProposalScope } from './approval-store';
-import { describeConnectorTool, hashConnectorSchema, validateConnectorArguments } from './composio-sessions';
-import { canRequestFromConversation, getReviewedTool, policyReviewedTools } from './reviewed-tools';
-import { assertReviewedInputLimits, reviewedInputSchema } from './reviewed-tool-schema';
-import { validateConnectorInput } from './schema-validation';
-import { loadToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
-import { assertScopes, screenAllowed } from './action-policy';
-import { CONNECTOR_COLUMNS, ConnectorError, type Connector, type ConnectorContext, type AuthorizedConnector } from './types';
+import { hashConnectorSchema,validateConnectorArguments } from './composio-tool-json';
+import {describeDirectTool} from './provider-direct-transport';
+import {assertDirectArguments} from './provider-direct-validation';
+import {snapshotDirectJson} from './provider-direct-schema';
+import {genericReviewTarget,uniqueAgentReviewAccount,reviewSlug} from './generic-review-target';
+import { ConnectorError, type ConnectorContext, type AuthorizedConnector } from './types';
 
 const uuid = z.string().uuid();
 const scopeSchema = z.object({ siteId: uuid, conversationId: uuid, agentId: uuid, idempotencyKey: z.string().min(1).max(256), source: approvalSource.optional() }).strict();
-const proposal = z.object({ tool_slug: z.string().max(128), arguments: z.record(z.unknown()) }).strict();
+const proposal = z.object({ tool_slug: reviewSlug, arguments: z.record(z.unknown()) }).strict();
 const signal = () => AbortSignal.timeout(5000);
 
 export async function requireConversationAgent(siteId: string, conversationId: string, agentId: string, origin: Extract<StoredAction['origin'], {kind: 'channel_member' | 'channel_public'}>) {
@@ -54,62 +53,26 @@ export async function requireSupportOrigin(siteId: string, conversationId: strin
   if (origin.kind === 'support_member' && !isPrivateSupportThread(data)) throw unavailable();
 }
 
-/** The gateway has just reauthorized this exact account and pinned descriptor. No slug-only account selection. */
-export async function proposeExactSupportAction(scope: ProposalScope, origin: SupportOrigin,
-  access: AuthorizedConnector, descriptor: Descriptor, args: Record<string, unknown>) {
-  const trusted = scopeSchema.parse(scope);
-  if (!canRequestFromConversation(descriptor.slug) || trusted.siteId !== access.connector.site_id || access.policy.require_approval !== true ||
-      descriptor.toolkitSlug !== access.connector.toolkit_slug) throw unavailable();
-  validateConnectorArguments(args);
-  return requestProposal(trusted, actionSnapshot(origin, access, descriptor, args));
-}
-
 /** No customer identity is a member, no account fallback, and no execution branch. */
 export async function proposeConversationConnectorAction(scope: ProposalScope & { conversationId: string; memberUserId?: string; leadId?: string }, input: unknown) {
   const { memberUserId, leadId, ...binding } = scope;
   const trusted = scopeSchema.parse(binding);
   const origin = memberUserId !== undefined ? { kind: 'channel_member' as const, user_id: uuid.parse(memberUserId) }
     : { kind: 'channel_public' as const, lead_id: leadId === undefined ? null : uuid.parse(leadId) };
-  const { tool_slug, arguments: args } = proposal.parse(input);
-  validateConnectorArguments(args);
-  const tool = getReviewedTool(tool_slug);
-  if (!canRequestFromConversation(tool.slug)) throw unavailable();
-  await requireConversationAgent(trusted.siteId, trusted.conversationId, trusted.agentId, origin);
-  const context = memberUserId ? { siteId: trusted.siteId, userId: memberUserId, host: 'assistant' as const, agentId: trusted.agentId } : null;
-  if (context && !screenAllowed(tool, await loadToolScreenAccess(context))) throw unavailable();
-  const { data, error } = await supabaseAdmin.from('connectors').select(CONNECTOR_COLUMNS).eq('site_id', trusted.siteId)
-    .eq('toolkit_slug', tool.toolkit).eq('enabled', true).eq('provider_status', 'ACTIVE')
-    .eq('revocation_pending', false).limit(11).abortSignal(signal());
-  if (error || !data) connectorDatabaseError(error);
-  if (data.length > 10) throw unavailable();
-  let selected: AuthorizedConnector | undefined;
-  for (const connector of data as Connector[]) {
-    let candidate: AuthorizedConnector;
-    try {
-      if (context) candidate = await resolveConnectorAction(context, connector.id, tool.slug, true);
-      else {
-        await requireConnectorAgent(connector, trusted.agentId, true);
-        candidate = await resolveConnectorPolicy(connector, 'assistant');
-      }
-      if (candidate.policy.require_approval !== true) continue;
-      if (!policyReviewedTools(candidate.connector, candidate.policy).some(entry => entry.slug === tool.slug)) continue;
-      assertScopes(candidate, tool);
-    } catch (error) {
-      if (error instanceof ConnectorError && [403, 404, 409].includes(error.status)) continue;
-      throw error;
-    }
-    if (selected) throw unavailable();
-    selected = candidate;
-  }
-  if (!selected) throw unavailable();
-  const credential = await loadConnectorCredential(trusted.siteId);
-  if (credential.revision !== selected.provider.credential_revision) throw unavailable();
-  const descriptor = await describeConnectorTool({ credential, connector: selected.connector, provider: selected.provider, toolSlug: tool.slug });
-  if (descriptor.toolkitSlug !== tool.toolkit || descriptor.slug !== tool.slug || descriptor.scopeRequirements !== null) throw unavailable();
-  assertScopes(selected, tool, descriptor.scopes);
-  validateConnectorInput(reviewedInputSchema(tool.slug, descriptor.inputSchema), args);
-  assertReviewedInputLimits(tool.slug, args);
-  return requestProposal(trusted, actionSnapshot(origin, selected, descriptor, args));
+  const {tool_slug,arguments:args}=proposal.parse(snapshotDirectJson(input));
+  if(Buffer.byteLength(JSON.stringify(args))>8192)throw unavailable();
+  await requireConversationAgent(trusted.siteId,trusted.conversationId,trusted.agentId,origin);
+  const id=await uniqueAgentReviewAccount(trusted.siteId,trusted.agentId,tool_slug);
+  const authorize=()=>genericReviewTarget(trusted.siteId,trusted.agentId,id,tool_slug,memberUserId,'requester');
+  const {target}=await authorize();
+  const bindingHash=hashConnectorSchema(target);
+  const credential=await loadConnectorCredential(trusted.siteId);
+  const descriptor=await describeDirectTool(target,credential,tool_slug);
+  assertDirectArguments(descriptor.parameters,args);
+  await requireConversationAgent(trusted.siteId,trusted.conversationId,trusted.agentId,origin);
+  if(hashConnectorSchema((await authorize()).target)!==bindingHash)throw unavailable();
+  return requestProposal(trusted,{execution:'provider',origin,connector_id:id,account_label:target.connector.display_name,
+    tool_slug,version:descriptor.version,schema_hash:descriptor.schemaHash,binding:bindingHash,scopes:[],arguments:args});
 }
 
 /** Called only by the interactive runtime after describe, input, screen and authority checks. */

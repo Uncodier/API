@@ -119,7 +119,8 @@ export function directParameterPlan(raw: unknown, projectRef?: string) {
               catch {unsupportedDirectSchema();}
               injected[name] = value;
               if (Array.isArray(out.required)) out.required = out.required.filter(k => k !== name);
-            } else if ((Array.isArray(v.required) && v.required.includes(name)) || child.default != null ||
+            } else if ((Array.isArray(v.required) && v.required.includes(name)) ||
+              (child.default != null && !(projectRef && child.type==='boolean' && child.default===false)) ||
               Object.keys(child).some(k=>!['type','items','properties','additionalProperties','required',...annotations].includes(k))) {
               // Unknown omission behavior (e.g. a $ref or a provider default) is
               // not a verified account selector. Never silently switch accounts.

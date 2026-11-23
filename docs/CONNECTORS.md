@@ -12,8 +12,7 @@ and [access model](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/C
   It consults account Policies, not a registry of executable toolkits or display
   profiles. Support, approval decisions and opening old private report choices
   remain separate, narrower consumers. The native `report` tool is unchanged.
-- New verified accounts inherit access for eligible workspace members and active
-  same-site agents. Account-level restrictions override inheritance. Legacy
+- Workspace sharing can grant access to eligible members. Agents never inherit access: a manager must assign the particular agent to each connected account. Account-level restrictions override member inheritance. Legacy
   accounts retain explicit grants. Connecting an account or the historical read
   opt-in does not enable provider-direct execution. Once enrolled, `all` does not
   intersect the provider catalog with a manually reviewed slug list; `selected`
@@ -102,25 +101,17 @@ external account operations and deployment remain separate acceptance gates.
 migrations before enabling private approvals. Migration and deployment are separate
 operator steps. Do not interpret a missing migration as approval or retry execution.
 
-The stored `require_approval` bit allows eligible missing-use requests; it does not gate fully authorized interactive calls. A persisted request returns `status: pending`, not tool output. Conversation
-hosts have a request-only service with a trusted conversation/agent binding. An
-ambiguous account, explicit restriction, unreviewed tool or unsupported input fails closed.
-In an owned private Support thread, the assigned agent’s current use grant authorizes only reviewed Gmail and HubSpot reads on a member-visible account. Member screen restrictions still apply. Without independent member use permission the gateway returns completion only, never provider data. The public audience still requires its separate publication. Private Robots provider-direct descriptors, arbitrary SQL, code and network requests have no channel dispatch or output contract.
+The stored `require_approval` bit allows eligible missing-use requests; it does not gate fully authorized interactive calls. A persisted request returns `status: pending`, not tool output. Conversation hosts may request private review of a compatible provider slug, including from an anonymous visitor turn. The server resolves the assigned agent and requires exactly one eligible, explicitly assigned account allowing that tool and review. The visitor cannot select a credential or see whether one exists. A proposal never dispatches, persists a new agent grant, or releases data into the channel.
+In an owned private Support thread, the assigned agent uses the shared Composio discovery, descriptor and execution path on eligible accounts within `all` or `selected`. The same path handles both new and previously reviewed provider slugs. Member screen and disclosure restrictions still apply. Public channels may request review, but cannot call provider tools or obtain provider data through this gateway.
 
-On request-only paths, a visible view-only member or active agent without an explicit use grant can
-request when opted in. A hidden, disabled, revoked or expired restriction is never
-a request grant. A manager checks and executes the pinned read with their own
-account-use permission; the proposing actor and agent are separately revalidated.
-Neither type of proposal uses a customer as a member or grants an agent permission
-to poll for results. Public channel proposals remain restricted to the Gmail and HubSpot reads; database infrastructure metadata is not added to the channel tool vocabulary.
+A manager reviews a specific account, tool and arguments. Generic channel proposals require an explicitly assigned Support agent and a review-enabled tool. An anonymous visitor does not need a member identity, cannot execute the proposal, and cannot poll for results. Approving a call does not assign any new connector to the agent.
 
 **Rollout:** review existing `require_approval=true` accounts with their managers
 before enabling this behavior. It no longer imposes a mandatory human gate on
 fully authorized private reads. Disable the action/host or remove use if that
 would be inappropriate. The new policy needs no data rewrite. Legacy blind
 `conversation` proposals lack the source actor distinction and are not actionable;
-let them expire and request again from a bound host. The separate, explicitly
-published support-title audience/label projection is unchanged.
+let them expire and request again from a bound host. Historical snapshots retain their original decision contracts.
 
 - Review destinations are real conversation IDs. Channel-originated requests stay
   in their existing conversation. Interactive requests keep their immutable
@@ -148,7 +139,7 @@ published support-title audience/label projection is unchanged.
 
 ### Where a conversation agent can request review
 
-`request_connector_review` accepts only `tool_slug` (static reviewed vocabulary)
+`request_connector_review` accepts only `tool_slug` (an exact compatible provider slug)
 plus `arguments`. The channel never lists accounts, describes a private schema,
 executes, approves or polls. It receives the same `review_requested_if_available`
 receipt on acceptance or denial; this is not confirmation that a queue item exists.
@@ -159,7 +150,7 @@ voice delivery). Model-supplied identity, role and idempotency fields are reject
 | --- | --- |
 | Customer Support website message | Signed, current visitor session/grant, ownership of the existing conversation, server-selected active agent matching its assignment. The workflow entrypoint forwards only a short-lived, message- and thread-bound signed assertion, not the visitor token. |
 | Customer Support provider message | Actual service credential plus admitted Zavu inbound receipt (message, connection, sender, contact) or verified social-comment thread from the existing ingestion path. Conversation assignment must match the server-selected support agent. |
-| Workspace chat, Sales, CMO and Customer Support message commands | Authenticated **non-service** principal with current site access who **owns** the DB conversation. Only the agent actually running that command and already assigned to the thread can request review. |
+| Workspace chat, Sales, CMO and Customer Support message commands | Authenticated **non-service** principal with current site access who **owns** the DB conversation. Generic connector review requires the active assigned Customer Support agent with an explicit account grant. |
 | Customer Support live Voice | Fresh v2 signature covering the tool name in the body; signed session ID must identify the exact independently verified live call. Signer, active local mapping of the provider agent, call sender, delivery and conversation assignment must agree. Opaque sessions do not qualify. Tool registration requires the normal voice sync at rollout. |
 
 No first-turn thread is invented to obtain authority. Missing evidence, a delegated

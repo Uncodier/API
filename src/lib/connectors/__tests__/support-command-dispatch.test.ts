@@ -65,7 +65,7 @@ it.each(['match', 'other persisted agent', 'other raw command', 'other agent rol
   const source = jest.mocked(DatabaseAdapter.createCommand).mock.calls[0][0];
   expect(source).toMatchObject({ site_id: siteId, agent_id: agentId, user_id: owner, agent_role: 'Customer Support' });
   expect(source).not.toHaveProperty('connectorHost');
-  expect(source.tools?.map(tool => tool.function.name)).toEqual(variant === 'other agent role' ? [] : ['support_connectors', 'request_connector_review']);
+  expect(source.tools?.map(tool => tool.function.name)).toEqual(variant === 'other agent role' ? [] : ['request_connector_review']);
   // Calling with identical IDs after event dispatch cannot recover the capability.
   await requestBoundCommandReview(id, siteId, proposal);
   expect(proposeConversationConnectorAction).toHaveBeenCalledTimes(variant === 'match' ? 1 : 0);

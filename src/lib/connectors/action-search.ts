@@ -4,7 +4,6 @@ import type { ReviewedConnectorTool } from './reviewed-tools';
 
 // Search vocabulary is discovery metadata, never a registry of permitted actions.
 const terms: Readonly<Record<string, string>> = {
-  PUBLISHED_SUPPORT_TITLES: 'published notices announcements updates titles avisos publicados anuncios novedades títulos soporte',
   GMAIL_FETCH_EMAILS: 'inbox mail messages correo correos electrónicos bandeja de entrada mensajes',
   HUBSPOT_LIST_CONTACTS: 'address book contacts lista de contactos clientes CRM',
   SUPABASE_LIST_TABLES: 'table tables schema schemas metadata PostgreSQL database tables inventory tablas esquemas inventario de tablas base de datos',

@@ -63,7 +63,7 @@ it('does not reuse a command from a different account or agent', async () => {
 it('only a fresh submission with a resolved host receives gateway + private review', async () => {
   await generateSupportReply(input);
   expect(submitCommand.mock.calls[0][0].tools).toEqual([]);
-  const connectorHost = { siteId: id, agentId: id, resolve: jest.fn() };
+  const connectorHost = { siteId: id, agentId: id, resolve: jest.fn().mockResolvedValue({siteId:id,agentId:id,userId:id,audience:'member'}) };
   await generateSupportReply({ ...input, connectorHost });
   const command = submitCommand.mock.calls[1][0];
   expect(command.tools.map((t: any) => t.function.name)).toEqual(['support_connectors', 'request_connector_review']);
@@ -82,4 +82,10 @@ it('rejects a recovered command with forged metadata or an agent restored only f
   expect((await generateSupportReply(input) as Response).status).toBe(503);
   expect(isAssignedChannelCommand).toHaveBeenCalledWith(id, id, id, id);
   expect(attachSupportConnectorHost).not.toHaveBeenCalled();
+});
+
+it.each(['anonymous','verified'])('does not advertise provider execution to a %s audience', async audience => {
+  const connectorHost={siteId:id,agentId:id,resolve:async()=>({siteId:id,agentId:id,audience})};
+  await generateSupportReply({...input,connectorHost});
+  expect(submitCommand.mock.calls[0][0].tools.map((t:any)=>t.function.name)).toEqual(['request_connector_review']);
 });

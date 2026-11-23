@@ -24,7 +24,7 @@ beforeEach(()=>{jest.resetAllMocks(); rpc.mockImplementation(()=>reply([fresh()]
 it('only returns current DB-backed direct proof for the exact account/actor and drops unrelated fields',async()=>{
   rpc.mockReturnValue(reply([{...fresh(),not_public:'ignored'}])); const t=await target();
   expect(t.directProof).toMatchObject({attestationId:attestation,directRevision:3,accountId:'a1',authConfigId:'ac1',siteId:site,projectId:'p1',credentialRevision:rev});
-  expect(rpc).toHaveBeenCalledWith('connector_direct_accounts',{p_site_id:site,p_user_id:user,p_instance_id:instance,p_agent_id:agent,p_connector_id:id,p_slug:'CRM_LIST_DEALS'});
+  expect(rpc).toHaveBeenCalledWith('connector_direct_accounts_v2',{p_site_id:site,p_user_id:user,p_instance_id:instance,p_agent_id:agent,p_connector_id:id,p_slug:'CRM_LIST_DEALS'});
   expect(rpc).toHaveBeenCalledTimes(1);expect(visible).not.toHaveBeenCalled();expect(access).not.toHaveBeenCalled();
   expect(t.policy.tool_access_mode).toBe('all');expect(t).not.toHaveProperty('requestOnly');expect(JSON.stringify(t)).not.toContain(credential);
   expect(evidence).not.toHaveBeenCalled(); expect(t).not.toHaveProperty('not_public');
@@ -81,4 +81,45 @@ it('never upgrades explicit unsafe capabilities to executable actions through al
   for (const action of ['CRM_EXECUTE_SCRIPT','CRM_GET_CREDENTIALS','CRM_SQL_QUERY','CRM_HTTP_PROXY','OTHER_LIST_DEALS']) {
     await expect(authorizeDirectAction(ctx,id,action)).rejects.toMatchObject({code:'DIRECT_ACTION_UNSUPPORTED'});
   }
+});
+
+it('admits a positively classified account on its exact pin, without manufacturing an attestation', async()=>{
+  const {connector,provider,policy,direct_revision}=fresh();
+  const ordinary={connector:{...connector,toolkit_slug:'gmail',granted_scopes:['https://www.googleapis.com/auth/gmail.send']},
+    provider,policy,direct_revision,authority_kind:'connected_account',authorization_id:randomUUID()};
+  const admit=()=>authorizeDirectAction(ctx,id,'GMAIL_SEND_EMAIL');
+  rpc.mockReturnValue(reply([ordinary]));
+  expect((await admit()).directProof).toEqual({kind:'connected_account',authorizationId:ordinary.authorization_id,
+    directRevision:3,siteId:site,connectorId:id,providerId:provider.id,toolkitSlug:'gmail',projectId:'p1',accountId:'a1',authConfigId:'ac1',credentialRevision:rev});
+  expect(evidence).not.toHaveBeenCalled();
+  for(const patch of [{authority_kind:'other'}, {authorization_id:undefined}, {attestation_id:randomUUID()},
+    {local_installation_ref:null},{resource_boundary:'unverified'},{expires_at:new Date().toISOString()},
+    {connector:{...ordinary.connector,toolkit_slug:'supabase'}},{connector:{...ordinary.connector,supabase_project_ref:'a'.repeat(20)}},
+    {connector:{...ordinary.connector,granted_scopes:[...ordinary.connector.granted_scopes,'unknown.admin']}},
+    {provider:{...provider,provider_user_id:randomUUID()}},{provider:{...provider,site_id:randomUUID()}},
+    {provider:{...provider,project_id:'another'}},{provider:{...provider,id:randomUUID()}}]) {
+    rpc.mockReturnValueOnce(reply([{...ordinary,...patch}]));await expect(admit()).rejects.toBeInstanceOf(ConnectorError);
+  }
+  for(const patch of [{authority_kind:'connected_account'}, {authority_kind:'attested'}, {authorization_id:randomUUID()}]) {
+    rpc.mockReturnValueOnce(reply([{...fresh(),...patch}]));await expect(target()).rejects.toBeInstanceOf(ConnectorError);
+  }
+});
+
+it('distinguishes a delegated scheme/project pin from both legacy consent and a project attestation',async()=>{
+  const {connector,provider,policy,direct_revision}=fresh(), project='b'.repeat(20);
+  const row={authority_kind:'connected_account',authorization_id:randomUUID(),auth_scheme:'API_KEY',bound_project_ref:project,
+    connector:{...connector,toolkit_slug:'supabase',supabase_project_ref:project},provider,policy,direct_revision};
+  evidence.mockResolvedValue({allowed:true,localProjectRef:project});
+  rpc.mockReturnValue(reply([row]));
+  const admit=(slug='SUPABASE_GET_PROJECT')=>authorizeDirectAction(ctx,id,slug);
+  expect((await admit()).directProof).toMatchObject({kind:'connected_account',authScheme:'API_KEY',boundProjectRef:project});
+  for(const action of ['LIST_PROJECTS','UPDATE_PROJECT','GET_TABLE_ROWS','SELECT_FROM_TABLE','LIST_LOGS','EXECUTE_SQL']) {
+    await expect(admit(`SUPABASE_${action}`)).rejects.toMatchObject({code:'DIRECT_ACTION_UNSUPPORTED'});
+  }
+  for(const patch of [{bound_project_ref:'c'.repeat(20)},{bound_project_ref:undefined},{auth_scheme:undefined},
+    {auth_scheme:'SERVICE_ROLE'},{auth_scheme:'OAUTH2'},{authorization_id:undefined}]) {
+    rpc.mockReturnValueOnce(reply([{...row,...patch}]));await expect(admit()).rejects.toBeInstanceOf(ConnectorError);
+  }
+  evidence.mockResolvedValue({allowed:true,localProjectRef:null});
+  await expect(admit()).rejects.toMatchObject({code:'DIRECT_POLICY_REQUIRED'});
 });

@@ -11,6 +11,7 @@ import { ConnectorError } from './types';
 
 export const supabaseTokenInput = z.object({
   site_id: z.string().uuid(), project_ref: z.string().regex(/^[a-z0-9]{20}$/),
+  delegate_account: z.literal(true).optional(),
   token: z.string().min(24).max(512).regex(/^sbp_[A-Za-z0-9_-]+$/),
 }).strict();
 const slug = 'supabase';
@@ -34,7 +35,7 @@ async function verifyToken(project: string, token: string) {
 }
 
 export async function connectSupabaseToken(input: z.infer<typeof supabaseTokenInput>, actor: string) {
-  const { site_id: site, project_ref: project, token } = supabaseTokenInput.parse(input);
+  const { site_id: site, project_ref: project, token, delegate_account } = supabaseTokenInput.parse(input);
   const { provider, credential } = await prepareConnectorTokenProvider(site, actor);
   await verifyToken(project, token);
   const client = createComposioClient(credential.apiKey);
@@ -60,7 +61,10 @@ export async function connectSupabaseToken(input: z.infer<typeof supabaseTokenIn
     const saved = await supabaseAdmin.from('site_connector_auth_attempts').update({ provider_account_id: created.id })
       .eq('id', id).eq('status', 'pending').select('id').abortSignal(signal()).single();
     if (saved.error) connectorDatabaseError(saved.error);
-    await verifyAccountIdentity(client, { accountId: created.id, userId: provider.provider_user_id, toolkitSlug: slug, authConfigId: config });
+    const account = await verifyAccountIdentity(client, { accountId: created.id, userId: provider.provider_user_id, toolkitSlug: slug, authConfigId: config });
+    if (delegate_account && (account?.accountType !== 'PRIVATE' || !account.apiKeyAuth || !account.hostedSupabasePat)) {
+      throw new ConnectorError('CONNECTOR_ACCOUNT_MISMATCH', 'The exact private hosted token account could not be verified.', 409);
+    }
     await requireConnectorSiteAccess(site, actor, true);
     if ((await loadConnectorCredential(site)).revision !== credential.revision ||
       (await readTokenProviderBinding(site, credential.revision)).projectId !== provider.project_id) throw new Error('Provider binding changed');
@@ -68,9 +72,9 @@ export async function connectSupabaseToken(input: z.infer<typeof supabaseTokenIn
       .eq('id', id).eq('status', 'pending').select('id').abortSignal(signal()).single();
     if (claim.error) connectorDatabaseError(claim.error);
     status = 'completing';
-    const finalized = await supabaseAdmin.rpc('connector_finalize_auth', {
+    const finalized = await supabaseAdmin.rpc(delegate_account ? 'connector_finalize_customer_account' : 'connector_finalize_auth', {
       p_attempt_id: id, p_actor_id: actor, p_nonce_hash: nonceHash, p_provider_account_id: created.id,
-      p_toolkit_slug: slug, p_auth_config_id: config, p_display_name: `Supabase · ${project}`, p_granted_scopes: [],
+      p_toolkit_slug: slug, p_auth_config_id: config, p_display_name: `Supabase · ${project}`, p_granted_scopes: [], ...(delegate_account && {p_auth_scheme:'API_KEY'}),
     }).abortSignal(signal());
     if (finalized.error) connectorDatabaseError(finalized.error);
     return { status: 'completed' as const, connector_id: finalized.data.id as string };

@@ -192,3 +192,15 @@ test('private direct evidence is bound to its own predicate, not interchangeable
   gateway(ref,'false'); expect(await withDirectActorEvidence(direct)).toEqual({allowed:false,localProjectRef:null});
   gateway(ref,'true'); expect(await withDirectActorEvidence(async ()=>(await direct()) && (await direct()))).toEqual(noProof);
 });
+
+test('Support account evidence cannot be borrowed from a different host RPC',async()=>{
+  const f=load(canonical);
+  const {withSupportAccountEvidence}=require('@/lib/database/hosted-project-identity') as typeof import('@/lib/database/hosted-project-identity');
+  const read=async()=>{
+    const {data,error}=await f.admin.rpc('connector_support_agent_account_v2',{p_site_id:args.p_site_id,p_agent_id:args.p_agent_id,p_connector_id:randomUUID(),p_slug:null});
+    return !error && Array.isArray(data) && data.length===1;
+  };
+  expect(await withSupportAccountEvidence(f.read)).toEqual(noProof);
+  gateway(ref,'[{}]');expect(await withSupportAccountEvidence(read)).toEqual(proven);
+  gateway(ref,'[]');expect(await withSupportAccountEvidence(read)).toEqual({allowed:false,localProjectRef:null});
+});

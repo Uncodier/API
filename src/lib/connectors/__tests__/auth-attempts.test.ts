@@ -8,6 +8,8 @@ const from = jest.fn();
 const insert = jest.fn();
 const complete = jest.fn();
 const verify = jest.fn();
+const toolkit = jest.fn();
+let mockConfigScheme='OAUTH2';
 const link = jest.fn();
 const prepare = jest.fn();
 const credential = jest.fn();
@@ -22,7 +24,7 @@ jest.mock('../access', () => ({
 jest.mock('../provider-binding', () => ({ ...jest.requireActual('../provider-binding'), prepareConnectorProvider: (...args: unknown[]) => prepare(...args) }));
 jest.mock('../composio-transport', () => ({ createComposioClient: () => ({}) }));
 jest.mock('../composio-accounts', () => ({ createAuthLink: (...args: unknown[]) => link(...args), completeAuth: (...args: unknown[]) => complete(...args), verifyAccountIdentity: (...args: unknown[]) => verify(...args) }));
-jest.mock('../composio-catalog', () => ({ listAuthConfigs: async () => ({ items: [{ id: 'ac_test', authScheme: 'OAUTH2', status: 'ENABLED' }] }) }));
+jest.mock('../composio-catalog', () => ({ getToolkit: (...args: unknown[]) => toolkit(...args), listAuthConfigs: async () => ({ items: [{ id: 'ac_test', authScheme: mockConfigScheme, status: 'ENABLED' }] }) }));
 
 const siteId = '11111111-1111-4111-8111-111111111111';
 const userId = '22222222-2222-4222-8222-222222222222';
@@ -47,7 +49,7 @@ beforeAll(() => { process.env.CONNECTORS_WEB_ORIGIN = byokOrigin; });
 afterAll(() => { if (oldOrigin === undefined) delete process.env.CONNECTORS_WEB_ORIGIN; else process.env.CONNECTORS_WEB_ORIGIN = oldOrigin; });
 beforeEach(() => {
   proofRpc.mockReset().mockImplementation(attestedProject({site_id: siteId, project_id: 'proj_test', credential_revision: revision}));
-  jest.clearAllMocks(); updates = []; claimSucceeds = true;
+  jest.clearAllMocks(); mockConfigScheme='OAUTH2'; updates = []; claimSucceeds = true;
   attempt = { id: attemptId, site_id: siteId, provider_id: siteId, user_id: userId,
     toolkit_slug: 'gmail', auth_config_id: 'ac_test', provider_account_id: 'ca_test',
     nonce_hash: createHash('sha256').update(nonce).digest('hex'), credential_revision: revision,
@@ -119,4 +121,31 @@ it.each(['before callback', 'after provider completion'])('does not finalize or 
   if (stage === 'before callback') expect(updates).toEqual([]);
   else expect(updates).toContainEqual({status:'outcome_unknown'});
   expect(rpc).not.toHaveBeenCalled();
+});
+
+
+it('delegates private native OAuth on any toolkit using the exact notice-bearing completed attempt', async () => {
+  const slug='newprovider',checked={id:'ca_test',toolkitSlug:slug,authConfigId:'ac_test',accountType:'PRIVATE',oauth2:true,scopes:[]};
+  attempt.toolkit_slug=slug;complete.mockResolvedValue({accountId:'ca_test',toolkitSlug:slug});
+  const native={type:'native',toolkit_type:'api',enabled:true};
+  for (const [notice,a,t,delegated] of [
+    [true,checked,native,true],[false,checked,native,false],
+    ...[{accountType:undefined},{accountType:'SHARED'},{oauth2:false}].map(patch=>[true,{...checked,...patch},native,false]),
+    ...[{type:'custom'},{enabled:false},{toolkit_type:'mcp'}].map(patch=>[true,checked,{...native,...patch},false]),
+  ]) {
+    attempt.ask_on_connect=notice;rpc.mockClear();verify.mockResolvedValue(a);toolkit.mockResolvedValue(t);
+    await finishConnectorAuth(input);
+    expect(rpc).toHaveBeenCalledWith(delegated?'connector_finalize_customer_account':'connector_finalize_auth',expect.objectContaining({p_attempt_id:attemptId,p_actor_id:userId,...(delegated?{p_auth_scheme:'OAUTH2'}:{})}));
+  }
+});
+
+it('delegates an API key entered on the provider hosted link, never requiring the key in the callback body',async()=>{
+  mockConfigScheme='API_KEY';const slug='examplecrm';
+  await expect(startConnectorAuth({siteId,userId,nonce,toolkitSlug:slug,authConfigId:'ac_test',askOnConnect:true})).resolves.toMatchObject({attempt_id:attemptId});
+  attempt.toolkit_slug=slug;attempt.ask_on_connect=true;
+  complete.mockResolvedValue({accountId:'ca_test',toolkitSlug:slug});
+  verify.mockResolvedValue({id:'ca_test',authConfigId:'ac_test',toolkitSlug:slug,accountType:'PRIVATE',oauth2:false,apiKeyAuth:true,scopes:[]});
+  toolkit.mockResolvedValue({type:'native',toolkit_type:'api',enabled:true});
+  await finishConnectorAuth(input);
+  expect(rpc).toHaveBeenCalledWith('connector_finalize_customer_account',expect.objectContaining({p_auth_scheme:'API_KEY',p_provider_account_id:'ca_test',p_attempt_id:attemptId}));
 });

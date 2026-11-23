@@ -1,3 +1,4 @@
+import {authorityStamp,projectActionAllowed} from './provider-direct-authority';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {loadConnectorCredential} from './account-access';
@@ -10,10 +11,7 @@ import {CONNECTOR_DOMAINS, getToolkitDomains} from './domains';
 import {ConnectorError, type ConnectorContext} from './types';
 import type {ConnectorFilters, ConnectorCandidate} from './connector-discovery-types';
 import type {DirectAuthorizedConnector} from './provider-direct-policy';
-import {selectedCatalogAccount,type CatalogOnlyAccount} from './selected-catalog-account';
 import {directActionNameSafe} from './provider-direct-guards';
-
-import {selectedQueryProbeEligible, SELECTED_QUERY_PROBE} from './selected-query-probe-policy';
 
 // Cursors refer to metadata positions only, never authorization. Resume a bounded page using
 // the provider's page/limit cursor format, not an arbitrary query/path supplied by a model.
@@ -38,7 +36,7 @@ function matches(item:Item, kit:string, name:string, filters:ConnectorFilters) {
 
 /** Receives only freshly authorized accounts from Policies. No module is imported based on the
  * toolkit, name or effect. Search text stays local; selected IDs are server-saved policy data. */
-export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFilters, targets:(DirectAuthorizedConnector | CatalogOnlyAccount)[]) {
+export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFilters, targets:DirectAuthorizedConnector[]) {
   const parsed = filtersSchema.safeParse(input);
   if (!parsed.success) throw new ConnectorError('INVALID_FILTER','Use bounded catalog search filters.',400);
   const {cursor,...filters} = parsed.data;
@@ -50,8 +48,8 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
       return {target,domains,category};
     }).filter(({domains,category})=>(!filters.domain || domains.includes(filters.domain)) && (!filters.category || category===filters.category))
     .sort((a,b)=>a.target.connector.id.localeCompare(b.target.connector.id));
-  const identity=digest([ctx.siteId,ctx.instanceId,ctx.userId,ctx.agentId,ctx.connectorIdHint,filters,
-    accounts.map(({target:t})=>[t.connector.id,t.connector.revision,t.provider.credential_revision,t.policy.revision,...('directProof' in t?[t.directProof.attestationId,t.directProof.directRevision]:['catalog_only'])])]);
+  const identity=digest(['catalog-inventory-v2',ctx.siteId,ctx.instanceId,ctx.userId,ctx.agentId,ctx.connectorIdHint,filters,
+    accounts.map(({target:t})=>[t.connector.id,t.connector.revision,t.provider.credential_revision,t.policy.revision,authorityStamp(t.directProof)])]);
   let account=0, page=1, offset=0, observed='';
   if (cursor !== undefined) {
     const m=/^d1:([a-f0-9]{32}):(\d{1,5}):(\d{1,6}):(\d{1,2}):(-|[a-f0-9]{32})$/.exec(cursor);
@@ -70,38 +68,35 @@ export async function searchDirectTools(ctx:ConnectorContext, input:ConnectorFil
       const client=createComposioClient(cred.apiKey);
       const all=target.policy.tool_access_mode==='all';
       const ids=[...new Set(target.policy.allowed_tools)].sort();
-      const batch=all?[]:ids.slice((page-1)*12,page*12);
+      // For exact selected-tool lookups, query the saved catalog ID directly instead of
+      // returning empty pages before its batch. Never send a free-text prompt upstream.
+      const exactSelected=!all && ids.find(id=>[filters.query?.trim(),filters.catalog_query?.trim()].some(term=>
+        term===id || term===`connector:${target.connector.id}:${id}`));
+      const batch=exactSelected?[exactSelected]:all?[]:ids.slice((page-1)*12,page*12);
       if (!all && !batch.length) throw stale();
-      const probe:Item={slug:SELECTED_QUERY_PROBE,name:'Test connection',description:'Test connectivity with SELECT 1; no table reads on this shared credential.',action_types:[]};
-      let canProbe=false;
-      if (ctx.connectorIdHint===target.connector.id && kit==='supabase' && ctx.agentId && target.connector.supabase_project_ref) {
-        try {
-          canProbe=selectedQueryProbeEligible('catalogOnly' in target ? target : await selectedCatalogAccount(ctx,target.connector.id,true));
-        } catch (error) {
-          if (!(error instanceof ConnectorError) || !['DIRECT_POLICY_REQUIRED','NOT_FOUND','ACCESS_DENIED'].includes(error.code)) throw error;
-        }
-      }
-      const query=(filters.catalog_query ?? filters.query ?? '').trim();
-      const probeLookup=canProbe && (query===probe.slug || query===connectorToolRef(target.connector.id,probe.slug) ||
-        /^(?:test connection|connection test|test connectivity|select 1|probar conexi[oó]n)$/i.test(query));
-      const result=probeLookup?await listSelectedCatalogMetadata(client,kit,[probe.slug]):all?await listToolkitToolMetadata(client,kit,catalogPageCursor(page,TOOL_CATALOG_LIMIT))
+      const result=all?await listToolkitToolMetadata(client,kit,catalogPageCursor(page,TOOL_CATALOG_LIMIT))
         :await listSelectedCatalogMetadata(client,kit,batch);
       if ('missing' in result && result.missing) partial_error='CATALOG_SELECTION_CHANGED';
       const items=result.items, fingerprint=digest(items.map(i=>[i.slug,i.name,i.description]));
       if (offset && (observed!==fingerprint || offset>=items.length)) throw stale();
       for (;offset<items.length && tools.length<5;offset++) {
         const i=items[offset];
-        if (i.slug.startsWith('COMPOSIO_')) continue;
-        const name=connectorToolRef(target.connector.id,i.slug);
-        const isProbe=canProbe && i.slug===probe.slug;
-        if (!matches(isProbe ? {...i,description:`${probe.name}. ${probe.description} Probar conexión. ${i.description}`} : i,kit,name,filters)) continue;
-        tools.push({name,toolkit:kit,tool_origin:'provider',...modelAccountIdentity(target.connector.id),
-          domains,category,availability:isProbe || ('directProof' in target && directActionNameSafe(kit,i.slug))?'describe_required':'manual_only',
-          description:isProbe ? `${probe.description} Never substitute SELECT 1 for a data request.` : 'directProof' in target ? `${i.slug.replaceAll('_',' ')}. Catalog metadata is not authorization.` : 'Provider catalog only. This account has no direct execution admission; do not call or substitute another tool.'});
+        // Catalogue membership comes from Composio; local execution restrictions are a status, not a search filter.
+        const reserved=i.slug.startsWith('COMPOSIO_');
+        const name=reserved?`connector:${target.connector.id}:${i.slug}`:connectorToolRef(target.connector.id,i.slug);
+        if (!matches(i,kit,name,filters)) continue;
+        const callable=!reserved && directActionNameSafe(kit,i.slug) &&
+          projectActionAllowed(kit,i.slug,target.connector.supabase_project_ref,target.directProof.kind==='connected_account',target.localProjectRef);
+        tools.push({name,toolkit:kit,tool_origin:'provider',...modelAccountIdentity(target.connector.id),domains,category,
+          availability:callable?'describe_required':'manual_only',description:callable
+            ? `${i.slug.replaceAll('_',' ')}. Describe to verify the provider schema.`
+            : reserved ? 'Reserved Composio operation; unavailable through a connected account.'
+            : !directActionNameSafe(kit,i.slug) ? 'Makinari restricts this catalog operation by name or toolkit capability. Composio has not rejected the account.'
+            : 'The connection’s project binding does not allow this operation. No execution request was sent.'});
       }
       observed = offset<items.length?fingerprint:'';
       if (!observed) {
-        const more=!probeLookup && ('next_cursor' in result ? !!result.next_cursor : ids.length>page*12);
+        const more=!exactSelected && ('next_cursor' in result ? !!result.next_cursor : ids.length>page*12);
         offset=0;
         if (more && page<100_000) page++; else {account++;page=1;}
       }

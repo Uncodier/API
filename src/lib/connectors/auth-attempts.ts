@@ -6,11 +6,11 @@ import { prepareConnectorProvider, readProviderBinding } from './provider-bindin
 import { ConnectorError } from './types';
 import { createComposioClient } from './composio-transport';
 import { createAuthLink, completeAuth, verifyAccountIdentity } from './composio-accounts';
-import { listAuthConfigs } from './composio-catalog';
+import { getToolkit, listAuthConfigs } from './composio-catalog';
 
 const uuid = z.string().uuid();
 const nonceSchema = z.string().regex(/^[a-f0-9]{64}$/);
-const attemptColumns = 'id,site_id,provider_id,user_id,toolkit_slug,auth_config_id,provider_account_id,nonce_hash,credential_revision,status,expires_at,connector_id';
+const attemptColumns = 'id,site_id,provider_id,user_id,toolkit_slug,auth_config_id,provider_account_id,nonce_hash,credential_revision,status,expires_at,connector_id,ask_on_connect';
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const signal = () => AbortSignal.timeout(5_000);
 
@@ -18,7 +18,7 @@ type AuthAttempt = {
   id: string; site_id: string; provider_id: string; user_id: string;
   toolkit_slug: string; auth_config_id: string; provider_account_id: string | null;
   nonce_hash: string; credential_revision: string; status: string; expires_at: string;
-  connector_id: string | null;
+  connector_id: string | null; ask_on_connect?: boolean;
 };
 
 export async function getAuthAttempt(siteId: string, userId: string, attemptId: string): Promise<AuthAttempt> {
@@ -44,12 +44,12 @@ export async function startConnectorAuth(input: { siteId: string; userId: string
   let cursor: string | undefined;
   for (let page = 0; page < 10; page++) {
     const configs = await listAuthConfigs(client, input.toolkitSlug, cursor);
-    configFound = configs.items.some(config => config.id === input.authConfigId && config.authScheme === 'OAUTH2' && config.status === 'ENABLED');
+    configFound = configs.items.some(config => config.id === input.authConfigId && (config.authScheme === 'OAUTH2' || (input.askOnConnect && config.authScheme === 'API_KEY' && input.toolkitSlug!=='supabase')) && config.status === 'ENABLED');
     if (configFound || !configs.next_cursor) break;
     cursor = configs.next_cursor;
   }
   if (!configFound) {
-    throw new ConnectorError('AUTH_CONFIG_UNAVAILABLE', 'Select an enabled OAuth configuration for this toolkit.', 422);
+    throw new ConnectorError('AUTH_CONFIG_UNAVAILABLE', 'Select an enabled, supported authentication configuration for this toolkit.', 422);
   }
   const insert = await supabaseAdmin.from('site_connector_auth_attempts').insert({
     site_id: input.siteId, provider_id: provider.id, user_id: input.userId,
@@ -107,16 +107,22 @@ export async function finishConnectorAuth(input: { siteId: string; userId: strin
       accountId: completed.accountId, userId: provider.provider_user_id,
       toolkitSlug: attempt.toolkit_slug, authConfigId: attempt.auth_config_id,
     });
+    // The site manager delegated this exact private downstream account during hosted OAuth.
+    // The platform Composio key authenticates transport; it is not the downstream credential.
+    const scheme=account.oauth2 ? 'OAUTH2' : account.apiKeyAuth ? 'API_KEY' : null;
+    const toolkit = attempt.ask_on_connect === true && account.accountType === 'PRIVATE' && scheme && attempt.toolkit_slug!=='supabase'
+      ? await getToolkit(client, account.toolkitSlug) : null;
+    const delegated = toolkit?.type === 'native' && toolkit.toolkit_type === 'api' && toolkit.enabled !== false;
     await requireConnectorSiteAccess(input.siteId, input.userId, true);
     if ((await loadConnectorCredential(input.siteId)).revision !== credential.revision ||
       (await readProviderBinding(input.siteId, credential.revision)).projectId !== provider.project_id) {
       throw new ConnectorError('PROVIDER_REVALIDATION_REQUIRED', 'The provider binding changed while authentication was being verified.', 409);
     }
-    const finalized = await supabaseAdmin.rpc('connector_finalize_auth', {
+    const finalized = await supabaseAdmin.rpc(delegated ? 'connector_finalize_customer_account' : 'connector_finalize_auth', {
       p_attempt_id: attempt.id, p_actor_id: input.userId, p_nonce_hash: attempt.nonce_hash,
       p_provider_account_id: account.id, p_toolkit_slug: account.toolkitSlug,
       p_auth_config_id: account.authConfigId, p_display_name: account.name || attempt.toolkit_slug,
-      p_granted_scopes: account.scopes,
+      p_granted_scopes: account.scopes, ...(delegated && {p_auth_scheme:scheme}),
     }).abortSignal(signal());
     if (finalized.error) connectorDatabaseError(finalized.error);
     return { connector_id: finalized.data.id as string, toolkit_slug: attempt.toolkit_slug, status: 'completed' as const };

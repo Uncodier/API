@@ -66,3 +66,12 @@ it('records an unconfirmed account without finalizing or retrying a remote write
   expect(update).toHaveBeenCalledWith({ status: 'outcome_unknown' });
   expect(request).toHaveBeenCalledTimes(1); expect(rpc).not.toHaveBeenCalled();
 });
+it('only delegates the exact private native API key on the disclosed customer-key submission', async()=>{
+  verify.mockResolvedValue({accountType:'PRIVATE',apiKeyAuth:true,hostedSupabasePat:true});
+  await connectSupabaseToken({...input,delegate_account:true},actor);
+  expect(rpc).toHaveBeenCalledWith('connector_finalize_customer_account',expect.objectContaining({p_attempt_id:attempt,p_actor_id:actor,p_provider_account_id:'ca_supabase',p_auth_scheme:'API_KEY'}));
+  expect(JSON.stringify(rpc.mock.calls)).not.toContain(input.token);
+  rpc.mockClear();verify.mockResolvedValue({accountType:'SHARED',apiKeyAuth:true,hostedSupabasePat:true});
+  await expect(connectSupabaseToken({...input,delegate_account:true},actor)).rejects.toBeInstanceOf(ConnectorError);
+  expect(rpc).not.toHaveBeenCalled();
+});

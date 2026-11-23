@@ -214,19 +214,15 @@ it('fails closed rather than showing a truncated exception list as inheritance',
 });
 
 
-it('limits publication to a fixed Gmail label with an explicit external audience', async () => {
-  const publication = { audience: 'anonymous' as const, label_id: 'Label_123' };
-  const input = { ...policyInput, tool_access_mode: 'all' as const, allowed_tools: [], support_publication: publication };
-  await updateConnectorPolicy(user, id, input);
-  expect(rpc).toHaveBeenLastCalledWith('connector_update_policy', expect.objectContaining({ p_support_publication: publication }));
-  expect(provider).not.toHaveBeenCalled();
-  for (const invalid of [{}, { ...publication, label_id: 'INBOX' }, { ...publication, audience: 'all' },
-    { ...publication, label_id: 'Label_1 OR INBOX' }, { ...publication, arguments: {} }]) {
-    expect(policyPatchSchema.safeParse({ ...input, support_publication: invalid }).success).toBe(false);
-  }
-  visible.mockResolvedValueOnce({ toolkit_slug: 'hubspot' });
-  await expect(updateConnectorPolicy(user, id, input)).rejects.toMatchObject({ code: 'INVALID_PUBLICATION' });
-  expect(rpc).toHaveBeenCalledTimes(1);
+it('cannot publish a connector tool; preserves historical configuration unless explicitly cleared', async () => {
+  const publication = {audience:'anonymous' as const,label_id:'Label_123'};
+  const input = {...policyInput,tool_access_mode:'all' as const,allowed_tools:[]};
+  expect(policyPatchSchema.safeParse({...input,support_publication:publication}).success).toBe(false);
+  policy.mockResolvedValue({...await policy(),support_publication:publication});
+  await updateConnectorPolicy(user,id,input);
+  expect(rpc).toHaveBeenLastCalledWith('connector_update_policy',expect.objectContaining({p_support_publication:publication}));
+  await updateConnectorPolicy(user,id,{...input,support_publication:null});
+  expect(rpc).toHaveBeenLastCalledWith('connector_update_policy',expect.objectContaining({p_support_publication:null}));
 });
 
 it('sends publication settings only to managers, not to members with use permission', async () => {

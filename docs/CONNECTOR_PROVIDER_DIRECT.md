@@ -1,10 +1,40 @@
 # Provider-direct connector execution in private Robots turns
 
-## Current local contract (not deployed)
+## Generic connector flow
+
+```text
+Instance / Ask (member)   CustomerSupport / agent/message (assigned agent)
+                     \   /
+              Site + actor + selected account
+                         |
+                    all / selected
+                         |
+          Composio: search → describe → call
+                         |
+                   Result or denial
+```
+
+An agent starts with no connector use, even on workspace-shared accounts. A manager must explicitly assign that agent to that connected account. `all` and `selected` govern tools, not agent access. Instance Ask continues to act as the signed-in member.
+
+Catalog membership and execution eligibility are separate. On an admitted account, `all` searches the toolkit’s current non-deprecated Composio catalog; `selected` searches the saved IDs in that catalog. A local name or project restriction produces a `manual_only` entry rather than hiding it. `describe_required` is not a promise of dispatch: schema validation, account authorization and provider permissions still apply. For a delegated external project, a tool such as `SUPABASE_LIST_TABLES` may proceed when its schema requires a project reference that the server injects. The application’s own shared project remains restricted to project metadata; its account alone is not a tenant boundary. The account inventory change requires migration `20261123153000_connector_catalog_policy_inventory.sql` after the customer delegation migration, followed by `20261123154000_connector_delegated_project_actions.sql` for action admission.
+
+The selected account's authorized resource scope stays attached to the account. Compatible business tools use the provider's published slug and schema; adding another one does not require an application handler. Generic Support execution is for authenticated private member conversations. Public channels have no provider executor. Requests for review do not execute an action. The Support database change `20261123130000_connector_support_direct_accounts.sql` must precede deploying this API.
+
+Business record names containing account or organization are not by themselves a capability veto. Business identifiers such as product and postal codes do not imply code execution. The API and migration `20261123155000_connector_business_identifiers.sql` retain checks on the rest of the operation; a product identifier does not authorize a code runner.
+
+After `20261123160000_connector_structured_query_policy.sql`, customer-delegated business queries are not denied by SQL just because the catalog slug contains `QUERY`. The transport accepts bounded scalar filters, not open query text. Account grants and tool selection still apply.
+
+Private Support direct calls require the member’s effective `can_use` **and** the assigned agent grant. Migration `20261123161000_connector_support_member_use.sql` checks both when reserving dispatch. A view-only member may propose one action on a review-enabled account; the approving manager must independently have use access. A proposal is not a dispatch or a durable grant.
+
+## Customer-delegated accounts (local, not deployed)
+
+`direct_bindings` is not a prerequisite for a manager-delegated private downstream account. The server pins the authenticated site and manager, completed authorization attempt, provider project, selected downstream account, toolkit, auth configuration and verified authentication scheme. New native OAuth and hosted API-key toolkits do not need a per-provider profile. The Composio project key authenticates transport only. The independent attestation path is retained for its original accounts and receipts; it is not synthesized for a customer delegation.
+
+A submitted project token remains bound to that exact project. An account pin alone does not authorize raw SQL, arbitrary code, a different project, or unrestricted administrative tools. Explicit agent grants, `all`/`selected`, revalidation, one dispatch reservation and private receipts remain unchanged. Existing unconsented accounts must reconnect; no automatic upgrade of an old authorization or receipt.
+
+## Instance contract
 
 After `20261123110000_connector_instance_member_policy.sql`, private Instance execution uses the signed-in member’s use grant, the site’s selected connection and its assistant/tool policy. A current site-isolated downstream binding is sufficient for supported generic actions; a second enrollment record is not required for a fresh turn. Explicit disables remain vetoes. Historical receipts keep their prior authority. Support uses the assigned agent and enforces its output policy for the audience; Support is not a gateway for arbitrary provider actions.
-
-For a host-selected, bound Supabase connection, `SUPABASE_RUN_READ_ONLY_QUERY` also supports an exact `SELECT 1` connectivity check without generic downstream data access. This calls the actual provider action and returns confirmation only. It is **not** a table read, a general SQL capability, a KPI report or evidence that a provider accepted a live production request. No caller-supplied SQL is sent to a shared administrative credential. A provider rejection is final; the runtime does not try a different credential.
 
 ## Decisions and ownership
 
@@ -22,7 +52,7 @@ registered for each catalog entry.
 | Dispatch and delivery | Reauthorize after describe, immediately before the external effect, before storage and when opening the result. A durable request claim prevents replay of the same call in a turn. Store a bounded redacted field/value preview; the model gets a receipt, not the provider's data, credential or raw diagnostics. |
 
 A direct connection delegates the **actual** permissions of the downstream
-credential. It must be independently verified as dedicated to this site's
+credential. For the attested path it must be independently verified as dedicated to this site's
 business resources and unable to widen that boundary on reauthorization.
 Verification is per **connection**, not a manual list of provider actions. A
 shared Composio project key is transport authentication, not the permission to
@@ -105,7 +135,7 @@ catalogue and tool policy and any explicit revocation, not a broader credential.
    the forward change, a pending first setup needs no second manager click.
 3. Deploy the matching API, worker and workspace builds as one cutover. The old
    runtime is **not** a fallback for missing enrollment or a failed provider call.
-   Without direct enrollment a connection cannot use the generic transport.
+   Without an authorized site-bound account a connection cannot use the generic transport.
    The retired scoped read is not a generic enrollment. Managers can
    select individual actions or `all`, enable, and revoke the direct policy.
 4. Validate with two disposable accounts of the same toolkit: a newly discovered
@@ -134,11 +164,9 @@ on extra token claims, MFA, headers or live session state. Only the identical
 receipt-storage acknowledgment may be retried; never retry an uncertain provider
 action. See [Ask admission and reconciliation](ASSISTANT_RESPONSE_LIFECYCLE.md).
 
-For an explicitly selected active account without direct admission, private Ask can still list provider catalog metadata when the member can use that account and its saved catalog, assistant and tool policies allow it. These candidates are `manual_only`, not calls or report suggestions. Discovery does not grant access to provider data. This rule is independent of toolkit or project identity and does not require a database migration.
-
 ## Limitations
 
-**Which checks can stop `call`?** The saved member/host/tool policy (`all` or `selected`) controls who can request the operation. Separately, this runtime currently requires a verified interactive turn, current isolation proof for that exact account and no explicit opt-out, a private supported auth configuration, and an immutable supported tool contract. It excludes control-plane actions, arbitrary code/SQL, network/file transports and credential or tenant selectors. These are implementation and isolation restrictions, **not** extra OAuth scopes or evidence of a provider denial. In particular, an authorized member alone cannot delegate a project-wide management PAT on the shared database. A provider rejection after dispatch is final for that account. No path should ask for a broader token to fix a local format error.
+**Which checks can stop `call`?** The saved member/host/tool policy (`all` or `selected`) controls who can request the operation. Separately, this runtime requires a verified interactive turn, current ordinary or attested authority for that exact account and no explicit opt-out, a private supported auth configuration, and an immutable supported tool contract. It excludes control-plane actions, arbitrary code/SQL, network/file transports and credential or tenant selectors. These are implementation and isolation restrictions, **not** extra OAuth scopes or evidence of a provider denial. In particular, an authorized member alone cannot delegate a project-wide management PAT on the shared database. A provider rejection after dispatch is final for that account. No path should ask for a broader token to fix a local format error.
 
 Optional display labels and unfamiliar effect tags are not access controls. The generic input validator accepts local `definitions` and `$defs`, closed zero-argument objects, and string formats `date`, `date-time`, `email` and `uuid`. It validates the declared arguments, never resolves external references, and does not inject report-specific arguments into provider calls.
 
@@ -146,10 +174,10 @@ Toolkits exposed only through custom MCP, automatic auth, proxies, workbenches,
 arbitrary code/SQL or implicit file loading are not generic business actions.
 A provider contract that cannot be validated or an output that cannot be safely
 shown is explicitly unavailable/limited, not an empty result. No assertion of
-execution coverage for every tool in Composio is made. A shared installation credential cannot satisfy independent workspace isolation proof. A private API key requires the same proof as any other credential; there is no special report exception. Never substitute a service key for a user’s account.
+execution coverage for every tool in Composio is made. A shared installation credential cannot satisfy independent workspace isolation proof. A private API key supplied by a manager can use customer-account authority without a resource attestation. A shared platform credential cannot be substituted. Never substitute a service key for a user’s account.
 
 This change replaces **execution**, not every provider's account setup. Existing
 OAuth configuration/verification, managed setup and the legacy PAT form remain
 separate. In particular `complete_auth` verifies a deferred OAuth exchange;
-an arbitrary API-key credential must not be adopted just because a callback says
+an arbitrary previously connected credential must not be adopted just because a callback says
 it is connected. Only a supported, verified connection can reach policy enrollment.

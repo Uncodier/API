@@ -70,7 +70,7 @@ export async function requireConnectorAgent(connector: Connector, agentId: strin
     .select('enabled,expires_at,revoked_at').eq('site_id', connector.site_id)
     .eq('connector_id', connector.id).eq('agent_id', agentId).abortSignal(deadline()).maybeSingle();
   if (error) connectorDatabaseError(error);
-  const usable = effectiveAgentGrant(connector, data);
+  const usable = effectiveAgentGrant(data);
   if (!usable && (!allowAbsent || data !== null)) throw new ConnectorError('ACCESS_DENIED', 'Connector use is not granted to this agent.', 403);
   const agent = await supabaseAdmin.from('agents').select('id').eq('id', agentId)
     .eq('site_id', connector.site_id).eq('status', 'active').abortSignal(deadline()).maybeSingle();

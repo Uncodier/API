@@ -13,6 +13,14 @@ const accountSchema = z.object({
   state: z.object({ authScheme: z.string().optional(), val: z.object({ scope: z.unknown().optional(), full: z.unknown().optional() }) }).optional(),
 });
 
+// Exact native service endpoints, never client URLs, host suffixes or proxy
+// targets. Unknown provider overrides fail closed, including on live recheck.
+const businessBases = new Map<string, readonly string[]>([
+  ['gmail', ['https://gmail.googleapis.com','https://gmail.googleapis.com/gmail/v1','https://www.googleapis.com/gmail/v1']],
+  ['googlecalendar', ['https://www.googleapis.com/calendar/v3']],
+  ['hubspot', ['https://api.hubapi.com']],
+]);
+
 function normalizeAccount(data: z.infer<typeof accountSchema>, readScopes = true) {
   // scope is provider-granted state, never the auth-config's requested scope ceiling.
   const rawScope = readScopes ? data.state?.val.scope : undefined;
@@ -24,9 +32,12 @@ function normalizeAccount(data: z.infer<typeof accountSchema>, readScopes = true
   const full = data.state?.val.full, resolved = data.data?.base_url;
   const hosted = (full === origin && (resolved === undefined || resolved === origin))
     || (full === 'http...' && resolved === origin);
+  const businessBase = resolved === undefined ? full : resolved;
   return {
     id: data.id, toolkitSlug: data.toolkit.slug, authConfigId: data.auth_config.id,
     // Project-scoped PAT dispatch requires a positive live origin/scheme proof. Never return the state or URL.
+    hostedBusinessOauth: data.state?.authScheme === 'OAUTH2' && typeof businessBase === 'string' &&
+      businessBases.get(data.toolkit.slug)?.includes(businessBase) === true && (full === undefined || full === 'http...' || full === businessBase),
     hostedSupabasePat: data.toolkit.slug === 'supabase' && data.state?.authScheme === 'API_KEY' && hosted,
     // Unreported grants are unknown, not proof of either an empty grant or permission.
     scopesKnown: rawScope != null, oauth2: data.state?.authScheme === 'OAUTH2', apiKeyAuth: data.state?.authScheme === 'API_KEY',

@@ -6,7 +6,6 @@ import { createComposioClient } from './composio-transport';
 import { compatibleReviewedTools } from './reviewed-tools';
 import { ConnectorError, connectorAccessMode, connectorToolAccessMode, isGrantCurrent, type ConnectorAgentGrant, type ConnectorMemberGrant } from './types';
 import { effectiveMemberGrant } from './grant-resolution';
-import { supportPublicationSchema } from './support-policy';
 
 const uuid = z.string().uuid();
 const instant = z.string().datetime({ offset: true }).nullable().optional();
@@ -26,7 +25,7 @@ export const accessPatchSchema = revision.extend({ members: z.array(member).max(
 const fullPolicy = revision.extend({
   ask_access: z.object({enabled:z.boolean(),expected_direct_revision:z.number().int().min(1).max(2_147_483_646)}).strict().optional(),
   catalog_reads: z.boolean().optional(),
-  support_publication: supportPublicationSchema.nullish(),
+  support_publication: z.null().optional(),
   tool_access_mode: z.enum(['all', 'selected']).default('selected'),
   allowed_tools: z.array(catalogToolId).max(100),
   allowed_hosts: z.array(z.enum(['assistant', 'direct'])).max(2),
@@ -130,9 +129,6 @@ export async function updateConnectorPolicy(userId: string, connectorId: string,
   const connector = await getVisibleConnector(body.site_id, userId, connectorId);
   const scope = { p_site_id: body.site_id, p_connector_id: connectorId, p_actor_id: userId, p_expected_revision: body.expected_revision };
   if (!('allowed_tools' in body)) return connectorMutation('connector_disable_catalog_reads', scope);
-  if (body.catalog_reads !== false && body.support_publication && connector.toolkit_slug !== 'gmail') {
-    throw new ConnectorError('INVALID_PUBLICATION', 'Only Gmail supports published support titles.', 400);
-  }
   // The full-body false overload compares every other field under the revision lock.
   // Skipping the remote catalog check there can only turn this single flag off.
   if (body.catalog_reads !== false && body.allowed_tools.length) {
@@ -142,7 +138,8 @@ export async function updateConnectorPolicy(userId: string, connectorId: string,
   const policyArgs = {
     ...scope, p_tool_access_mode: body.tool_access_mode, p_allowed_tools: body.allowed_tools,
     p_allowed_hosts: body.allowed_hosts, p_require_approval: body.require_approval, p_enabled: body.enabled,
-    p_support_publication: body.support_publication ?? null,
+    // Omission preserves an older publication for pending decisions. Only an explicit null clears it.
+    p_support_publication: body.support_publication === null ? null : (await getConnectorPolicy(body.site_id,connectorId)).support_publication ?? null,
     ...(body.catalog_reads === undefined ? {} : { p_catalog_reads: body.catalog_reads }),
   };
   if (!body.ask_access) return connectorMutation('connector_update_policy',policyArgs);

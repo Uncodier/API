@@ -16,7 +16,7 @@ export const REVIEWED_CONNECTOR_TOOLS: readonly ReviewedConnectorTool[] = [
   { slug: TABLE_TOOL, toolkit: 'supabase', description: 'List table names and their schemas in the connected Supabase project. Excludes views and system schemas; no row data.', domains: ['storage', 'developer'], category: 'infra', requiredScreens: ['applicationsDatabase'], requiredScopes: [DATABASE_READ] },
 ];
 
-// A new private action must never become public-channel requestable by default.
+// Historical approval snapshots only. New channel proposals use the provider catalog and explicit agent grants.
 export const conversationReviewSlugs = ['GMAIL_FETCH_EMAILS', 'HUBSPOT_LIST_CONTACTS'] as const;
 export const canRequestFromConversation = (slug: string) => conversationReviewSlugs.some(value => value === slug);
 

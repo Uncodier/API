@@ -31,6 +31,14 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
         else ownerToken = claim.token;
       } catch { return unavailable(); }
     }
+    // Only a verified private member host receives the execution tool. Channel review cannot dispatch.
+    const host = reusedCommandId ? undefined : input.connectorHost;
+    const audience = host && await host.resolve().catch(() => null);
+    const boundHost = audience && audience.siteId === effectiveSiteId && audience.agentId === effectiveAgentId &&
+      host.siteId === effectiveSiteId && host.agentId === effectiveAgentId &&
+      (audience.audience !== 'member' || audience.userId === effectiveUserId) ? host : undefined;
+    const connectorTools = !boundHost ? [] : audience.audience === 'member'
+      ? [supportConnectorTool, channelRequestTool] : [channelRequestTool];
     const command = CommandFactory.createCommand({
       task: 'create message',
       userId: effectiveUserId,
@@ -66,7 +74,7 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
       ],
       // Persist execution provenance outside the model-facing function schema.
       // The task endpoint validates the conversation's site and lead before insertion.
-      tools: [...buildCustomerSupportTools(effectiveSiteId), ...(input.connectorHost && !reusedCommandId ? [supportConnectorTool, channelRequestTool].map(tool => ({ type: 'function', function: tool })) : [])].map(tool => tool.function.name === 'CREATE_TASK'
+      tools: [...buildCustomerSupportTools(effectiveSiteId), ...connectorTools.map(tool => ({ type: 'function', function: tool }))].map(tool => tool.function.name === 'CREATE_TASK'
         && input.effectiveConversationId ? { ...tool, task_creation_context: {
           conversation_id: input.effectiveConversationId,
           lead_id: effectiveLeadId,
@@ -92,7 +100,7 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
       toolsModelType: 'openrouter'
     });
     
-    if (input.connectorHost && !reusedCommandId) attachSupportConnectorHost(command, input.connectorHost);
+    if (boundHost) attachSupportConnectorHost(command, boundHost);
 
     // Submit the command for processing
     const internalCommandId = reusedCommandId || await commandService.submitCommand(command);

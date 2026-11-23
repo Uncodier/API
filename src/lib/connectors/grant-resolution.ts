@@ -12,8 +12,6 @@ export function effectiveMemberGrant(connector: Connector, row: ConnectorMemberG
 }
 
 // Caller must also verify the actual agent is active in the connector's site.
-export function effectiveAgentGrant(connector: Connector, row: Pick<ConnectorAgentGrant, 'enabled' | 'expires_at' | 'revoked_at'> | null) {
-  return row === null
-    ? connectorAccessMode(connector) === 'workspace'
-    : row.enabled === true && isGrantCurrent(row);
+export function effectiveAgentGrant(row: Pick<ConnectorAgentGrant, 'enabled' | 'expires_at' | 'revoked_at'> | null) {
+  return row !== null && row.enabled === true && isGrantCurrent(row);
 }

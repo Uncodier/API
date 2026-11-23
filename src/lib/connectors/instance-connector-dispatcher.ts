@@ -3,12 +3,10 @@ import {parseConnectorToolRef, retiredReportRef} from './connector-ref';
 import type {ConnectorFilters} from './connector-discovery-types';
 import type {ConnectorContextResolver} from './host-context';
 import type {searchDirectTools} from './provider-direct-discovery';
-import {selectedCatalogAccount} from './selected-catalog-account';
 import {listDirectAccounts} from './provider-direct-policy';
 import {ConnectorError,type ConnectorContext} from './types';
 
-// Discovery may browse metadata without an execution grant. Describe and call
-// accept provider references only; neither has a fallback.
+// All operations use direct authority on the selected provider account.
 export function createInstanceConnectorDispatcher<D,R>(resolve:ConnectorContextResolver,interactive:(ctx:ConnectorContext)=>ConnectorContext,
   generic:{search:typeof searchDirectTools;describe:(name:string)=>Promise<D>;call:(name:string,input:unknown)=>Promise<R>}) {
   return {
@@ -20,13 +18,7 @@ export function createInstanceConnectorDispatcher<D,R>(resolve:ConnectorContextR
       if(ctx.connectorIdHint&&filters.connector_id&&ctx.connectorIdHint!==filters.connector_id) throw new ConnectorError('NOT_FOUND','This connection is not selected.',404);
       const account=filter.connector_id??ctx.connectorIdHint;
       const narrow=account?{...ctx,connectorIdHint:account}:ctx;
-      // Only a missing direct grant on an explicitly selected account can lead to metadata-only browsing.
-      // A catalog-only target never grants execution.
-      const targets=await listDirectAccounts(narrow).catch(async error=>{
-        if(!account || !(error instanceof ConnectorError) || error.code!=='DIRECT_POLICY_REQUIRED')throw error;
-        return [await selectedCatalogAccount(narrow,account,ctx.connectorIdHint===account)];
-      });
-      return generic.search(ctx,filter,targets);
+      return generic.search(narrow,filter,await listDirectAccounts(narrow));
     },
     async describe(name:string) {
       parseConnectorToolRef(name);

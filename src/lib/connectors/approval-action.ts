@@ -5,6 +5,7 @@ import { ConnectorError, type AuthorizedConnector } from './types';
 
 const uuid = z.string().uuid();
 export const storedAction = z.object({
+  execution: z.literal('provider').optional(), // Absent on historical reviewed actions.
   source: approvalSource.optional(),
   origin: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('interactive'), instance_id: uuid, user_id: uuid }).strict(),

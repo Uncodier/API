@@ -4,8 +4,9 @@ import { SUPPORT_CONNECTOR_TOOL } from './channel-tool-names';
 import { approvalSource } from './approval-source';
 const uuid = z.string().uuid();
 const base = { siteId: uuid, conversationId: uuid, agentId: uuid, idempotencyKey: z.string().min(1).max(256), source: approvalSource.optional() };
+export const memberSupportScope = z.object({ ...base, audience: z.literal('member'), userId: uuid }).strict();
 export const supportScope = z.discriminatedUnion('audience', [
-  z.object({ ...base, audience: z.literal('member'), userId: uuid }).strict(),
+  memberSupportScope,
   z.object({ ...base, audience: z.literal('verified'), leadId: uuid }).strict(),
   z.object({ ...base, audience: z.literal('anonymous') }).strict(),
 ]);
@@ -24,7 +25,7 @@ export const supportInput = z.discriminatedUnion('action', [
 
 export const supportConnectorTool = {
   name: SUPPORT_CONNECTOR_TOOL,
-  description: 'Discover authorized support operations using list or search. Describe one exact name, then call with the returned version, schema_hash and arguments. Never invent identifiers. For status pending, tell the requester in their language that team review was requested and the action has not run. For unavailable, do not claim a request was delivered. When result_omitted is true, report completion only; do not infer contents or retry through another account. Never invent a result or promise a response time.',
+  description: 'Discover authorized support operations using list or search. Do not call manual_only entries. Describe one exact name, then call with the returned version, schema_hash and arguments. Never invent identifiers. Direct execution requires both member and assigned agent use access. A view-only member may explicitly request one-call human review using the separate proposal tool when available. On denial, do not retry or switch accounts. On outcome_unconfirmed, do not retry or claim completion. When result_omitted is true, report completion only; do not infer contents or retry through another account. Never invent a result or promise a response time.',
   parameters: { type: 'object', additionalProperties: false, required: ['action'], properties: {
     action: { type: 'string', enum: ['list', 'search', 'describe', 'call'] },
     query: { type: 'string', maxLength: 100, description: 'Search only.' },

@@ -1,9 +1,10 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import {connectedAccountReady, projectActionAllowed, projectMetadataAction} from './provider-direct-authority';
 import type { DirectAuthorizedConnector } from './provider-direct-policy';
 import { readTokenProviderBinding } from './provider-project-binding';
-import { verifyDirectAccountIdentity } from './composio-accounts';
+import { verifyAccountIdentity, verifyDirectAccountIdentity } from './composio-accounts';
 import { getToolkit } from './composio-catalog';
 import { createComposioClient, invalidProviderResponse, validateJson, type ComposioClient } from './composio-transport';
 import { inputValue, providerValue, safeText, toolkitSlug, toolSlug } from './composio-validation';
@@ -35,7 +36,7 @@ function changed(): never {
   throw new ConnectorError('CONNECTOR_SCHEMA_CHANGED', 'The pinned action, account or authorization changed. Describe it again.', 409);
 }
 function notReady(): never {
-  throw new ConnectorError('CONNECTOR_NOT_READY', 'An active, verified and independently isolated account is required.', 409);
+  throw new ConnectorError('CONNECTOR_NOT_READY', 'The selected provider account could not be authorized.', 409);
 }
 function current(expiresAt: string) {
   if (!(Date.parse(expiresAt) > Date.now())) throw new ConnectorError('ACCESS_CHANGED', 'The isolated account authorization expired.', 403);
@@ -45,8 +46,11 @@ function current(expiresAt: string) {
  * identity before sending a site credential, even for metadata-only lookups. */
 function verifyLocal(target: DirectAuthorizedConnector, credential: DirectCredential, slug: string) {
   const { connector:c, provider:p, directProof:d, policy } = target;
-  if (!d || !z.string().uuid().safeParse(d.attestationId).success || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(d.resourceBoundary) ||
-    typeof d.resourceBoundary !== 'string' || !d.siteId || d.siteId !== c.site_id || d.connectorId !== c.id || d.providerId !== p.id || d.projectId !== p.project_id ||
+  if (!d) notReady();
+  if (d.kind === 'connected_account') {
+    if (!z.string().uuid().safeParse(d.authorizationId).success || !connectedAccountReady(d,c,target.localProjectRef)) notReady();
+  } else if (!z.string().uuid().safeParse(d.attestationId).success || typeof d.resourceBoundary !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(d.resourceBoundary)) notReady();
+  if (!d.siteId || d.siteId !== c.site_id || d.connectorId !== c.id || d.providerId !== p.id || d.projectId !== p.project_id ||
     d.accountId !== c.provider_account_id || d.toolkitSlug !== c.toolkit_slug || d.authConfigId !== c.auth_config_id || d.credentialRevision !== credential.revision ||
     target.requestOnly || c.provider_id !== p.id || c.provider_project_id !== p.project_id || p.site_id !== c.site_id || p.provider_user_id !== c.site_id ||
     p.provider !== 'composio' || p.status !== 'active' || p.credential_revision !== credential.revision || !credential.revision ||
@@ -56,10 +60,10 @@ function verifyLocal(target: DirectAuthorizedConnector, credential: DirectCreden
     !(policy.tool_access_mode === 'all' || (policy.tool_access_mode === 'selected' && policy.allowed_tools?.includes(slug)))) {
     throw new ConnectorError('CONNECTOR_TOOL_DENIED', 'The current policy does not allow direct execution of this action.', 403);
   }
-  current(d.expiresAt);
-  if (c.supabase_project_ref && (!/^[a-z]{20}$/.test(c.supabase_project_ref) || c.supabase_project_ref !== d.resourceBoundary ||
+  if (d.kind!=='connected_account') current(d.expiresAt);
+  if (d.kind!=='connected_account' && c.supabase_project_ref && (!/^[a-z]{20}$/.test(c.supabase_project_ref) || c.supabase_project_ref !== d.resourceBoundary ||
     !target.localProjectRef || !/^[a-z]{20}$/.test(target.localProjectRef) || c.supabase_project_ref === target.localProjectRef)) notReady();
-  if (!directActionNameSafe(c.toolkit_slug, slug)) unsupportedDirectTool();
+  if (!directActionNameSafe(c.toolkit_slug, slug) || !projectActionAllowed(c.toolkit_slug,slug,c.supabase_project_ref,d.kind==='connected_account',target.localProjectRef)) unsupportedDirectTool();
 }
 
 async function prepare(target: DirectAuthorizedConnector, credential: DirectCredential, client: ComposioClient, slug: string, version?: string) {
@@ -74,25 +78,54 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
   const tool = providerValue(metadataSchema, raw);
   if (tool.slug !== slug || tool.toolkit.slug !== connector.toolkit_slug || (version !== undefined && version !== tool.version)) changed();
   const {parameters, injected} = directParameterPlan(tool.input_parameters, connector.supabase_project_ref ?? undefined);
-  // For a database-bound connection, a project-management action may not select
-  // a different project or enumerate all projects. Never infer a project from a slug/argument.
-  if (connector.supabase_project_ref && /(?:^|_)PROJECTS?(?:_|$)/.test(slug.slice(connector.toolkit_slug.length + 1)) &&
-    !Object.hasOwn(injected,'project_ref') && !Object.hasOwn(injected,'ref')) unsupportedDirectTool();
+  // For delegated QUERY actions, use the published argument contract instead of a SQL word veto.
+  // Do not turn a free-text query interpreter into a catalog search capability.
+  if (directProof.kind==='connected_account' && directProof.authScheme && slug.slice(connector.toolkit_slug.length+1).split('_').includes('QUERY')) {
+    const fields=parameters.properties as Record<string, Record<string,unknown>>;
+    if (!fields || Object.values(fields).some(field=>
+      !['boolean','integer','number'].includes(String(field.type)) &&
+      !(field.type==='string' && (['date','date-time','uuid'].includes(String(field.format)) || Array.isArray(field.enum) || typeof field.const==='string')))) {
+      throw new ConnectorError('SCHEMA_UNSUPPORTED','This connection supports structured query filters, not an open query input. No execution request was sent.',409);
+    }
+  }
+  const project = connector.supabase_project_ref;
+  const projectMetadataOnly = Boolean(project && directProof.kind==='connected_account' && projectMetadataAction(connector.toolkit_slug,slug));
+  const effect = directEffect(effectTags.parse(tool.tags), connector.toolkit_slug, slug);
+  if (project) {
+    const fields=['project_ref','ref'].filter(k=>injected[k]===project);
+    if (fields.length!==1 || (directProof.kind==='connected_account' &&
+        (!Array.isArray(tool.input_parameters.required) || !tool.input_parameters.required.includes(fields[0])))) unsupportedDirectTool();
+    if (projectMetadataOnly) {
+      // Inspect the underlying provider tool, not just its narrowed public projection.
+      const {properties,required}=tool.input_parameters;
+      if (!properties || typeof properties!=='object' || Object.keys(properties).length!==1 ||
+          !Array.isArray(required) || required.length!==1 || required[0]!==fields[0] || effect!=='read') unsupportedDirectTool();
+    }
+  }
   const toolkit = await getToolkit(client, connector.toolkit_slug);
   if (toolkit.toolkit_type !== 'api' || toolkit.enabled === false) unsupportedDirectTool();
-  const account = await verifyDirectAccountIdentity(client, {accountId:connector.provider_account_id, userId:provider.provider_user_id,
+  const identify=directProof.kind==='connected_account' && directProof.authScheme===undefined ? verifyAccountIdentity : verifyDirectAccountIdentity;
+  const account = await identify(client, {accountId:connector.provider_account_id, userId:provider.provider_user_id,
     toolkitSlug:connector.toolkit_slug, authConfigId:connector.auth_config_id});
-  // A credential scheme is not a grant or a denial. The exact enrolled account,
-  // resource boundary, project and tool policy have already been verified.
+  // Never substitute a credential from another connected account or infer provider access from the tool name.
+  if (directProof.kind==='connected_account' && directProof.authScheme===undefined) {
+    const saved=connector.granted_scopes;
+    // The completed consent identifies a business account only for its original narrow grant.
+    // Never infer grants from toolkit metadata or a missing scope inventory after reauthorization.
+    if (!account.oauth2 || !account.hostedBusinessOauth || toolkit.type!=='native' || !account.scopesKnown || !saved.length ||
+        account.scopes.length!==saved.length || saved.some(scope=>!account.scopes.includes(scope))) notReady();
+  }
+  if (directProof.kind==='connected_account' && directProof.authScheme &&
+      !(directProof.authScheme==='API_KEY' ? account.apiKeyAuth : account.oauth2)) notReady();
+  if (project && connector.toolkit_slug==='supabase' && !account.hostedSupabasePat) notReady();
   if (account.accountType !== 'PRIVATE' || (!account.oauth2 && !account.apiKeyAuth)) notReady();
-  current(directProof.expiresAt);
+  if (directProof.kind!=='connected_account') current(directProof.expiresAt);
   // Only the app decides its grants. The pin binds the execution contract to
   // this verified authority; it is not a cache of provider permission reports.
-  const effect = directEffect(effectTags.parse(tool.tags), toolkit.slug, slug);
   // Projection must not expose server secrets/bindings even if upstream metadata
   // repeats them inside a seemingly ordinary field name or enum literal.
   const visible = JSON.stringify(parameters);
-  if ([credential.apiKey, directProof.resourceBoundary, connector.provider_account_id, connector.auth_config_id].some(privateValue =>
+  if ([credential.apiKey, project, directProof.kind==='connected_account' ? directProof.authorizationId : directProof.resourceBoundary, connector.provider_account_id, connector.auth_config_id].some(privateValue =>
     privateValue && (visible.includes(JSON.stringify(privateValue)) || (privateValue.length >= 12 && visible.includes(privateValue))))) unsupportedDirectTool();
   const schemaHash = hashConnectorSchema({ mode:'direct-account-v2', slug, toolkit:toolkit.slug, version:tool.version,
     input:hashConnectorSchema(directSchemaContract(tool.input_parameters)),
@@ -129,7 +162,7 @@ export async function executeDirectTool(target: DirectAuthorizedConnector, crede
     assertDirectArguments(descriptor.parameters, pin.arguments);
     const body = {connected_account_id:accountId, user_id:userId, version:descriptor.version, arguments:{...pin.arguments,...injected}};
     await beforeDispatch();
-    current(snapshot.directProof.expiresAt);
+    if (snapshot.directProof.kind!=='connected_account') current(snapshot.directProof.expiresAt);
     dispatched = true;
     const response = await client.request(`/tools/execute/${slug}`, {method:'POST', body});
     // A provider hint does not independently establish absence of an effect. Never
@@ -137,6 +170,16 @@ export async function executeDirectTool(target: DirectAuthorizedConnector, crede
     assertProviderToolSucceeded(response, {effect:'unknown', toolkit:snapshot.connector.toolkit_slug});
     const success = providerValue(z.object({successful:z.literal(true), error:z.null(), data:z.unknown()}), response, true);
     if (!Object.hasOwn(success, 'data')) invalidProviderResponse(true);
+    if (snapshot.directProof.kind==='connected_account' && snapshot.directProof.boundProjectRef && projectMetadataAction(snapshot.connector.toolkit_slug,slug)) {
+      // Even metadata tools may return organization details, URLs or unrelated fields.
+      const ref=snapshot.directProof.boundProjectRef;
+      const result=z.object({ref:z.literal(ref),id:z.literal(ref)}).safeParse(success.data);
+      if (!result.success) invalidProviderResponse(true);
+      // Release only a small status vocabulary, never free-form project names,
+      // organization IDs, arbitrary nested records, or URLs.
+      const status=z.object({status:z.enum(['ACTIVE_HEALTHY','INACTIVE','PAUSED','RESTORING'])}).safeParse(success.data);
+      return {data:{project_verified:true,...(status.success && {status:status.data.status})}};
+    }
     return {data:success.data};
   } catch (err) {
     if (dispatched) {

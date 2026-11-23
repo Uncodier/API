@@ -26,6 +26,22 @@ describe('Composio bound account lifecycle adapter', () => {
     await expect(getAccount(client, 'ca_one')).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
   });
 
+  it('recognizes only exact hosted business services without contradictory overrides', async () => {
+    for (const [kit,base,full,scheme,allowed] of [
+      ['gmail','https://gmail.googleapis.com/gmail/v1',undefined,'OAUTH2',true],
+      ['googlecalendar','https://www.googleapis.com/calendar/v3','http...','OAUTH2',true],
+      ['hubspot',undefined,'https://api.hubapi.com','OAUTH2',true],
+      ['gmail',undefined,undefined,'OAUTH2',false],['hubspot',undefined,'http...','OAUTH2',false],
+      ['hubspot','https://api.hubapi.com.evil.example',undefined,'OAUTH2',false],
+      ['hubspot','https://api.hubapi.com','https://evil.example','OAUTH2',false],
+      ['hubspot','https://api.hubapi.com',undefined,'API_KEY',false],
+      ['supabase','https://api.supabase.com',undefined,'OAUTH2',false],
+    ]) {
+      request.mockResolvedValue({...accountFixture(),toolkit:{slug:kit},data:{base_url:base},state:{authScheme:scheme,val:{full}}});
+      expect((await getAccount(client,'ca_one')).hostedBusinessOauth).toBe(allowed);
+    }
+  });
+
   it('requires exact ID, toolkit, owner, config, active status and private account', async () => {
     const raw = accountFixture();
     for (const changed of [

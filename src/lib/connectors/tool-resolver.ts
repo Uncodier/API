@@ -123,7 +123,7 @@ export function withConnectorResolver(native: RoutedTool, tools: RoutedTool[], s
     const hint = failure ? agentRecovery(failure).message : !connectorTools.length && !external.next_cursor
       ? accountOnly ? 'No eligible match for this origin and account selection. Do not substitute another tool or account.'
         : 'No matching provider tool was found on a connection available to Ask. This is not a query result or proof of missing provider permissions.'
-      : 'Follow connector_next_cursor across accounts before deciding a match is unique. If the intended account is unclear, ask the user. Only describe candidates marked describe_required. A manual_only entry is catalog information, not available for execution in Ask. Never switch account or tool origin.';
+      : 'Follow connector_next_cursor across accounts before deciding a match is unique. If the intended account is unclear, ask the user. Only describe candidates marked describe_required. A manual_only tool exists in Composio but cannot execute on this connection; do not try another account. Never switch account or tool origin.';
     const merged = [...nativeTools.slice(0, args.action === 'search' ? 10 - connectorTools.length : nativeTools.length), ...connectorTools];
     return { ...result, ...(accountOnly && !external.success && { success: false }), tools: merged, count: merged.length,
       connector_status: external.success ? (failure ? 'partial' : 'available') : 'unavailable',

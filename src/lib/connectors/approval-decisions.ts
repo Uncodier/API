@@ -3,6 +3,7 @@ import { requireConnectorSiteAccess, requireConnectorAgent, resolveManagerAction
 import { assertScopes, screenAllowed } from './action-policy';
 import { reviewContext, type reviewerClient } from './approval-context';
 import { approvalBinding, storedAction, unavailable, type ApprovalRow } from './approval-action';
+import { providerApproval } from './provider-approval-decision';
 import { decideRow, finishRow, getApproval, pendingRows } from './approval-store';
 import { requireConversationAgent, requireSupportOrigin } from './approval-proposals';
 import { assistantConnectorContext } from './host-context';
@@ -18,6 +19,7 @@ async function actionable(row: ApprovalRow, siteId: string, userId: string) {
   const parsed = storedAction.safeParse(row.action);
   if (!parsed.success) throw unavailable();
   const action = parsed.data;
+  if (action.execution === 'provider') return providerApproval(row, action, siteId, userId);
   const context: ConnectorContext = { siteId, userId, host: 'assistant', agentId: row.agent_id };
   if (!row.agent_id) throw unavailable();
   const check = async (ctx: ConnectorContext, manager = false) => {
@@ -58,7 +60,7 @@ async function actionable(row: ApprovalRow, siteId: string, userId: string) {
   if (action.origin.kind === 'channel_public' || action.origin.kind === 'support_publication') {
     await requireConnectorAgent(current.access.connector, row.agent_id, action.origin.kind === 'channel_public');
   }
-  return { ...current, action };
+  return { mode: 'reviewed' as const, ...current, action };
 }
 
 export async function listConnectorApprovals(siteId: string, userId: string, db?: ReturnType<typeof reviewerClient>) {
@@ -101,34 +103,8 @@ export async function decideConnectorApproval(siteId: string, id: string, userId
   if (decision === 'reject') return { id, status: 'rejected' as const };
   let privateResult: { result: unknown } | { result_omitted: true };
   try {
-    const { access, tool, action } = await actionable(row, siteId, userId);
-    const credential = await loadConnectorCredential(siteId);
-    if (credential.revision !== access.provider.credential_revision) throw unavailable();
-    const target = { connector: access.connector, provider: access.provider, credential, toolSlug: tool.slug, toolkitVersion: action.version };
-    const descriptor = await describeConnectorTool(target);
-    if (descriptor.slug !== tool.slug || descriptor.toolkitSlug !== tool.toolkit || descriptor.toolkitVersion !== action.version ||
-      descriptor.schemaHash !== action.schema_hash || descriptor.scopeRequirements !== null) throw unavailable();
-    assertScopes(access, tool, descriptor.scopes);
-    validateConnectorArguments(action.arguments);
-    validateConnectorInput(reviewedInputSchema(tool.slug, descriptor.inputSchema), action.arguments);
-    assertReviewedInputLimits(tool.slug, action.arguments);
-    const result = await executeConnectorTool({ ...target, input: action.arguments, allowedTools: [tool.slug], schemaHash: action.schema_hash,
-      requiredScopes: tool.requiredScopes, beforeDispatch: async () => {
-        await requireConnectorSiteAccess(siteId, userId, true);
-        await actionable(row, siteId, userId);
-        if (!(Date.parse(row.expires_at) > Date.now())) throw unavailable();
-      } });
-    // Only the winning authenticated manager can receive the already redacted read.
-    // No command, audit, conversation or approval row receives provider data.
-    let output = result.data;
-    if (action.origin.kind === 'support_publication') {
-      const { publishedGmailResult } = await import('./support-public-gmail');
-      const labels = action.arguments.label_ids;
-      if (!Array.isArray(labels) || labels.length !== 1 || typeof labels[0] !== 'string') throw unavailable();
-      output = publishedGmailResult(result, labels[0]);
-    }
-    privateResult = Buffer.byteLength(JSON.stringify(output)) <= 32 * 1024
-      ? { result: output } : { result_omitted: true };
+    const current = await actionable(row, siteId, userId);
+    privateResult = current.mode === 'provider' ? await current.execute() : await executeReviewed(row, siteId, userId, current);
   } catch (error) {
     await finishRow(siteId, id, userId, 'failed');
     throw error;
@@ -138,4 +114,36 @@ export async function decideConnectorApproval(siteId: string, id: string, userId
   await requireConnectorSiteAccess(siteId, userId, true);
   await actionable(row, siteId, userId);
   return { id, status: 'completed' as const, ...privateResult };
+}
+
+async function executeReviewed(row: ApprovalRow, siteId: string, userId: string,
+  current: Extract<Awaited<ReturnType<typeof actionable>>, { mode: 'reviewed' }>) {
+  const { access, tool, action } = current;
+  const credential = await loadConnectorCredential(siteId);
+  if (credential.revision !== access.provider.credential_revision) throw unavailable();
+  const target = { connector: access.connector, provider: access.provider, credential, toolSlug: tool.slug, toolkitVersion: action.version };
+  const descriptor = await describeConnectorTool(target);
+  if (descriptor.slug !== tool.slug || descriptor.toolkitSlug !== tool.toolkit || descriptor.toolkitVersion !== action.version ||
+    descriptor.schemaHash !== action.schema_hash || descriptor.scopeRequirements !== null) throw unavailable();
+  assertScopes(access, tool, descriptor.scopes);
+  validateConnectorArguments(action.arguments);
+  validateConnectorInput(reviewedInputSchema(tool.slug, descriptor.inputSchema), action.arguments);
+  assertReviewedInputLimits(tool.slug, action.arguments);
+  const result = await executeConnectorTool({ ...target, input: action.arguments, allowedTools: [tool.slug], schemaHash: action.schema_hash,
+    requiredScopes: tool.requiredScopes, beforeDispatch: async () => {
+      await requireConnectorSiteAccess(siteId, userId, true);
+      await actionable(row, siteId, userId);
+      if (!(Date.parse(row.expires_at) > Date.now())) throw unavailable();
+    } });
+  // Only the winning authenticated manager can receive the already redacted read.
+  // No command, audit, conversation or approval row receives provider data.
+  let output = result.data;
+  if (action.origin.kind === 'support_publication') {
+    const { publishedGmailResult } = await import('./support-public-gmail');
+    const labels = action.arguments.label_ids;
+    if (!Array.isArray(labels) || labels.length !== 1 || typeof labels[0] !== 'string') throw unavailable();
+    output = publishedGmailResult(result, labels[0]);
+  }
+  return Buffer.byteLength(JSON.stringify(output)) <= 32 * 1024
+    ? { result: output } : { result_omitted: true as const };
 }
