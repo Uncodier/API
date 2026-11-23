@@ -126,7 +126,8 @@ Connected accounts in private Ask:
 - For external app tasks (for example, list calendar events or update a CRM record), use tools search/list with tool_origin="provider". Use short public action terms, not customer data. A provider tool is connector:<id>:<SLUG>.
 - If the account is unclear, follow connector_next_cursor even on empty pages. If multiple accounts fit, ask which account to use (toolkit and account_label, or the account picker if labels collide). Do not pick the first. Use the full local connector_id for routing, not the label.
 - Describe the exact returned reference, check its origin and account, and call only that reference with its pinned version and schema. Keep the requested data source and scope. Never substitute a native tool or switch accounts after a denial or no match.
-- All tools is the saved Makinari tool policy, not the provider credential's permission to read or write a resource. A private receipt is a link for the user, not data you can summarize. Do not replay an unconfirmed call.`;
+- All tools is the saved Makinari tool policy, not the provider credential's permission to read or write a resource. Answer from the facts in the tool's result, when present. A returned count is for that response, not necessarily the whole dataset. Respect coverage limits.
+- Provider calls do not save a private record by default. If a private record or viewer link is useful for the task, set save_record: true in the call envelope beside version, schema_hash and arguments. Offer a link only if the tool returned it. Do not replay a call to save it afterward or to recover an unconfirmed outcome.`;
     if (context.connectorIdHint) {
       // Never insert a connector display name, provider identifier or malformed selection in a prompt.
       if (context.connectorIdHint.length === 36 && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(context.connectorIdHint)) {

@@ -71,12 +71,15 @@ it('keeps legacy database error behavior without strict mode', async () => {
   await expect(createAssistantOnStepHandler('instance', 'site', 'user', 'openrouter')(step())).resolves.toBeUndefined();
 });
 
-it.each(['tools','use_composio_tools'])('omits private connector arguments from shared log payload, message and reasoning for %s',async toolName=>{
+it.each(['tools','use_composio_tools'])('omits private connector arguments and result from shared tool logs for %s',async toolName=>{
   const text=randomBytes(24).toString('hex');
   const args={action:toolName==='tools'?'call':'execute',...(toolName==='tools'?{name:'connector:private'}:{action_name:'connector:private'}),thought_process:text,args:JSON.stringify({arguments:{body:text}})};
-  await handler()({text:'',toolCalls:[{id:'stable',toolName,args}],toolResults:[{toolCallId:'stable',result:{success:true,receipt:{status:'private_result_ready'}}}]});
+  const result={success:true,receipt:{status:'private_result_ready'},result:{returned_count:17}};
+  await handler()({text:'',toolCalls:[{id:'stable',toolName,args}],toolResults:[{toolCallId:'stable',result}]});
   expect(writes).toHaveLength(2);expect(writes[1].tool_args).toEqual({action:'call',private_arguments:true,tool_origin:'provider'});
+  expect(writes[1].tool_result).toEqual({success:true,operation_outcome:'passed'});
   expect(JSON.stringify(writes)).not.toContain(text);expect(args.thought_process).toBe(text);
+  expect(result.result).toEqual({returned_count:17});
 });
 it('writes only origin, operation and outcome for private discovery and reports while retaining native sibling diagnostics', async () => {
   const secret = randomBytes(24).toString('hex');

@@ -53,7 +53,29 @@ registered for each catalog entry.
 | Direct policy | Current nonanonymous direct Ask session, parent owned by the user, the signed-in member’s connector-use grant, allowed host, local/account/provider state, exact resource binding and no explicit opt-out. The same-site active prompt agent is pinned to the turn, **not** a second connector-grant principal. `all` or exact `selected` (empty means none). |
 | Discovery | Query only admitted accounts' provider catalogs. Short bounded pages, no user search text or account secrets in provider search parameters. Domains are navigation metadata, not authorization. |
 | Transport | Fetch the actual action and input schema, verify the exact toolkit, private downstream account and auth configuration. Pin the live provider version/schema to this connection. Validate declared arguments without credential/account/project substitution or local file fetching/code evaluation. Provider tools may execute SQL, code, file and network operations within their actual permissions. Do not reconstruct data access from a list of OAuth scope names. |
-| Dispatch and delivery | Reauthorize after describe, immediately before the external effect, before storage and when opening the result. A durable request claim prevents replay of the same call in a turn. Store a bounded redacted field/value preview; the model gets a receipt, not the provider's data, credential or raw diagnostics. |
+| Dispatch and delivery | Reauthorize after describe, before dispatch, before releasing facts and when opening a saved result. A durable request claim prevents replay regardless of whether a record is saved. The live model receives typed result facts when available, never the owner-only preview, provider envelope, credentials or raw diagnostics. |
+
+An Ask call returns `result` on success when model-readable facts are available, and
+`result_omitted: true` otherwise. Generic actions expose only explicit top-level
+`count`, `total`, `total_count` and `has_more` of the expected types. For
+`SUPABASE_LIST_TABLES`, Ask gets `returned_count` and a coverage note from the
+recognized inventory, not table names, rows or diagnostics. A partial response
+or schema discovery fallback is not a project-wide total; an unrecognized inventory
+is not zero. Tool replies are still omitted
+from shared tool logs and recovery checkpoints; this does not change Support,
+approval, reconnect or dispatch permissions.
+
+No private report is created by default. To request one for this call, set the
+optional boolean `save_record: true` beside `version`, `schema_hash` and `arguments`.
+It does not enter provider arguments or the dispatch digest. A successful save adds
+`receipt.url` for the same owner-only viewer. If saving cannot be confirmed, return
+`record_status: "unconfirmed"` and any available facts only after fresh release
+authorization. Never repeat the provider action to get a link afterward.
+
+Apply `20261123172000_connector_optional_result_records.sql` before deploying the
+matching Ask API/workers. It installs the no-report release check: the original
+claim and authenticated parent visibility are still checked, without a report write,
+retention cleanup, or per-owner report lock. Existing private links are unchanged.
 
 A direct connection delegates the **actual** permissions of the downstream
 credential. For the attested path it must be independently verified as dedicated to this site's

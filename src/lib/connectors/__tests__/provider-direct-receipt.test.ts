@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {claimDirectDispatch,storeDirectResult} from '../provider-direct-receipt';
+import {claimDirectDispatch,confirmDirectResultRelease,storeDirectResult} from '../provider-direct-receipt';
 import {supabaseAdmin} from '@/lib/database/supabase-client';
 import {connectorFixture,providerFixture,secret} from './composio-fixtures';
 
@@ -13,6 +13,17 @@ const tool='CRM_PATCH_DEAL',v='20261120_00',hash=secret(),digest=secret(),claim=
 const rpc=supabaseAdmin.rpc as jest.Mock;
 const reply=(data:unknown,error:unknown=null)=>rpc.mockReturnValueOnce({abortSignal:async()=>({data,error})});
 beforeEach(()=>rpc.mockReset());
+it('acknowledges release against the existing claim only, with no payload and no report RPC',async()=>{
+  reply(true);
+  await expect(confirmDirectResultRelease(claim)).resolves.toBeUndefined();
+  expect(rpc.mock.calls).toEqual([['confirm_connector_result_release',{p_claim_id:claim}]]);
+});
+it.each([[false,null,'DIRECT_RESULT_UNCONFIRMED'],[null,{code:'42501'},'ACCESS_CHANGED']] as const)(
+  'does not release a result when confirmation is %j / %j',async(data,error,code)=>{
+    reply(data,error);
+    await expect(confirmDirectResultRelease(claim)).rejects.toMatchObject({code});
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
 it('does not persist argument values in claims; binds both SQL calls to the exact turn, account, policy epoch and claim',async()=>{
   reply(claim);reply(receipt);
   const r=await claimDirectDispatch(ctx,target,tool,v,hash,digest);

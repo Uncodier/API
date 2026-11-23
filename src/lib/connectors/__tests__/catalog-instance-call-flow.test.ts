@@ -113,6 +113,10 @@ it.each(['all','selected'] as const)('dispatches a new %s-mode action on the cho
       expect(paramsForActor(args)).toEqual([ctx.siteId,ctx.userId,ctx.instanceId,ctx.agentId]);
       return {abortSignal:async()=>({data:[dbRow],error:null})};
     }
+    if(name==='confirm_connector_result_release') {
+      expect(args).toEqual({p_claim_id:receiptId});
+      return {abortSignal:async()=>({data:true,error:null})};
+    }
     if(name==='claim_connector_account_dispatch' || name==='store_connector_account_result') {
       expect(args).toMatchObject({p_tool:slug,p_request_id:ctx.requestId,p_authorization_id:dbRow.connection_attempt_id});
       return {abortSignal:async()=>({data:receiptId,error:null})};
@@ -130,7 +134,8 @@ it.each(['all','selected'] as const)('dispatches a new %s-mode action on the cho
       const payload=JSON.parse(String(init.body));
       expect(payload).toMatchObject({user_id:siteId,connected_account_id:account.id,version:tool.version,arguments:{limit:2}});
       dispatches++;
-      return jsonResponse(dispatches===1?{successful:false,error:apiKey,data:{status_code:403}}:{successful:true,error:null,data:{items:[{id:privateRow}]}});
+      return jsonResponse(dispatches===1?{successful:false,error:apiKey,data:{status_code:403}}:
+        {successful:true,error:null,data:{items:[{id:privateRow}],count:1,has_more:true}});
     }
     throw new Error('Unexpected offline request');
   });
@@ -148,9 +153,18 @@ it.each(['all','selected'] as const)('dispatches a new %s-mode action on the cho
   // Separate explicit user operation, not automatic retry after a denial.
   ctx.requestId=randomUUID();
   const ok=await router.execute({action:'call',name,args});
-  expect(ok).toEqual({success:true,receipt:{status:'private_result_ready',url:`/connectors/results/${receiptId}`},guidance:expect.stringContaining('cannot inspect or summarize')});
+  expect(ok).toEqual({success:true,result:{count:1,has_more:true},
+    guidance:expect.stringContaining('Answer using the result facts')});
   expect(JSON.stringify(ok)).not.toContain(String(privateRow)); expect(JSON.stringify(ok)).not.toContain(apiKey);
-  expect(mockRpc).toHaveBeenCalledWith('store_connector_account_result',expect.objectContaining({p_user_id:ctx.userId,
-    p_report:expect.objectContaining({rows:[['$.items[0].id',String(privateRow)]]})}));
+  expect(mockRpc).not.toHaveBeenCalledWith('store_connector_account_result',expect.anything());
+  expect(mockRpc).toHaveBeenCalledWith('confirm_connector_result_release',{p_claim_id:receiptId});
   expect(dispatches).toBe(2);
+
+  ctx.requestId=randomUUID();
+  const saved=await router.execute({action:'call',name,args:JSON.stringify({...JSON.parse(args),save_record:true})});
+  expect(saved).toMatchObject({success:true,result:{count:1,has_more:true},receipt:{status:'private_result_ready',url:`/connectors/results/${receiptId}`}});
+  expect(JSON.stringify(saved)).not.toContain(String(privateRow)); expect(JSON.stringify(saved)).not.toContain(apiKey);
+  expect(mockRpc).toHaveBeenCalledWith('store_connector_account_result',expect.objectContaining({p_user_id:ctx.userId,
+    p_report:expect.objectContaining({rows:[['$.items[0].id',String(privateRow)],['$.count','1'],['$.has_more','true']]})}));
+  expect(dispatches).toBe(3);
 });

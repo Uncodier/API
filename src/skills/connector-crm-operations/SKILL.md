@@ -1,6 +1,6 @@
 ---
 name: connector-crm-operations
-description: Inspect external CRM contacts and sales records (for example HubSpot) using read-only, account-bound provider actions. Discover live schemas and deliver a private receipt without starting outbound campaigns or changing native records.
+description: Inspect external CRM contacts and sales records (for example HubSpot) using read-only, account-bound provider actions without starting outbound campaigns or changing native records.
 types: ['task', 'integration', 'automation']
 ---
 
@@ -29,8 +29,10 @@ turn. This is a read-only procedure, not authorization for sending or writing.
 4. Use the described `version`, `schema_hash` and `arguments` envelope on the
    same account. Request the smallest useful page and projection. The host
    rechecks the member, pinned turn and current account policy before dispatch.
-5. Give the user the private result link. Never claim to have read or summarized
-   rows that were only delivered to the private viewer. A page is not a total.
+5. When a private record or link is useful, set `save_record: true` beside
+   `arguments` in the original call. Otherwise omit it. Answer from the tool's
+   result facts when available and give the private link only if returned.
+   Do not claim to see private rows, treat a page as a total, or replay to save.
 
 ## Tools
 
@@ -40,5 +42,5 @@ recovered turns and missing identities do not inherit a private user's grant.
 
 ## Artifacts
 
-Return the confirmed receipt or a clear blocker. Do not write private data to
-chat, shared files or logs, or auto-replay an uncertain external outcome.
+Return the requested facts, confirmed receipt or a clear blocker. Do not copy
+private records into chat, shared files or logs, or auto-replay an uncertain outcome.

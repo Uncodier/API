@@ -9,15 +9,16 @@ import { snapshotDirectJson } from './provider-direct-schema';
 import type { ConnectorContextResolver } from './host-context';
 import { searchDirectTools } from './provider-direct-discovery';
 import { directOutputReport } from './provider-direct-output';
+import { askProviderResult } from './provider-result-facts';
 import { authorizeDirectAction } from './provider-direct-policy';
-import { claimDirectDispatch, storeDirectResult } from './provider-direct-receipt';
+import { claimDirectDispatch, confirmDirectResultRelease, storeDirectResult } from './provider-direct-receipt';
 import { describeDirectTool, executeDirectTool } from './provider-direct-transport';
 import { ConnectorError, type ConnectorContext } from './types';
 import { createInstanceConnectorDispatcher } from './instance-connector-dispatcher';
 
 const uuid = z.string().uuid();
 const pin = z.object({version:z.string().min(1).max(100), schema_hash:z.string().regex(/^[a-f0-9]{64}$/),
-  arguments:z.record(z.unknown())}).strict();
+  arguments:z.record(z.unknown()), save_record:z.boolean().optional()}).strict();
 const changed = () => new ConnectorError('ACCESS_CHANGED', 'Connector authority changed. Describe the selected action again.', 403);
 
 function interactive(context: ConnectorContext) {
@@ -62,7 +63,8 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
         description:d.description, version:d.version, schema_hash:d.schemaHash, effect:d.effect,
         parameters:{type:'object',additionalProperties:false,required:['version','schema_hash','arguments'],properties:{
           version:{type:'string',const:d.version},schema_hash:{type:'string',const:d.schemaHash},arguments:d.parameters,
-        }}, expected_use:'Use this exact provider reference, account, version and schema for the requested operation. All tools is a Makinari tool policy, not provider credential permissions. Do not switch accounts or substitute a report. A private receipt is not the data. Never replay an unconfirmed action.'};
+          save_record:{type:'boolean',default:false,description:'Set true only when a private record or viewer link is useful for this task.'},
+        }}, expected_use:'Use this exact provider reference, account, version and schema for the requested operation. Do not switch accounts or substitute a report. Answer using returned result facts. A private viewer link is optional; set save_record before the call when needed. Do not repeat a call to save it after the fact.'};
     },
     async call(name: string, input: unknown) {
       let dispatchPossible = false;
@@ -72,30 +74,48 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
         const encoded = JSON.stringify(snapshot);
         if (Buffer.byteLength(encoded) > 32_000) throw new ConnectorArgumentError({path:'arguments',rule:'bounded'});
         const envelope = pin.safeParse(snapshot);
-        if (!envelope.success) throw new ConnectorError('DESCRIBE_REQUIRED','Use the current version, schema_hash and arguments envelope.',409);
+        if (!envelope.success) {
+          if (envelope.error.issues.some(issue => issue.path.length === 1 && issue.path[0] === 'save_record')) {
+            throw new ConnectorArgumentError({path:'save_record',rule:'type',expected:'boolean'});
+          }
+          throw new ConnectorError('DESCRIBE_REQUIRED','Use the current version, schema_hash and arguments envelope.',409);
+        }
         const a = await admission(name);
         if (!uuid.safeParse(a.context.requestId).success) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED','A verified human action is required for external dispatch.',403);
         const credential = await credentialFor(a);
-        const {version,schema_hash,arguments:args} = envelope.data;
+        const {version,schema_hash,arguments:args,save_record} = envelope.data;
         const digest = hashConnectorSchema(args);
         let claimId: string | undefined;
-        const response = await executeDirectTool(a.target, credential, a.toolSlug, envelope.data, async () => {
+        const response = await executeDirectTool(a.target, credential, a.toolSlug, {version,schema_hash,arguments:args}, async () => {
           await recheck(name, a.stamp);
           claimId = await claimDirectDispatch(a.context,a.target,a.toolSlug,version,schema_hash,digest);
           dispatchPossible = true;
         });
-        // Never publish a provider response to a chat, shared log or recovery checkpoint.
+        // Never publish the raw response or the owner-only preview to the model.
         if (!dispatchPossible || !claimId) throw new ConnectorError('CONNECTOR_OUTCOME_UNKNOWN','Provider dispatch could not be verified.',502);
-        try {
-          await recheck(name, a.stamp);
-          const report = directOutputReport(response.data, credential.apiKey);
-          const id = await storeDirectResult(a.context,a.target,a.toolSlug,version,schema_hash,report,claimId);
-          if (!uuid.safeParse(id).success) throw new Error('Unverified private destination');
-          return {success:true as const, receipt:{status:'private_result_ready' as const,url:`/connectors/results/${id}`},
-            guidance:'Give the user this private result link. The model cannot inspect or summarize its contents. Do not replay the action.'};
-        } catch {
-          throw new ConnectorError('DIRECT_RESULT_UNCONFIRMED','The provider was called, but private delivery could not be confirmed.',503);
+        await recheck(name, a.stamp);
+        let receipt: {status:'private_result_ready';url:string} | undefined;
+        if (save_record === true) {
+          try {
+            const report = directOutputReport(response.data, credential.apiKey);
+            const id = await storeDirectResult(a.context,a.target,a.toolSlug,version,schema_hash,report,claimId);
+            if (uuid.safeParse(id).success) receipt = {status:'private_result_ready',url:`/connectors/results/${id}`};
+          } catch (error) {
+            // Storage failure is not provider failure. The separate release
+            // check below must still succeed before any facts can be returned.
+            if (error instanceof Error && ['RecoveryError','OpenRouterBillingError'].includes(error.name)) throw error;
+          }
         }
+        if (!receipt) await confirmDirectResultRelease(claimId);
+        const result = askProviderResult(a.target.connector.toolkit_slug, a.toolSlug, response.data);
+        return {success:true as const, ...(result ? {result} : {result_omitted:true as const}),
+          ...(receipt ? {receipt} : save_record === true ? {record_status:'unconfirmed' as const} : {}),
+          guidance: [result
+            ? 'Answer using the result facts. A returned count is for this response, not a project or dataset total. Respect coverage limits.'
+            : 'No model-readable facts were returned. Do not infer values.',
+          receipt ? 'Offer the private viewer link for details.' : save_record === true
+            ? 'The action succeeded but saving the private record could not be confirmed.' : '',
+          'Do not replay the action to recover or save its result.'].filter(Boolean).join(' ')};
       } catch (error) {
         if (error instanceof ConnectorError) {
           if (!dispatchPossible && !['CONNECTOR_OUTCOME_UNKNOWN','DIRECT_DISPATCH_ALREADY_CLAIMED'].includes(error.code)) {

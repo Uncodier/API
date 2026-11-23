@@ -75,6 +75,10 @@ describe('node execution continuation workflow', () => {
     expect(prompt).toContain('tool_origin="provider"'); expect(prompt).not.toContain('makinari_report');
     expect(prompt).not.toContain('MAKINARI_METRICS'); expect(prompt).toContain('ask which account');
     expect(prompt).toMatch(/never substitute a native tool/i); expect(prompt).not.toContain(marker);
+    expect(prompt).toContain('Answer from the facts in the tool');
+    expect(prompt).toContain('not necessarily the whole dataset');
+    expect(prompt).toContain('do not save a private record by default');
+    expect(prompt).toContain('save_record: true');
     if (selection === 'selected') expect(prompt).toContain(`connector_id is ${id}`);
     else expect(prompt).not.toContain(id);
   });

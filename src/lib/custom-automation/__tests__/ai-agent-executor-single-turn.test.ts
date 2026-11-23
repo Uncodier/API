@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import { randomUUID } from 'node:crypto';
 import type { AIProvider, ActOptions, Message } from '../ai-agent-executor';
 import { loadExecutorRuntime } from '../test-helpers/load-executor-runtime';
 
@@ -149,5 +150,24 @@ describe('enforceSingleTurn is an actual execution boundary', () => {
     await agent.act({ tools: [{ name: 'write', execute }], prompt: 'Write', enforceSingleTurn: false, maxIterations: 1 });
     expect(execute).toHaveBeenCalledTimes(2);
     expect(create.mock.calls[0][0]).not.toHaveProperty('parallel_tool_calls');
+  });
+
+  it.each([false,true])('feeds connector facts to the next live model request (save record: %s)', async save => {
+    const agent = executor();
+    const name = `connector:${randomUUID()}:SUPABASE_LIST_TABLES`;
+    const answer = { success:true, result:{returned_count:2, coverage:'Schema discovery can be partial.'},
+      ...(save && {receipt:{status:'private_result_ready', url:`/connectors/results/${randomUUID()}`}}) };
+    const args = save ? JSON.stringify({save_record:true}) : '{}';
+    const create = jest.fn<(...args: any[]) => Promise<any>>()
+      .mockResolvedValueOnce(completion([call('inventory', 'tools', JSON.stringify({action:'call',name,args}))]))
+      .mockResolvedValueOnce({ choices:[{ message:{ role:'assistant', content:'Supabase returned two tables.' }, finish_reason:'stop' }] });
+    (agent as any).client.chat.completions.create = create;
+    const execute = jest.fn(async () => answer);
+    const tools = [{ name:'tools', execute }];
+    const turn = await agent.act({ tools, prompt:'How many tables did Supabase return?', maxIterations:1 });
+    await agent.act({ tools, messages:turn.messages, maxIterations:1 });
+    const [tool] = toolResponses(create.mock.calls[1][0].messages, ['inventory']);
+    expect(JSON.parse(tool.content as string)).toEqual(answer);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 });

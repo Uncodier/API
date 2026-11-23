@@ -319,9 +319,12 @@ it('never persists the live private wrapper arguments or reply at either checkpo
   const privateText = randomBytes(24).toString('hex');
   const args = {action:'search',query:privateText}; // mixed discovery without an explicit account filter
   const answer = {success:true, query:privateText, tools:[{name:`connector:${privateText}`,account_label:privateText}]};
+  const result = {success:true, result:{returned_count:17}, receipt:{url:`/connectors/results/${privateText}`}};
   const messages = [{role:'system',content:`Selected local account: ${privateText}`}, ...receipts,
     {role:'assistant',tool_calls:[{id:'private',type:'function',function:{name:'tools',arguments:JSON.stringify(args)}}]},
-    {role:'tool',tool_call_id:'private',content:JSON.stringify(answer)}];
+    {role:'tool',tool_call_id:'private',content:JSON.stringify(answer)},
+    {role:'assistant',tool_calls:[{id:'inventory',type:'function',function:{name:'tools',arguments:JSON.stringify({action:'call',name:`connector:${privateText}:SUPABASE_LIST_TABLES`})}}]},
+    {role:'tool',tool_call_id:'inventory',content:JSON.stringify(result)}];
   const original = JSON.stringify(messages);
   await recovery.initializeAssistantRecovery(scope, {...execution,callerSource:'interactive',catalogUserSession:true});
   await recovery.markAssistantRecoveryInFlight(scope, messages);
@@ -331,5 +334,7 @@ it('never persists the live private wrapper arguments or reply at either checkpo
   expect(stored.slice(0,3)).toEqual(receipts); // native tool evidence remains exact
   expect(JSON.parse(stored[3].tool_calls[0].function.arguments)).toEqual({action:'search',private_arguments:true});
   expect(stored[4]).toMatchObject({tool_call_id:'private',content:expect.stringContaining('not an execution receipt')});
+  expect(stored[6]).toMatchObject({tool_call_id:'inventory',content:expect.stringContaining('not an execution receipt')});
+  expect(JSON.stringify(database.writes())).not.toContain('returned_count');
   expect(JSON.stringify(messages)).toBe(original);
 });

@@ -11,16 +11,24 @@ function identifier(value: unknown): string {
 /** Composio documents an opaque data object, not a stable nested table-result schema.
  * Only consume explicit table collections; never traverse arbitrary rows, error details,
  * SQL output, or stringify unknown data. Fail closed on unrecognized shapes. */
-export function projectTableNames(data: Record<string, unknown>) {
+export function projectTableNames(data: Record<string, unknown>, { excludeViews = false } = {}) {
   const tables: { schema: string; name: string }[] = [];
+  let entries = 0;
   const add = (entry: unknown, group?: string) => {
-    const schema = identifier(isObject(entry) ? entry.table_schema ?? entry.schema ?? group : group);
+    if (++entries > 3000) invalid();
+    const schema = identifier(isObject(entry) ? entry.table_schema ?? entry.schema ?? entry.schema_name ?? group : group);
     const name = identifier(isObject(entry) ? entry.table_name ?? entry.name : entry);
     if ((group !== undefined && group !== schema) || /^(?:pg_|information_schema$|pgbouncer$)/.test(schema)) invalid();
-    if (isObject(entry) && (entry.table_type ?? entry.type) !== undefined
-      && !['table', 'base table', 'partitioned table', 'foreign table'].includes(String(entry.table_type ?? entry.type).toLowerCase())) invalid();
+    if (isObject(entry)) {
+      const type = entry.table_type ?? entry.type;
+      if (type !== undefined) {
+        if (typeof type !== 'string') return invalid();
+        const kind = type.toLowerCase();
+        if (excludeViews && ['view', 'materialized view'].includes(kind)) return;
+        if (!['table', 'base table', 'partitioned table', 'foreign table'].includes(kind)) invalid();
+      }
+    }
     tables.push({ schema, name });
-    if (tables.length > 3000) invalid();
   };
   const source = data.tables;
   if (source == null && Array.isArray(data.schemas)) {

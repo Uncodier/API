@@ -49,6 +49,7 @@ it.each((['OAUTH2','API_KEY'] as const).flatMap(scheme=>
     if (name === 'connector_ask_connections') return reply(rows.filter(r=>enabled.has(r.connector.id) && (!id || r.connector.id===id) &&
       (r.policy.tool_access_mode==='all' || r.policy.allowed_tools.includes(args.p_slug))));
     if (name === 'claim_connector_account_dispatch') { claims.push(id); return reply(randomUUID()); }
+    if (name === 'confirm_connector_result_release') return reply(true);
     if (name === 'store_connector_account_result') { stored.push(id); return reply(receipt); }
     throw new Error('Unexpected RPC');
   });
@@ -89,13 +90,15 @@ it.each((['OAUTH2','API_KEY'] as const).flatMap(scheme=>
   expect(aPin.schema_hash).not.toBe(bPin.schema_hash);
   await expect(run.call(ref(b),aPin)).rejects.toMatchObject({code:'CONNECTOR_SCHEMA_CHANGED',executed:false});
   expect(posted).toHaveLength(0); expect(claims).toHaveLength(0);
-  expect(await run.call(ref(a),aPin)).toMatchObject({receipt:{url:`/connectors/results/${receipt}`}});
+  const completed = await run.call(ref(a),aPin);
+  expect(completed).toMatchObject({result:{count:1}});
+  expect(completed).not.toHaveProperty('receipt');
   accounts.length=0;
   const rejected = await run.call(ref(b),bPin).catch(failureForAgent);
   expect(rejected).toMatchObject({success:false,automatic_retry:false,code:denial==='http'?'PROVIDER_FORBIDDEN':'APP_RESOURCE_DENIED'});
   expect(posted).toEqual([a.connector.provider_account_id,b.connector.provider_account_id]);
   expect(accounts).toEqual([b.connector.provider_account_id]);
-  expect(claims).toEqual([a.connector.id,b.connector.id]); expect(stored).toEqual([a.connector.id]);
+  expect(claims).toEqual([a.connector.id,b.connector.id]); expect(stored).toEqual([]);
   // On the very same descriptor, a local exclusion or connection revocation must
   // stop before even a metadata GET, not just before the provider POST.
   fetch.mockClear(); b.policy.tool_access_mode='selected'; b.policy.allowed_tools=['PLANNING_LIST_BOOKINGS'];

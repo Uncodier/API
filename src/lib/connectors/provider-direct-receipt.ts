@@ -8,7 +8,7 @@ import {connectionAttempt,projectScopedConnection} from './provider-direct-autho
 
 const uuid=z.string().uuid();
 const denied=()=>new ConnectorError('ACCESS_CHANGED','The original connector admission is no longer current.',403);
-const unconfirmed=()=>new ConnectorError('DIRECT_RESULT_UNCONFIRMED','Private storage did not confirm delivery.',503);
+const unconfirmed=()=>new ConnectorError('DIRECT_RESULT_UNCONFIRMED','Connector result release could not be confirmed.',503);
 function binding(ctx:ConnectorContext,a:DirectAuthorizedConnector,tool:string,version:string,hash:string) {
   const proof=a.directProof;
   if (!proof) throw denied();
@@ -31,6 +31,16 @@ export async function claimDirectDispatch(ctx:ConnectorContext,a:DirectAuthorize
   if (response.error?.code==='42501') throw denied();
   if (response.error || !uuid.safeParse(response.data).success) throw new ConnectorError('DIRECT_DISPATCH_UNCONFIRMED','The dispatch reservation could not be confirmed.',503);
   return response.data;
+}
+
+export async function confirmDirectResultRelease(claimId: string): Promise<void> {
+  if (!uuid.safeParse(claimId).success) throw unconfirmed();
+  let response;
+  try {
+    response=await supabaseAdmin.rpc('confirm_connector_result_release',{p_claim_id:claimId}).abortSignal(AbortSignal.timeout(5000));
+  } catch { throw unconfirmed(); }
+  if (response.error?.code==='42501') throw denied();
+  if (response.error || response.data!==true) throw unconfirmed();
 }
 
 export async function storeDirectResult(ctx:ConnectorContext,a:DirectAuthorizedConnector,tool:string,version:string,hash:string,report:DirectReport,claimId:string):Promise<string> {

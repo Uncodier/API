@@ -129,7 +129,7 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
     policyRevision:policy.revision, keyHash, scheme:account.oauth2 ? 'OAUTH2' : 'API_KEY',
     userId:provider.provider_user_id });
   const descriptor: DirectDescriptor = {version:tool.version, schemaHash, parameters, effect,
-    description:`${slug} on the selected private connection. Provider result data is delivered privately, not to the model.`};
+    description:`${slug} on the selected private connection.`};
   return { descriptor, injected, accountId:account.id, userId:provider.provider_user_id };
 }
 
@@ -140,8 +140,8 @@ export async function describeDirectTool(target: DirectAuthorizedConnector, cred
 }
 
 /** Server-internal only. The caller reauthorizes and durably claims these exact arguments
- * in beforeDispatch. It must store/project successful data privately, never return it to
- * a model. No retries, sessions, automatic auth, proxy calls, or fallback accounts. */
+ * in beforeDispatch. A host must project successful data for its audience, never
+ * pass the raw result to a model. No retries, sessions, automatic auth, proxy calls or fallback accounts. */
 export async function executeDirectTool(target: DirectAuthorizedConnector, credential: DirectCredential, slug: string,
   envelope: DirectEnvelope, beforeDispatch: () => Promise<void>): Promise<{data:unknown}> {
   let dispatched = false;

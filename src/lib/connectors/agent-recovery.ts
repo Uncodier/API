@@ -17,13 +17,13 @@ export function agentRecovery(code: string): Advice {
     case 'PROVIDER_DIRECT_NOT_ENABLED': case 'DIRECT_POLICY_REQUIRED':
       return advice('ask_manager', 'Makinari did not authorize this connection or tool for this Ask turn. Check the signed-in member’s connection access and the saved tool permissions. This is not a rejection from the provider. Do not reconnect or switch accounts.');
     case 'DIRECT_DISPATCH_ALREADY_CLAIMED':
-      return advice('reconcile', 'This request already reserved the provider action. Check its private receipt or the connected application; do not dispatch it again.');
+      return advice('reconcile', 'This request already reserved the provider action. Check its private receipt if one was saved, or check the connected application. Do not dispatch it again.');
     case 'DIRECT_DISPATCH_UNCONFIRMED':
       return advice('reconcile', 'The reservation could not be confirmed. Do not resubmit or change arguments; check the status of the original request.');
     case 'DIRECT_POLICY_UNAVAILABLE':
       return advice('retry_later', 'The account policy service is unavailable. Do not change credentials, switch connections or treat the failure as missing data.');
     case 'DIRECT_RESULT_UNCONFIRMED':
-      return advice('reconcile', 'The provider action was sent but a private result could not be released. Check private results or the selected account. Do not repeat the action.');
+      return advice('reconcile', 'The provider action was sent but release of its result could not be verified. Check the selected account. Do not repeat the action.');
     case 'CATALOG_SELECTION_CHANGED': return advice('ask_manager', 'Some saved actions are no longer in the current provider catalog. Ask a manager to refresh the selection; other returned actions are unaffected.');
     case 'NOT_FOUND': case 'APP_RESOURCE_UNAVAILABLE': case 'PROVIDER_NOT_FOUND':
       return advice('ask_user', 'Ask the user to verify the intended connection or resource. Missing and not visible may look identical.', manual);

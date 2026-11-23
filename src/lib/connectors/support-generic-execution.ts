@@ -8,6 +8,7 @@ import { parseConnectorToolRef } from './connector-ref';
 import { modelAccountIdentity } from './model-account-identity';
 import { snapshotDirectJson } from './provider-direct-schema';
 import { describeDirectTool, executeDirectTool } from './provider-direct-transport';
+import { providerResultFacts } from './provider-result-facts';
 import { authorizeGenericSupport } from './support-generic-authority';
 import { supportInput, memberSupportScope, type SupportConnectorScope } from './support-runtime-contract';
 import { ConnectorError } from './types';
@@ -18,22 +19,6 @@ const unavailable = {success: false, status: 'unavailable'} as const;
 const unconfirmed = {success: false, status: 'outcome_unconfirmed', automatic_retry: false} as const;
 const providerDenials = new Set(['APP_AUTH_REJECTED', 'APP_RESOURCE_DENIED', 'APP_RESOURCE_UNAVAILABLE', 'APP_RATE_LIMITED',
   'PROVIDER_FORBIDDEN', 'PROVIDER_AUTH_FAILED', 'PROVIDER_NOT_FOUND', 'PROVIDER_RATE_LIMITED']);
-
-// No arbitrary keys, strings, records or identifiers enter a Support conversation.
-// Preserve only explicit top-level facts: a page length is not a count and absence is not zero.
-function memberFacts(data: unknown) {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return;
-  const fields: Record<string, number | boolean> = {};
-  for (const key of ['count', 'total', 'total_count', 'has_more'] as const) {
-    const field = Object.getOwnPropertyDescriptor(data, key);
-    if (!field || !('value' in field)) continue;
-    const value: unknown = field.value;
-    if (key === 'has_more') {
-      if (typeof value === 'boolean') fields[key] = value;
-    } else if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) fields[key] = value;
-  }
-  return Object.keys(fields).length ? fields : undefined;
-}
 
 /** Direct dispatch requires both the member and assigned agent use grants. The direct transport checks
  * the live account, pinned schema and arguments before entering the reservation callback. */
@@ -91,7 +76,7 @@ export async function executeGenericSupport(member: MemberScope, input: Request,
     }
     if (!claimed) return unconfirmed;
     await recheck();
-    const result = initial.releaseMemberResult === true ? memberFacts(response.data) : undefined;
+    const result = initial.releaseMemberResult === true ? providerResultFacts(response.data) : undefined;
     return {success: true, status: 'completed', ...(result ? {result} : {result_omitted: true})};
   } catch {
     return claimed ? unconfirmed : unavailable;
