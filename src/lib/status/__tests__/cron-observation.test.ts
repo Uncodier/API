@@ -7,6 +7,7 @@ import type { CronJobKey } from '@/lib/status/cron-observation';
 
 const recordTelemetry = jest.fn<(...args: unknown[]) => Promise<void>>();
 const getLatestTelemetry = jest.fn<(key: string, hours?: number) => Promise<TelemetryRecord | null>>();
+const observeCatalogIndexQueue = jest.fn<() => Promise<void>>();
 jest.unstable_mockModule('@/lib/status/telemetry', () => ({
   recordTelemetry, getLatestTelemetry,
   REDIS_TELEMETRY_KEYS: { recordings: 'redis_recording_queue', tracking: 'redis_tracking_queue' },
@@ -19,6 +20,7 @@ const businessCall = jest.fn<(...args: unknown[]) => Promise<unknown>>(() => {
 });
 const mocks: Record<string, Record<string, unknown>> = {
   '@/lib/services/catalog-search/dispatch': { startCatalogIndex: businessCall },
+  '@/lib/services/catalog-search/queue-observation': { observeCatalogIndexQueue },
   '@/lib/services/cron/market-fit-dispatch': { dispatchMarketFitWorker: businessCall },
   'workflow/api': { start: businessCall },
   '@/app/api/cron/requirements-apps/workflow': { runCronAppsWorkflow: businessCall },
@@ -36,7 +38,7 @@ const mocks: Record<string, Record<string, unknown>> = {
   '@/lib/services/session-event-retention': { runSessionEventRetention: businessCall },
   '@/lib/services/session-recording-queue': { drainRecordingMetadataQueue: businessCall },
   '@/lib/services/tracking-event-queue': { drainTrackingEventQueue: businessCall },
-  '@/lib/database/supabase-client': { supabaseAdmin: { from: businessCall } },
+  '@/lib/database/supabase-client': { supabaseAdmin: { from: businessCall, rpc: businessCall } },
   '@/lib/services/workflow-robot/materialize': { materializeRunFromGraph: businessCall },
   '@/lib/services/workflow-robot/run-plan': { runWorkflowPlan: businessCall },
   '@/app/api/cron/workflows/workflow': { executeScheduledWorkflow: businessCall },
@@ -52,6 +54,7 @@ for (const [name, exports] of Object.entries(mocks)) jest.unstable_mockModule(na
 const { CRON_JOBS, cronTelemetryKey, withCronObservation } = await import('@/lib/status/cron-observation');
 const { cronHandler } = await import('@/lib/status/handlers/cron');
 const { isCriticalFailure } = await import('@/lib/status/types');
+const { normalizeHealthStatus } = await import('@/lib/status/observation');
 const routes = await Promise.all(CRON_JOBS.map(async job => ({
   ...job,
   GET: (await import(`@/app${job.path}/route`)).GET as (request: Request) => Promise<Response>,
@@ -77,6 +80,7 @@ beforeEach(() => {
   process.env = { NODE_ENV: 'test', CRON_SECRET: secret, CATALOG_INDEXING_ENABLED: 'true' };
   recordTelemetry.mockReset().mockResolvedValue(undefined);
   getLatestTelemetry.mockReset().mockResolvedValue(null);
+  observeCatalogIndexQueue.mockReset().mockResolvedValue(undefined);
   businessCall.mockReset().mockImplementation(() => { throw new Error('Business work is forbidden unless explicitly stubbed'); });
   fetchMock.mockClear();
   globalThis.fetch = fetchMock;
@@ -93,9 +97,9 @@ describe('scheduled registry and actual route authentication (offline)', () => {
   it('matches every Vercel cron except the self-monitor, with a minimal wrapper', () => {
     const config = JSON.parse(readFileSync(resolve(process.cwd(), 'vercel.json'), 'utf8'));
     const configured = config.crons.filter((job: { path: string }) => job.path !== '/api/cron/system-status');
-    expect(CRON_JOBS).toHaveLength(12);
+    expect(CRON_JOBS).toHaveLength(13);
     expect(CRON_JOBS.map(({ path, schedule }) => ({ path, schedule }))).toEqual(configured);
-    expect(new Set(CRON_JOBS.map(job => cronTelemetryKey(job.key))).size).toBe(12);
+    expect(new Set(CRON_JOBS.map(job => cronTelemetryKey(job.key))).size).toBe(13);
     for (const job of CRON_JOBS) {
       const source = readFileSync(resolve(process.cwd(), `src/app${job.path}/route.ts`), 'utf8');
       expect(source).toContain(`export const GET = withCronObservation('${job.key}', runCron)`);
@@ -117,16 +121,29 @@ describe('scheduled registry and actual route authentication (offline)', () => {
     }
     expect(businessCall).not.toHaveBeenCalled();
     expect(recordTelemetry).not.toHaveBeenCalled();
+    expect(observeCatalogIndexQueue).not.toHaveBeenCalled();
   });
 });
 
 describe('execution/accepted dispatch receipts', () => {
+  it('bounds lead bulk work per invocation and runs maintenance separately', async () => {
+    businessCall.mockImplementation(((name: string) => ({
+      abortSignal: async () => name === 'assistant_lead_job_prune' ? { error: null }
+        : { data: { success: true, processed: true, outcome: name === 'assistant_lead_job_tick' ? 'applied' : 'staged' }, error: null },
+    })) as unknown as typeof businessCall);
+    const response = await routes.find(job => job.key === 'lead-bulk')!.GET(request());
+    expect(await response.json()).toEqual({ success: true, appliedBatches: 10, stagedPages: 10, retryingBatches: 0, failedJobs: 0 });
+    expect(businessCall).toHaveBeenCalledTimes(21);
+    expect(businessCall).toHaveBeenNthCalledWith(20, 'assistant_lead_job_select_tick');
+    expect(businessCall).toHaveBeenLastCalledWith('assistant_lead_job_prune');
+  });
   it('the actual catalog route skips disabled work with no business call or receipt', async () => {
     process.env.CATALOG_INDEXING_ENABLED = 'false';
     const response = await routes.find(job => job.key === 'catalog-index')!.GET(request());
     expect(await response.json()).toEqual({ success: true, disabled: true });
     expect(businessCall).not.toHaveBeenCalled();
     expect(recordTelemetry).not.toHaveBeenCalled();
+    expect(observeCatalogIndexQueue).not.toHaveBeenCalled();
   });
 
   it.each(['catalog-index', 'marketplace', 'credit-auto-top-up'] as const)('the actual %s route emits its own receipt after stubbed dispatch only', async key => {
@@ -295,18 +312,18 @@ describe('passive per-job freshness and aggregate health', () => {
   it('absent evidence is skipped even with a configured secret, and cannot pass an explicitly selected critical gate', async () => {
     const health = await cronHandler.runCheck();
     expect(health.status).toBe('skipped');
-    expect(health.checks).toMatchObject({ verification: 'unverified', observedJobs: 0, unknownJobs: 12, monitorExcluded: true });
+    expect(health.checks).toMatchObject({ verification: 'unverified', observedJobs: 0, unknownJobs: CRON_JOBS.length, monitorExcluded: true });
     expect(isCriticalFailure(health, ['cron'])).toBe(true);
     expect(isCriticalFailure(health)).toBe(false); // Cron is not a default critical capability.
-    expect(getLatestTelemetry).toHaveBeenCalledTimes(12);
+    expect(getLatestTelemetry).toHaveBeenCalledTimes(CRON_JOBS.length + 1);
     expect(getLatestTelemetry.mock.calls.some(([key]) => key === 'cron' || key.includes('system-status'))).toBe(false);
     expect(recordTelemetry).not.toHaveBeenCalled();
   });
 
   it('stale evidence is independently skipped for each cadence, including daily >24h lookback', async () => {
     getLatestTelemetry.mockImplementation(async key => {
-      const job = CRON_JOBS.find(job => cronTelemetryKey(job.key) === key)!;
-      return receipt('up', job.freshnessMs + 1_000);
+      const job = CRON_JOBS.find(job => cronTelemetryKey(job.key) === key);
+      return receipt('up', (job?.freshnessMs ?? 180_000) + 1_000);
     });
     const health = await cronHandler.runCheck();
     expect(health.status).toBe('skipped');
@@ -322,7 +339,7 @@ describe('passive per-job freshness and aggregate health', () => {
     getLatestTelemetry.mockImplementation(async key => key === 'cron_marketplace' ? receipt() : null);
     const health = await cronHandler.runCheck();
     expect(health.status).toBe('degraded');
-    expect(health.checks).toMatchObject({ verification: 'partial', observedJobs: 1, unknownJobs: 11, observedFailure: false });
+    expect(health.checks).toMatchObject({ verification: 'partial', observedJobs: 1, unknownJobs: CRON_JOBS.length - 1, observedFailure: false });
     expect(isCriticalFailure(health, ['cron'])).toBe(true);
     expect(health.checks.jobs).toMatchObject({ marketplace: { status: 'up' }, workflows: { status: 'skipped', lastEventAt: null } });
   });
@@ -331,7 +348,7 @@ describe('passive per-job freshness and aggregate health', () => {
     getLatestTelemetry.mockImplementation(async key => receipt(key === 'cron_pending-work' ? status : 'up'));
     const health = await cronHandler.runCheck();
     expect(health.status).toBe(status);
-    expect(health.checks).toMatchObject({ verification: 'passive', observedJobs: 12, unknownJobs: 0, observedFailure: true });
+    expect(health.checks).toMatchObject({ verification: 'passive', observedJobs: CRON_JOBS.length, unknownJobs: 0, observedFailure: true });
     expect(isCriticalFailure(health, ['cron'])).toBe(true);
     expect(health.checks.jobs).toMatchObject({ 'pending-work': { status, verification: 'passive' }, marketplace: { status: 'up' } });
   });
@@ -359,9 +376,40 @@ describe('passive per-job freshness and aggregate health', () => {
     getLatestTelemetry.mockImplementation(async () => receipt());
     const health = await cronHandler.runCheck();
     expect(health.status).toBe('up');
-    expect(health.checks).toMatchObject({ expectedJobs: 11, observedJobs: 11, unknownJobs: 0, verification: 'passive' });
+    expect(health.checks).toMatchObject({ expectedJobs: CRON_JOBS.length - 1, observedJobs: CRON_JOBS.length - 1, unknownJobs: 0, verification: 'passive' });
     expect(health.checks.jobs).toMatchObject({ 'catalog-index': { status: 'skipped', disabled: true, expected: false, reason: 'disabled' } });
     expect(getLatestTelemetry).not.toHaveBeenCalledWith('cron_catalog-index', expect.anything());
+    expect(getLatestTelemetry).not.toHaveBeenCalledWith('catalog_index_queue', expect.anything());
+  });
+
+  it('reports a degraded catalog queue even when every cron receipt is up', async () => {
+    getLatestTelemetry.mockImplementation(async key => ({
+      ...receipt(key === 'catalog_index_queue' ? 'degraded' : 'up'),
+      message: key === 'catalog_index_queue' ? 'Catalog embedding jobs exhausted; operator retry required' : 'Dispatched',
+    }));
+    const health = await cronHandler.runCheck();
+    expect(health).toMatchObject({ status: 'degraded', checks: {
+      observedFailure: true,
+      jobs: { 'catalog-index': { status: 'up' } },
+      catalogIndexQueue: { status: 'degraded', reason: 'exhausted' },
+    } });
+    expect(normalizeHealthStatus(health.status, health.checks)).toBe('degraded');
+    expect(observeCatalogIndexQueue).not.toHaveBeenCalled();
+  });
+
+  it('leaves the queue unverified if only a successful dispatch is visible', async () => {
+    getLatestTelemetry.mockImplementation(async key => key === 'catalog_index_queue' ? null : receipt());
+    const health = await cronHandler.runCheck();
+    expect(health).toMatchObject({ status: 'degraded', checks: { verification: 'partial',
+      catalogIndexQueue: { status: 'skipped', reason: 'missing_receipt' } } });
+  });
+
+  it.each([['unavailable', 0], ['stale_receipt', 180_001]] as const)('does not report a green catalog queue for %s', async (reason, ageMs) => {
+    getLatestTelemetry.mockImplementation(async key => key === 'catalog_index_queue'
+      ? receipt(reason === 'unavailable' ? 'degraded' : 'up', ageMs) : receipt());
+    const health = await cronHandler.runCheck();
+    expect(health).toMatchObject({ status: 'degraded', checks: { jobs: { 'catalog-index': { status: 'up' } },
+      catalogIndexQueue: { status: reason === 'unavailable' ? 'degraded' : 'skipped', reason } } });
   });
 
   it.each(['skipped', 'invalid', 'future'] as const)('does not treat %s receipts as fresh execution evidence', async kind => {

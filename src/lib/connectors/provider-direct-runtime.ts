@@ -14,7 +14,7 @@ import { authorizeDirectAction } from './provider-direct-policy';
 import { claimDirectDispatch, confirmDirectResultRelease, storeDirectResult } from './provider-direct-receipt';
 import { describeDirectTool, executeDirectTool } from './provider-direct-transport';
 import { supabaseSqlAction, supabaseSqlReport, supabaseSqlRows } from './supabase-sql-result';
-import { ASK_OWNER_RESULT, projectProviderLiveResult } from './provider-live-result';
+import { ASK_OWNER_RESULT, projectProviderLiveResult, projectProviderSqlRows } from './provider-live-result';
 import { ConnectorError, type ConnectorContext } from './types';
 import { createInstanceConnectorDispatcher } from './instance-connector-dispatcher';
 
@@ -116,7 +116,8 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
           }
         }
         if (!receipt) await confirmDirectResultRelease(claimId);
-        const projected = projectProviderLiveResult(sql ? rows && {rows} : response.data, credential.apiKey, privateValues);
+        const projected = sql ? projectProviderSqlRows(rows, credential.apiKey, privateValues)
+          : projectProviderLiveResult(response.data, credential.apiKey, privateValues);
         const facts = !sql && c.toolkit_slug === 'supabase' && a.toolSlug === 'SUPABASE_LIST_TABLES'
           ? askProviderResult(c.toolkit_slug, a.toolSlug, response.data) : undefined;
         const result = projected.result;

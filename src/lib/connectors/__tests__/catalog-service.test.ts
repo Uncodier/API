@@ -11,7 +11,7 @@ const configs = jest.fn();
 const project = jest.fn();
 const client = jest.fn();
 jest.mock('../access', () => ({ requireConnectorSiteAccess: (...args: unknown[]) => access(...args), loadConnectorCredential: (...args: unknown[]) => credential(...args), listVisibleConnectors: (...args: unknown[]) => visible(...args) }));
-jest.mock('../composio-transport', () => ({ createComposioClient: (...args: unknown[]) => client(...args) }));
+jest.mock('../composio-transport', () => ({ ...jest.requireActual('../composio-transport'), createComposioClient: (...args: unknown[]) => client(...args) }));
 jest.mock('../composio-catalog', () => ({ listToolkits: (...args: unknown[]) => toolkits(...args), getToolkit: (...args: unknown[]) => toolkit(...args), listAuthConfigs: (...args: unknown[]) => configs(...args) }));
 jest.mock('../connection-service', () => ({ projectConnections: (...args: unknown[]) => project(...args) }));
 
@@ -28,7 +28,7 @@ beforeEach(() => {
   client.mockReturnValue({ request: jest.fn() });
   toolkits.mockResolvedValue({ items: [gmail], next_cursor: 'next', total_items: 3 });
   toolkit.mockResolvedValue(gmail);
-  configs.mockResolvedValue({ items: [{ id: 'ac_config', name: 'Gmail auth', authScheme: 'OAUTH2' }], next_cursor: null });
+  configs.mockResolvedValue({ items: [{ id: 'ac_config', name: 'Gmail auth', toolkitSlug: 'gmail', authScheme: 'OAUTH2', status: 'ENABLED' }], next_cursor: null });
   project.mockResolvedValue([{ id: 'visible', toolkit_slug: 'gmail', access_mode: 'workspace', can_use: true }]);
 });
 
@@ -143,6 +143,7 @@ it('detail hides auth configuration identity from members and uses visible conne
   expect(result.auth_configs).toEqual([]); expect(configs).not.toHaveBeenCalled();
   expect(result.connections).toEqual([{ id: 'visible', toolkit_slug: 'gmail', access_mode: 'workspace', can_use: true }]);
   expect(result.toolkit.connection_count).toBe(1);
+  expect(result).not.toHaveProperty('connection_setup');
 });
 
 it('detail counts the connections that still pass grant projection', async () => {
@@ -162,10 +163,19 @@ it('jumps directly to numbered provider pages without walking preceding pages', 
 
 it('manager detail collects bounded configuration pages and refuses repeated/partial results', async () => {
   access.mockResolvedValue({ can_view: true, can_manage: true });
-  configs.mockResolvedValueOnce({ items: [{ id: 'first', name: 'First', authScheme: 'OAUTH2' }], next_cursor: 'next-config' })
-    .mockResolvedValueOnce({ items: [{ id: 'second', name: 'Second', authScheme: null }], next_cursor: null });
+  configs.mockResolvedValueOnce({ items: [{ id: 'first', name: 'First', toolkitSlug: 'gmail', authScheme: 'OAUTH2', status: 'ENABLED' }], next_cursor: 'next-config' })
+    .mockResolvedValueOnce({ items: [{ id: 'second', name: 'Second', authScheme: null, status: 'ENABLED' },
+      { id: 'not-visible', name: 'Disabled', toolkitSlug: 'gmail', authScheme: 'OAUTH2', status: 'DISABLED' }], next_cursor: null });
   const result = await getConnectorDetail(site, user, 'gmail');
-  expect(result.auth_configs).toEqual([{ id: 'first', name: 'First', auth_scheme: 'OAUTH2' }, { id: 'second', name: 'Second', auth_scheme: 'Unknown' }]);
-  configs.mockImplementation(() => Promise.resolve({ items: [], next_cursor: 'same' }));
+  expect(result.auth_configs).toEqual([{ id: 'first', name: 'First', auth_scheme: 'OAUTH2', setup_key: expect.stringMatching(/^[a-f0-9]{64}$/) }, { id: 'second', name: 'Second', auth_scheme: 'Unknown' }]);
+  expect(result.connection_setup).toEqual({ kind: 'existing', config_ids: ['first'] });
+  expect(configs).toHaveBeenCalledWith(expect.anything(), 'gmail', undefined, true);
+  configs.mockResolvedValueOnce({ items: [], next_cursor: 'same' }).mockResolvedValueOnce({ items: [], next_cursor: 'same' });
   await expect(getConnectorDetail(site, user, 'gmail')).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
+});
+
+it('shows no-account guidance to members without exposing project configurations', async () => {
+  toolkit.mockResolvedValueOnce({ ...gmail, slug: 'public_toolkit', auth_schemes: ['NO_AUTH'] });
+  expect(await getConnectorDetail(site, user, 'public_toolkit')).toMatchObject({ connection_setup: { kind: 'no_auth' }, auth_configs: [] });
+  expect(configs).not.toHaveBeenCalled();
 });

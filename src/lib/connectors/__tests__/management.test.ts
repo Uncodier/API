@@ -26,7 +26,7 @@ const grant = { user_id: user, can_view: true, can_use: false, expires_at: null,
 const base = { site_id: site, expected_revision: 1 };
 function query(data: unknown, error: unknown = null, count = Array.isArray(data) ? data.length : null) {
   const result: any = { then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data, error, count }).then(resolve) };
-  for (const key of ['select', 'eq', 'limit', 'abortSignal']) result[key] = jest.fn(() => result);
+  for (const key of ['select', 'eq', 'neq', 'limit', 'abortSignal']) result[key] = jest.fn(() => result);
   return result;
 }
 beforeEach(() => {
@@ -125,7 +125,7 @@ it('turns off the assistant and its saved permission together without checking p
   expect(rpc).toHaveBeenCalledTimes(1);expect(provider).not.toHaveBeenCalled();expect(credential).not.toHaveBeenCalled();
 });
 it.each(['workspace', 'explicit'])('validates the full selection on %s connectors, not just new or reviewed tools', async mode => {
-  visible.mockResolvedValue({ toolkit_slug: 'gmail', access_mode: mode });
+  visible.mockResolvedValue({ ...await visible(), toolkit_slug: 'gmail', access_mode: mode });
   provider.mockResolvedValueOnce({ items: policyInput.allowed_tools.map(row).reverse() });
   await updateConnectorPolicy(user, id, policyInput);
   expect(access).toHaveBeenCalledWith(site, user, true);
@@ -134,6 +134,7 @@ it.each(['workspace', 'explicit'])('validates the full selection on %s connector
   expect(rpc).toHaveBeenCalledWith('connector_update_policy', { p_site_id: site, p_connector_id: id, p_actor_id: user,
     p_expected_revision: 1, p_tool_access_mode: 'selected', p_allowed_tools: policyInput.allowed_tools, p_allowed_hosts: ['assistant'], p_require_approval: true, p_enabled: true, p_support_publication: null });
   // Previously saved IDs are not grandfathered when a subsequent PATCH resubmits them.
+  visible.mockResolvedValue({ ...await visible(), revision: 2 });
   provider.mockResolvedValueOnce({ items: [row(catalogOnly)] });
   await expect(updateConnectorPolicy(user, id, { ...policyInput, expected_revision: 2 })).rejects.toMatchObject({ code: 'TOOL_NOT_IN_CATALOG' });
   expect(rpc).toHaveBeenCalledTimes(1);
@@ -278,4 +279,26 @@ it('can turn reads off without a credential or provider catalogue, never mixing 
   rpc.mockImplementationOnce(() => query(null,{code:'40001'}));
   await expect(updateConnectorPolicy(user,id,revocation)).rejects.toMatchObject({code:'REVISION_CONFLICT'});
   expect(credential).not.toHaveBeenCalled(); expect(provider).not.toHaveBeenCalled();
+});
+
+
+it.each([false,true])('blocks neutral incompatible Ask opt-in before host or combined save (combined=%s)',async combined=>{
+  policy.mockResolvedValue({...await policy(),allowed_hosts:[]});
+  from.mockImplementation(table=>query(table==='site_connector_auth_attempts' ? [{setup_mode:'hosted_credentials',provider_id:other}] : []));
+  await expect(updateConnectorPolicy(user,id,{...policyInput,allowed_tools:[],tool_access_mode:'all',
+    ...(combined && {ask_access:askChange})})).rejects.toMatchObject({code:'ASK_INCOMPATIBLE'});
+  expect(rpc).not.toHaveBeenCalled();expect(credential).not.toHaveBeenCalled();
+});
+it('allows a pure assistant removal without provider availability, but not unrelated selected-tool edits',async()=>{
+  policy.mockResolvedValue({allowed_hosts:['assistant'],tool_access_mode:'selected',allowed_tools:policyInput.allowed_tools,require_approval:true});
+  credential.mockRejectedValue(new ConnectorError('CREDENTIAL_UNAVAILABLE','Unavailable',503));
+  await updateConnectorPolicy(user,id,{...policyInput,allowed_hosts:[]});
+  expect(from).not.toHaveBeenCalled();expect(credential).not.toHaveBeenCalled();expect(rpc).toHaveBeenCalledTimes(1);
+  await expect(updateConnectorPolicy(user,id,{...policyInput,allowed_hosts:[],allowed_tools:['OTHER_TOOL']})).rejects.toMatchObject({status:503});
+  expect(rpc).toHaveBeenCalledTimes(1);
+});
+
+it('does not use an unchecked future revision to authorize an assistant transition',async()=>{
+  await expect(updateConnectorPolicy(user,id,{...policyInput,expected_revision:base.expected_revision+1})).rejects.toMatchObject({code:'REVISION_CONFLICT'});
+  expect(rpc).not.toHaveBeenCalled();expect(from).not.toHaveBeenCalled();expect(credential).not.toHaveBeenCalled();
 });

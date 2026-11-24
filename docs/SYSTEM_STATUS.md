@@ -119,6 +119,10 @@ invocation/dispatch receipts. The status monitor excludes itself. Freshness:
 | Daily | 26 hours |
 
 Disabled catalog indexing is explicitly exempt, not recorded as healthy execution.
+When it is enabled, `checks.catalogIndexQueue` reports separate three-minute
+evidence about exhausted catalog embedding jobs. It can show degradation while
+the catalog dispatch receipt remains `up`; it never certifies indexing coverage.
+See [catalog queue alerting and recovery](CATALOG_SEARCH.md#exhausted-job-alert).
 Only repetitive authentication successes are sampled. Every business-operation
 receipt and every failure/recovery transition is retained. Missing Redis sampling
 no longer silently drops telemetry writes. Reads/writes have a three-second

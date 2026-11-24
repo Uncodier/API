@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   activateSenderChannel,
   assignPhoneNumberToSender,
@@ -9,6 +10,8 @@ import {
   ensureSenderWebhook,
   ensureVoiceSender,
   regenerateSenderWebhookSecret,
+  zavuFetch,
+  ZavuWhatsAppChannelNotConnected,
   ZAVU_PROJECT_WEBHOOK_EVENTS,
   ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS,
   ZAVU_SENDER_WEBHOOK_EVENTS,
@@ -337,6 +340,30 @@ describe("Zavu client webhook contract", () => {
   });
 
   describe("sendChannelMessage", () => {
+    it("retains no provider prose, raw details or request body on a proven WhatsApp refusal", async () => {
+      const marker = randomBytes(32).toString("hex"), to = "+15555550199", text = "Saved message body";
+      const log = jest.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        (global.fetch as jest.Mock).mockResolvedValueOnce(mockJson(409, { error: `${marker} ${text} ${to}`,
+          code: "channel_not_connected", details: { channel: "whatsapp" } }));
+        const refusal = await sendChannelMessage({ to, text, senderId: "sender", channel: "whatsapp" }).catch(error => error);
+        expect(refusal).toBeInstanceOf(ZavuWhatsAppChannelNotConnected);
+        expect(refusal).toMatchObject({ status: 409, code: "channel_not_connected" });
+        expect(refusal).not.toHaveProperty("details");
+        const exposed = JSON.stringify([refusal, refusal.message, log.mock.calls]);
+        for (const value of [marker, to, text]) expect(exposed).not.toContain(value);
+        expect(global.fetch).toHaveBeenCalledWith("https://api.zavu.dev/v1/messages",
+          expect.objectContaining({ method: "POST", redirect: "error" }));
+      } finally { log.mockRestore(); }
+    });
+
+    it("never marks the same 409 code as a send refusal on a GET", async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockJson(409, { code: "channel_not_connected", details: { channel: "whatsapp" } }));
+      const refusal = await zavuFetch("/messages", { method: "GET" }, { silentStatuses: [409], acceptMessageReplay: true }).catch(error => error);
+      expect(refusal).toMatchObject({ status: 409 });
+      expect(refusal).not.toBeInstanceOf(ZavuWhatsAppChannelNotConnected);
+    });
+
     it("sends text message correctly", async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce(
         mockJson(200, { message: { id: "msg_123" } })

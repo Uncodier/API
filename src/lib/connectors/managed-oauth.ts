@@ -56,6 +56,10 @@ async function ensureConfig(client: ComposioClient, projectId: string, slug: str
     if (!visible) invalidProviderResponse(true);
     writeUnconfirmed = false;
     return visible;
+  } catch (error) {
+    // A definite config validation rejection is not an uncertain creation.
+    if (error instanceof ConnectorError && error.code === 'PROVIDER_AUTH_CONFIG_INVALID') writeUnconfirmed = false;
+    throw error;
   } finally {
     if (!writeUnconfirmed) await releaseLock(key, lock.token);
   }

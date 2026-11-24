@@ -1,7 +1,6 @@
 import type { ComposioToolkit } from './composio-catalog';
 
-// The shared project only provisions reviewed presets. Never accept scopes or
-// OAuth app credentials from a workspace when using the platform key.
+// Preserve the reviewed Calendar scope instead of using the managed default.
 const calendarScopes = ['https://www.googleapis.com/auth/calendar.events.readonly'];
 
 export function managedOAuthPreset(toolkit: ComposioToolkit) {

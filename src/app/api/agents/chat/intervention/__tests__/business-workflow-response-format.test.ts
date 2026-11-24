@@ -45,4 +45,23 @@ describe('Intervention business workflow response format contract', () => {
     expect(mockStart).not.toHaveBeenCalled();
     expect(mockExecute).not.toHaveBeenCalled();
   });
+
+  it('requires a phone unless the routed worker can resolve a saved WhatsApp text from its IDs', async () => {
+    const prior = process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY;
+    const args = { site_id: 'site', message: 'Hello', conversation_id: 'chat', message_id: 'saved' };
+    const service = BusinessWorkflowService.getInstance();
+    try {
+      delete process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY;
+      expect((await service.sendWhatsappFromAgent(args)).success).toBe(false);
+      process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY = 'true';
+      expect((await service.sendWhatsappFromAgent({ ...args, response_format: 'audio' })).success).toBe(false);
+      expect((await service.sendWhatsappFromAgent({ ...args, message_id: undefined })).success).toBe(false);
+      expect((await service.sendWhatsappFromAgent(args)).success).toBe(true);
+      expect(mockStart).toHaveBeenCalledTimes(1);
+      expect(mockStart.mock.calls[0][1].args[0]).not.toHaveProperty('phone_number');
+    } finally {
+      if (prior === undefined) delete process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY;
+      else process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY = prior;
+    }
+  });
 });

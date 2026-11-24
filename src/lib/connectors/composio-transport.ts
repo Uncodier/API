@@ -171,6 +171,9 @@ export function createComposioClient(apiKey: string): ComposioClient {
               if (failure) throw failure;
             }
             void response.body?.cancel().catch(() => undefined);
+            if (response.status === 400 && method === 'POST' && path === '/auth_configs') {
+              throw new ConnectorError('PROVIDER_AUTH_CONFIG_INVALID', 'The provider rejected the authentication configuration.', 422);
+            }
             httpError(response.status, write, response.headers.get('retry-after'));
           }
           return readJson(response, write);

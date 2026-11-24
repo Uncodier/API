@@ -5,6 +5,7 @@ import { catalogToolId, validateCatalogToolIds } from './composio-tool-metadata'
 import { createComposioClient } from './composio-transport';
 import { compatibleReviewedTools } from './reviewed-tools';
 import { ConnectorError, connectorAccessMode, connectorToolAccessMode, isGrantCurrent, type ConnectorAgentGrant, type ConnectorMemberGrant } from './types';
+import { requireHostedAskCompatibility } from './ask-compatibility';
 import { effectiveMemberGrant } from './grant-resolution';
 
 const uuid = z.string().uuid();
@@ -127,19 +128,33 @@ export async function updateConnectorPolicy(userId: string, connectorId: string,
   const body = policyPatchSchema.parse(input); uuid.parse(connectorId);
   await requireConnectorSiteAccess(body.site_id, userId, true);
   const connector = await getVisibleConnector(body.site_id, userId, connectorId);
+  if (connector.revision !== body.expected_revision) throw new ConnectorError('REVISION_CONFLICT', 'Reload the connection before changing its policy.', 409);
   const scope = { p_site_id: body.site_id, p_connector_id: connectorId, p_actor_id: userId, p_expected_revision: body.expected_revision };
   if (!('allowed_tools' in body)) return connectorMutation('connector_disable_catalog_reads', scope);
   // The full-body false overload compares every other field under the revision lock.
   // Skipping the remote catalog check there can only turn this single flag off.
-  if (body.catalog_reads !== false && body.allowed_tools.length) {
+  const saved = await getConnectorPolicy(body.site_id, connectorId);
+  // Preserve offline stop for a pure assistant removal. CAS still fences every
+  // field; a different tool/scope or any other policy addition requires validation.
+  const stopOnly = saved.allowed_hosts.includes('assistant') && !body.allowed_hosts.includes('assistant') &&
+    body.allowed_hosts.every(host => saved.allowed_hosts.includes(host)) && body.enabled === connector.enabled &&
+    body.tool_access_mode === saved.tool_access_mode && body.require_approval === saved.require_approval &&
+    body.catalog_reads === undefined && body.allowed_tools.length === saved.allowed_tools.length &&
+    body.allowed_tools.every(tool => saved.allowed_tools.includes(tool));
+  if (!stopOnly && body.catalog_reads !== false && body.allowed_tools.length) {
     const { apiKey } = await loadConnectorCredential(body.site_id);
     await validateCatalogToolIds(createComposioClient(apiKey), connector.toolkit_slug, body.allowed_tools);
+  }
+  // Check additions/restores, not an unrelated save retaining the host or any opt-out.
+  if (body.catalog_reads !== false && body.allowed_hosts.includes('assistant') &&
+      (body.ask_access?.enabled || !saved.allowed_hosts.includes('assistant') || (body.enabled && !connector.enabled))) {
+    await requireHostedAskCompatibility(body.site_id, userId, connectorId, connector);
   }
   const policyArgs = {
     ...scope, p_tool_access_mode: body.tool_access_mode, p_allowed_tools: body.allowed_tools,
     p_allowed_hosts: body.allowed_hosts, p_require_approval: body.require_approval, p_enabled: body.enabled,
     // Omission preserves an older publication for pending decisions. Only an explicit null clears it.
-    p_support_publication: body.support_publication === null ? null : (await getConnectorPolicy(body.site_id,connectorId)).support_publication ?? null,
+    p_support_publication: body.support_publication === null ? null : saved.support_publication ?? null,
     ...(body.catalog_reads === undefined ? {} : { p_catalog_reads: body.catalog_reads }),
   };
   if (!body.ask_access) return connectorMutation('connector_update_policy',policyArgs);

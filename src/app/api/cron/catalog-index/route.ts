@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { startCatalogIndex } from '@/lib/services/catalog-search/dispatch';
+import { observeCatalogIndexQueue } from '@/lib/services/catalog-search/queue-observation';
 import { withCronObservation } from '@/lib/status/cron-observation';
 
 export const runtime = 'nodejs';
@@ -15,10 +16,16 @@ async function runCron(request: Request) {
   if (process.env.CATALOG_INDEXING_ENABLED !== 'true') {
     return Response.json({ success: true, disabled: true }, { headers: { 'Cache-Control': 'no-store' } });
   }
+  const observation = observeCatalogIndexQueue().catch(() => {
+    console.warn('[Catalog index queue] observation unavailable');
+  });
   try {
-    return Response.json(await startCatalogIndex({ backfill: true }), { headers: { 'Cache-Control': 'no-store' } });
+    // Source changes enqueue their own work. Full scans must be requested explicitly.
+    return Response.json(await startCatalogIndex({ backfill: false }), { headers: { 'Cache-Control': 'no-store' } });
   } catch {
     return Response.json({ success: false, error: 'Catalog workflow dispatch unavailable' }, { status: 503 });
+  } finally {
+    await observation;
   }
 }
 

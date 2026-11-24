@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { readCatalogJson } from '@/lib/services/catalog-search/request-body';
 import { connectorQuery, requireConnectorActor, handleConnectorError } from '@/lib/connectors/http';
 import { connectorDatabaseError, requireConnectorSiteAccess } from '@/lib/connectors/account-access';
+import { hostedAskCompatibility, requireHostedAskCompatibility } from '@/lib/connectors/ask-compatibility';
 import { ConnectorError } from '@/lib/connectors/types';
 
 export const runtime = 'nodejs';
@@ -66,8 +67,10 @@ async function policy(req:Request, ctx:Context, write:boolean) {
     const args = {p_site_id:site,p_actor_id:actor,p_connector_id:id};
     // The manager RPC authorizes the account and verifies current isolation and revisions atomically.
     // Discard the legacy internal binding field; it is neither a browser grant nor a second policy.
+    if (body?.enabled) await requireHostedAskCompatibility(site,actor,id);
     const {bound_supabase_ref: _internal,...display}=await snapshot(args,body);
-    return Response.json(display,{headers});
+    const compatibility = body ? undefined : await hostedAskCompatibility(site,actor,id);
+    return Response.json({...display,...compatibility},{headers});
   } catch (error) { return handleConnectorError(error); }
 }
 export function GET(req:Request,ctx:Context) { return policy(req,ctx,false); }

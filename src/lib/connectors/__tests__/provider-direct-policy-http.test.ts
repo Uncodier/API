@@ -1,6 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { GET, PATCH } from '@/app/api/connectors/connections/[id]/provider-direct/route';
 import { ConnectorError } from '../types';
+const compatibility=jest.fn(), requireCompatibility=jest.fn();
+jest.mock('../ask-compatibility',()=>({hostedAskCompatibility:(...v:unknown[])=>compatibility(...v),requireHostedAskCompatibility:(...v:unknown[])=>requireCompatibility(...v)}));
 const getUser=jest.fn(), access=jest.fn(), rpc=jest.fn();
 jest.mock('@/lib/database/supabase-client',()=>({supabaseAdmin:{auth:{getUser:(...v:unknown[])=>getUser(...v)},rpc:(...v:unknown[])=>rpc(...v)}}));
 jest.mock('../account-access',()=>({...jest.requireActual('../account-access'),requireConnectorSiteAccess:(...v:unknown[])=>access(...v)}));
@@ -89,4 +91,17 @@ it.each(['a'.repeat(20), 'a1'.repeat(10), {ref:'legacy'}, null, undefined])('pro
   const read=await GET(req(query),context); expect(read.status).toBe(200); expect(await read.json()).toEqual(blocked);
   rpc.mockReturnValueOnce(reply({...visible,bound_supabase_ref:ref}));
   const restored=await PATCH(req('',patch),context); expect(restored.status).toBe(200); expect(await restored.json()).toEqual(visible);
+});
+
+it('distinguishes downstream compatibility from saved status and allows recovery without an upstream check',async()=>{
+  const state={...stored,authorization_mode:'host_policy',assistant_allowed:true};
+  rpc.mockReturnValueOnce(reply(state));compatibility.mockResolvedValue({ask_compatible:false,ask_incompatibility:'auth_scheme'});
+  const view=await GET(req(query),context);
+  expect(await view.json()).toMatchObject({enabled:true,assistant_allowed:true,ask_compatible:false,ask_incompatibility:'auth_scheme'});
+  expect(compatibility).toHaveBeenCalledWith(site,actor,id);
+  requireCompatibility.mockRejectedValue(new ConnectorError('ASK_INCOMPATIBLE','Unavailable',409));
+  const res=await PATCH(req('',patch),context);expect(res.status).toBe(409);expect(rpc).toHaveBeenCalledTimes(1);
+  rpc.mockReturnValueOnce(reply({...state,enabled:false,assistant_allowed:false,revision:9}));
+  expect((await PATCH(req('',{...patch,enabled:false}),context)).status).toBe(200);
+  expect(requireCompatibility).toHaveBeenCalledTimes(1);expect(compatibility).toHaveBeenCalledTimes(1);
 });

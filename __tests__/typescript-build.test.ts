@@ -1,5 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, relative, resolve } from 'node:path';
+import ts from 'typescript';
 
 const root = process.cwd();
 
@@ -20,7 +22,7 @@ describe('TypeScript build validation', () => {
 
   it('provides a standalone check with fresh Next.js route types', () => {
     const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
-    expect(pkg.scripts.typecheck).toBe('next typegen && tsc --noEmit');
+    expect(pkg.scripts.typecheck).toBe('next typegen && tsc --noEmit -p tsconfig.typecheck.json');
   });
 
   it('preserves strict checks and includes application and test TypeScript files', () => {
@@ -28,5 +30,37 @@ describe('TypeScript build validation', () => {
     expect(config.compilerOptions.strict).toBe(true);
     expect(config.include).toEqual(expect.arrayContaining(['**/*.ts', '**/*.tsx']));
     expect(config.exclude).toEqual(['node_modules', 'src/lib/agentbase/test/**/*']);
+  });
+
+  it('checks current generated routes, source and tests even when obsolete dev types are present', () => {
+    const fixture = mkdtempSync(resolve(tmpdir(), 'api-typecheck-'));
+    const source = 'src/app/api/current/route.ts';
+    const test = 'src/app/api/current/__tests__/route.test.ts';
+    const generated = '.next/types/validator.ts';
+    const retired = '.next/dev/types/validator.ts';
+    const configs = ['tsconfig.json', 'tsconfig.typecheck.json'];
+    try {
+      for (const name of configs) {
+        writeFileSync(resolve(fixture, name), readFileSync(resolve(root, name)));
+      }
+      for (const file of ['next-env.d.ts', source, test, generated, retired, 'src/lib/agentbase/test/excluded.ts']) {
+        const path = resolve(fixture, file);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, 'export {};\n');
+      }
+      const parsed = configs.map(name => ts.getParsedCommandLineOfConfigFile(resolve(fixture, name), {}, {
+        ...ts.sys,
+        onUnRecoverableConfigFileDiagnostic: error => { throw new Error(ts.flattenDiagnosticMessageText(error.messageText, '\n')); },
+      }));
+      const [editor, standalone] = parsed.map(config => {
+        expect(config?.errors).toEqual([]);
+        expect(config?.options.strict).toBe(true);
+        return config?.fileNames.map(file => relative(fixture, file));
+      });
+      expect(editor).toContain(retired);
+      expect(standalone?.sort()).toEqual(['next-env.d.ts', source, test, generated].sort());
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 });

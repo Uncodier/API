@@ -108,6 +108,35 @@ it.each([undefined, false, true])('returns SQL aggregates by default and indepen
     expect(confirmDirectResultRelease).toHaveBeenCalledWith(f.claim);
   }
 });
+it.each([false, true])('delivers all four zero aggregates from a WITH response (save_record=%s)', async save_record => {
+  const f = fixture('supabase', 'SUPABASE_BETA_RUN_SQL_QUERY');
+  const row = {
+    adjudications_recorded_by_purchasing_account_q3: 0,
+    accounts_with_stripe_charge: 0,
+    accounts_with_linked_order_q3: 0,
+    subscriptions_with_positive_payments_at_close: 0,
+  };
+  const columns = Object.keys(row);
+  const query = `WITH totals AS (SELECT ${columns.map(column => `0 AS ${column}`).join(', ')}) SELECT * FROM totals`;
+  const data = { command: 'WITH', result: [row], rows_affected: 1, composio_execution_message: f.key };
+  jest.mocked(executeDirectTool).mockImplementationOnce(async (_t, _c, _s, _p, before) => { await before(); return { data }; });
+
+  const call = await f.run.call(f.name, { ...f.pin, arguments: { query, read_only: true }, save_record });
+
+  expect(call).toMatchObject({ success: true, result_visibility: 'ask_owner', result_claim_id: f.claim });
+  expect(call).toHaveProperty('result', { rows: [row] });
+  expect(call).not.toHaveProperty('result_omitted');
+  expect(call).not.toHaveProperty('result_fields_omitted');
+  expect(JSON.stringify(call)).not.toContain(f.key);
+  expect(executeDirectTool).toHaveBeenCalledTimes(1);
+  if (save_record) {
+    expect(call).toHaveProperty('receipt.url', `/connectors/results/${f.receipt}`);
+    expect(jest.mocked(storeDirectResult).mock.calls[0][5]).toMatchObject({ columns, rows: [['0', '0', '0', '0']] });
+  } else {
+    expect(storeDirectResult).not.toHaveBeenCalled();
+    expect(confirmDirectResultRelease).toHaveBeenCalledWith(f.claim);
+  }
+});
 it.each([
   { data:{ tables:[] }, result:{ returned_count:0, coverage:expect.stringContaining('can be partial') } },
   { data:{ tables:[{ name:'unknown_schema' }], count:0 }, result:undefined },

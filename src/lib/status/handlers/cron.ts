@@ -1,6 +1,7 @@
 import { buildHealthResponse, type SystemHealthHandler } from '@/lib/status/types';
 import { getLatestTelemetry } from '@/lib/status/telemetry';
 import { CRON_JOBS, cronTelemetryKey } from '@/lib/status/cron-observation';
+import { CATALOG_INDEX_QUEUE_FRESHNESS_MS, CATALOG_INDEX_QUEUE_TELEMETRY, catalogIndexQueueEvidence } from '@/lib/status/catalog-index-evidence';
 
 export const cronHandler: SystemHealthHandler = {
   systemKey: 'cron',
@@ -8,6 +9,10 @@ export const cronHandler: SystemHealthHandler = {
   async runCheck() {
     const start = Date.now();
     const secret = process.env.CRON_SECRET?.trim();
+    const catalogEnabled = process.env.CATALOG_INDEXING_ENABLED === 'true';
+    const catalogReceipt = catalogEnabled
+      ? getLatestTelemetry(CATALOG_INDEX_QUEUE_TELEMETRY, CATALOG_INDEX_QUEUE_FRESHNESS_MS * 2 / 3_600_000).catch(() => null)
+      : null;
     // Never invoke a cron to test it. Keep evidence independent by scheduled job.
     const jobs = Object.fromEntries(await Promise.all(CRON_JOBS.map(async job => {
       const disabled = 'enabledEnv' in job && process.env[job.enabledEnv] !== 'true';
@@ -32,15 +37,20 @@ export const cronHandler: SystemHealthHandler = {
         reason: observed ? null : disabled ? 'disabled' : !telemetry ? 'missing_receipt' : !fresh ? 'stale_receipt' : 'unverified_receipt',
       }] as const;
     })));
+    const catalogIndexQueue = catalogIndexQueueEvidence(catalogEnabled, await catalogReceipt, Date.now());
     const expected = Object.values(jobs).filter(job => job.expected);
     const observed = expected.filter(job => job.verification === 'passive');
     const unknown = expected.length - observed.length;
+    const observedFailure = catalogIndexQueue.status === 'degraded' || observed.some(job => job.status !== 'up');
+    const hasEvidence = observed.length > 0 || catalogIndexQueue.status !== 'skipped';
+    const incomplete = unknown > 0 || (catalogEnabled && catalogIndexQueue.status === 'skipped');
     const status = observed.some(job => job.status === 'down') ? 'down'
-      : observed.length === 0 ? 'skipped'
-      : unknown > 0 || observed.some(job => job.status !== 'up') || !secret ? 'degraded' : 'up';
+      : !hasEvidence ? 'skipped'
+      : incomplete || observedFailure || !secret ? 'degraded' : 'up';
     const degradedReasons = [
       ...expected.filter(job => job.verification !== 'passive').map(job => `${job.telemetryKey}_${job.reason}`),
       ...observed.filter(job => job.status !== 'up').map(job => `${job.telemetryKey}_${job.status}`),
+      ...(catalogEnabled && catalogIndexQueue.reason ? [`catalog_index_queue_${catalogIndexQueue.reason}`] : []),
       ...(!secret ? ['cron_secret_missing'] : []),
     ];
     return buildHealthResponse({
@@ -48,18 +58,21 @@ export const cronHandler: SystemHealthHandler = {
       label: 'Cron Jobs',
       status,
       latencyMs: Date.now() - start,
-      summary: observed.length === 0 ? 'No fresh cron execution receipts; execution unverified'
+      summary: catalogIndexQueue.reason === 'exhausted' ? 'Catalog embedding jobs are exhausted; operator review required'
+        : catalogIndexQueue.reason === 'unavailable' ? 'Unable to verify exhausted catalog embedding jobs'
+        : observed.length === 0 ? 'No fresh cron execution receipts; execution unverified'
         : `${observed.length}/${expected.length} scheduled jobs have fresh execution/dispatch receipts; downstream completion unverified`,
       checks: {
-        telemetryFound: observed.length > 0,
+        telemetryFound: hasEvidence,
         cronSecretSet: !!secret,
-        verification: observed.length === 0 ? 'unverified' : unknown > 0 ? 'partial' : 'passive',
+        verification: !hasEvidence ? 'unverified' : incomplete ? 'partial' : 'passive',
         evidenceScope: 'execution_or_dispatch_not_downstream_completion',
         monitorExcluded: true,
         expectedJobs: expected.length,
         observedJobs: observed.length,
         unknownJobs: unknown,
-        observedFailure: observed.some(job => job.status === 'down' || job.status === 'degraded'),
+        observedFailure,
+        catalogIndexQueue,
         jobs,
       },
       degradedReasons,

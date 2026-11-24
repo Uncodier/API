@@ -3,6 +3,7 @@ import { isValidUUID, validateLeadExists } from './agent-data';
 import { saveCommentMessages } from '@/lib/services/social-comments/persistence';
 import { usableSupportContent } from './response-content';
 import { saveZavuSupportMessages } from './save-zavu-messages';
+import { readTwilioInboundBinding } from '@/lib/services/whatsapp/twilio-inbound-proof';
 import type { ResponseFormat } from '@/lib/services/channels/response-format';
 import { validateSupportResponseMedia, type SupportResponseMedia } from './response-media';
 // Función para guardar mensajes en la base de datos
@@ -53,6 +54,13 @@ export async function saveMessages(userId: string, userMessage: string, assistan
         originMessageId, channel: origin || 'whatsapp', requireApproval, metadata: inboundCustomData, responseFormat, responseMedia: media });
     }
 
+    // Only this authenticated, non-pinned plain-text path is a source of new
+    // automatic send eligibility. Never make an old/queued row eligible on read.
+    const legacyWhatsApp = origin === 'whatsapp' && !channelDelivery
+      && inboundCustomData?.source !== 'zavu_inbound_message' && inboundCustomData?.source !== 'comment';
+    const plainReply = legacyWhatsApp && !agentDisabled && responseFormat === 'text' && !media;
+    const twilioInbound = legacyWhatsApp && siteId && originMessageId
+      ? await readTwilioInboundBinding(siteId, originMessageId, userMessage) : undefined;
     let effectiveConversationId: string | undefined = conversationId;
     
     // Verificar si tenemos un ID de conversación
@@ -74,6 +82,13 @@ export async function saveMessages(userId: string, userMessage: string, assistan
       } else {
         if ((siteId && existingConversation.site_id !== siteId) || existingConversation.channel === 'internal_review' ||
             (existingConversation.agent_id && existingConversation.agent_id !== agentId)) {
+          throw new Error('CUSTOMER_SUPPORT_CONVERSATION_SCOPE_CONFLICT');
+        }
+        if (plainReply && ((existingConversation.lead_id && validatedLeadId && existingConversation.lead_id !== validatedLeadId)
+          || (existingConversation.visitor_id && visitorId && existingConversation.visitor_id !== visitorId)
+          || (existingConversation.channel && existingConversation.channel !== 'whatsapp')
+          || (existingConversation.custom_data?.channel && existingConversation.custom_data.channel !== 'whatsapp')
+          || existingConversation.custom_data?.channel_delivery === true)) {
           throw new Error('CUSTOMER_SUPPORT_CONVERSATION_SCOPE_CONFLICT');
         }
         console.log(`✅ Conversación existente confirmada: ${conversationId}`);
@@ -146,6 +161,8 @@ export async function saveMessages(userId: string, userMessage: string, assistan
           .eq('id', effectiveConversationId)
           .single();
         
+        // A failed read must not erase an existing channel/sender pin.
+        if (plainReply && (fetchError || !existingConv)) throw new Error('CUSTOMER_SUPPORT_CONVERSATION_LOOKUP_FAILED');
         let existingCustomData = {};
         if (!fetchError && existingConv && existingConv.custom_data) {
           existingCustomData = existingConv.custom_data;
@@ -238,6 +255,10 @@ export async function saveMessages(userId: string, userMessage: string, assistan
         ...(agentDisabled ? { agent_disabled: true, response_skipped: true } : {}),
         ...(originMessageId ? { origin_message_id: originMessageId } : {}),
       };
+      // This field never comes from the request. Only the authenticated webhook
+      // claim for this exact site, inbound SID and message body can populate it.
+      delete userMessageObj.custom_data.twilio_whatsapp_inbound;
+      if (twilioInbound) userMessageObj.custom_data.twilio_whatsapp_inbound = twilioInbound;
     }
     
     console.log(`💬 Guardando mensaje de usuario para conversación: ${effectiveConversationId}`);
@@ -284,6 +305,13 @@ export async function saveMessages(userId: string, userMessage: string, assistan
         automation_started_at: inboundCustomData.automation_started_at };
     }
     
+    if (plainReply && twilioInbound) {
+      // Not the pinned Zavu reply_to_message_id contract. Tie this reply to the
+      // saved inbound so a later different turn cannot become its authority.
+      assistantMessageObj.custom_data.whatsapp_support_inbound_id = savedUserMessage.id;
+      if (!requireApproval) Object.assign(assistantMessageObj.custom_data, { status: 'ready', channel: 'whatsapp' });
+    }
+
     if (requireApproval) {
       assistantMessageObj.custom_data = {
         ...(assistantMessageObj.custom_data || {}),

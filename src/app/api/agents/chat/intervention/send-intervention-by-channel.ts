@@ -232,8 +232,14 @@ export async function sendMessageByChannel(
 
     const OUTSTAND_CHANNELS = ['facebook', 'instagram', 'threads', 'linkedin', 'x', 'twitter', 'youtube'];
 
+    // Saved WhatsApp text has a provider-aware workflow. Audio, media and
+    // unsaved sends retain the existing exact/generic adapter semantics.
+    // Deploy the versioned worker first, then enable this switch on the API.
+    // Otherwise an older worker would interpret a Zavu chat as a Twilio send.
+    const routedWhatsAppText = process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY === 'true'
+      && channel === 'whatsapp' && !!messageId && !media && responseFormat !== 'audio';
     const useChannelDelivery =
-      contactInfo.channelDelivery === true ||
+      (contactInfo.channelDelivery === true && !routedWhatsAppText) ||
       channel === 'telegram' ||
       channel === 'messenger' ||
       OUTSTAND_CHANNELS.includes(channel);
@@ -289,7 +295,7 @@ export async function sendMessageByChannel(
     if (channel === 'whatsapp') {
       const phoneNumber = contactInfo.visitorPhone || contactInfo.leadPhone;
 
-      if (!phoneNumber) {
+      if (!phoneNumber && !routedWhatsAppText) {
         return {
           success: false,
           workflowStarted: false,
@@ -300,7 +306,9 @@ export async function sendMessageByChannel(
 
       const result = await workflowService.sendWhatsappFromAgent({
         ...mediaFields,
-        phone_number: phoneNumber,
+        // Do not invent a phone if the verified inbound is the only address:
+        // the saved-text worker resolves it again under site/conversation scope.
+        ...(phoneNumber ? { phone_number: phoneNumber } : {}),
         message,
         from: 'Equipo de Soporte',
         site_id: siteId,

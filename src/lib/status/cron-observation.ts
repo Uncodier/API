@@ -8,6 +8,7 @@ const MINUTE = 60_000;
  * The status monitor is deliberately excluded: it cannot attest to itself.
  */
 export const CRON_JOBS = [
+  { key: 'lead-bulk', path: '/api/cron/lead-bulk', schedule: '* * * * *', cadenceMs: MINUTE, freshnessMs: 3 * MINUTE },
   { key: 'catalog-index', path: '/api/cron/catalog-index', schedule: '* * * * *', cadenceMs: MINUTE, freshnessMs: 3 * MINUTE, enabledEnv: 'CATALOG_INDEXING_ENABLED' },
   { key: 'marketplace', path: '/api/cron/marketplace', schedule: '* * * * *', cadenceMs: MINUTE, freshnessMs: 3 * MINUTE },
   { key: 'credit-auto-top-up', path: '/api/cron/credit-auto-top-up', schedule: '*/5 * * * *', cadenceMs: 5 * MINUTE, freshnessMs: 15 * MINUTE },

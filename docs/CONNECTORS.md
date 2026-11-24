@@ -40,6 +40,11 @@ and [access model](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/C
   tuples; follow **Provider setup prerequisites** in the shared implementation guide before
   switching readers. Migration commit gates previously saved BYOK receipts immediately. A
   registry withdrawal blocks subsequent account use; it never reconnects or changes grants.
+- `POST /api/connectors/auth-attempts/hosted` resolves the toolkit's existing or
+  on-demand configuration under the same authenticated project, then starts the
+  verified Connect Link flow. It never accepts credentials or scopes from the
+  browser and does not enable Ask. Install `20261124000000` before releasing the
+  new route. See [onboarding and rollout](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/CONNECTOR_ONBOARDING.md).
 - Legacy apps/integrations catalogue routes now return the new scoped safe DTOs,
   not the former `{ success, data }` response. External callers must authenticate
   with a verified user bearer and use the documented site query.
@@ -59,6 +64,17 @@ and [access model](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/C
 After `20261123165000_connector_ask_host_policy.sql`, the saved `assistant` host is the only manual Ask switch. Existing explicit opt-outs are moved to that host setting without enabling any account. The regular policy save can turn it on without an execution grant; discovery is metadata-only until the normal account checks authorize execution. The offline stop action changes the same host policy. Deploy the compatible API and web before applying this migration.
 
 `20261123170000_connector_ask_connection_policy.sql` uses the existing verified connection for new Ask turns, not an additional delegation or resource attestation. Install it before deploying the Ask API/workers; retire the old `connector_direct_accounts_v2` RPC with `20261123171000` only after the rollout. The current provider identity, credential revision, member/tool policy, exact project reference and private receipt checks still apply. The migration does not change Support permissions.
+
+For neutral hosted onboarding, a completed sign-in does not turn on Ask. The
+manager status adds `ask_compatible` independently of the saved host: `true`
+means the exact site-bound private account and native API toolkit were verified,
+`false` means the method/toolkit is unsupported, and `null` means verification
+was inconclusive. Legacy connections omit the field. The hosted path supports
+Ask only with OAuth 2.0 or a private API key; Supabase requires its separate
+project-token path. MCP toolkits may connect but cannot run in Ask. Policy
+opt-in rechecks compatibility and fails closed with `ASK_INCOMPATIBLE`; turning
+Ask off does not require a live provider. Compatibility grants no execution or
+agent access and is never accepted from the browser as authority.
 
 ### Contract checks for Robots tool calls
 

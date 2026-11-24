@@ -19,9 +19,14 @@ Keep server compilations/traces serial; parallelizing them increases peak RAM.
 
 Production type checking remains enabled (`ignoreBuildErrors: false`). Strict
 checking and the application/test file scope in `tsconfig.json` are unchanged.
-`npm run typecheck` remains available for standalone validation with fresh route
-types. These optimizations reduce retained compiler memory; they do not guarantee
-that the TypeScript project itself fits every Vercel build machine.
+`npm run typecheck` runs `next typegen` and then checks against
+`tsconfig.typecheck.json`. The standalone check inherits strict validation of
+application and test files and checks the freshly generated `.next/types`.
+Development-only `.next/dev/types` can still refer to routes removed since the
+last dev session; only those generated files are excluded from the standalone
+check. The editor/dev config and production build checks remain unchanged.
+These optimizations reduce retained compiler memory; they do not guarantee that
+the TypeScript project itself fits every Vercel build machine.
 
 ## Request runtime
 
@@ -47,7 +52,8 @@ If a deployment still exhausts memory:
 
 1. Set `VERCEL_BUILD_SYSTEM_REPORT=1` in the Vercel project for complete build
    resource diagnostics and identify the phase that fails.
-2. Measure standalone type checking with `tsc --noEmit --extendedDiagnostics`.
+2. After generating route types, measure with
+   `npm exec -- tsc --noEmit -p tsconfig.typecheck.json --extendedDiagnostics`.
    Resolve type errors rather than bypassing production validation.
 3. Review the TypeScript dependency graph and generated types if type checking
    itself is the dominant consumer. Profile one heavy check/build at a time.

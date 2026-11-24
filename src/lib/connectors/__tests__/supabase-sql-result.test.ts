@@ -21,6 +21,16 @@ it('recognizes only the two SQL actions and validates their different response s
   }
 });
 
+it('recognizes a beta WITH response only when its explicit row array matches the count', () => {
+  const body = { ...betaData, command: 'WITH', result: [{ aggregate_count: 0 }] };
+  expect(supabaseSqlRows(beta, body)).toEqual(body.result);
+  expect(supabaseSqlRows(beta, { ...body, result: [], rows_affected: 0 })).toEqual([]);
+  for (const malformed of [{ ...body, result: undefined }, { ...body, rows_affected: 0 },
+    { ...body, rows_affected: '1' }, { ...body, result: [null] }, { ...body, command: 'DELETE' }]) {
+    expect(supabaseSqlRows(beta, malformed)).toBeUndefined();
+  }
+});
+
 it('formats private KPI values without rounding exact text or exposing sensitive fields', () => {
   const key = secret(), token = secret();
   const url = new URL('https://example.test/result');

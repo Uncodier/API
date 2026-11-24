@@ -116,7 +116,8 @@ describe('Composio catalogue normalization', () => {
       credentials: { client_secret: credential, scopes: 'email.write' }, shared_connection_fields: { token: credential },
     }], next_cursor: null, total_items: 1 });
     const result = await listAuthConfigs(client, 'gmail');
-    expect(result.items).toEqual([{ id: 'ac_one', name: 'OAuth', toolkitSlug: 'gmail', authScheme: 'OAUTH2', status: 'ENABLED' }]);
+    expect(result.items).toEqual([{ id: 'ac_one', name: 'OAuth', toolkitSlug: 'gmail', authScheme: 'OAUTH2', status: 'ENABLED',
+      isManaged: false, managedAppId: null, hasSharedFields: true, hasProxy: false, hasConfigCredentials: true, hasRequiredAccountFields: null }]);
     expect(JSON.stringify(result)).not.toContain(credential);
     expect(JSON.stringify(result)).not.toContain('email.write');
     expect(request.mock.calls[0][0]).toContain('toolkit_slug=gmail');
@@ -125,5 +126,13 @@ describe('Composio catalogue normalization', () => {
   it.each(['DISABLED', 'BROKEN'])('refuses provider auth-config status %s', async status => {
     request.mockResolvedValue({ items: [{ id: 'ac_one', name: 'OAuth', toolkit: { slug: 'gmail' }, status }] });
     await expect(listAuthConfigs(client, 'gmail')).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
+  });
+
+  it('keeps disabled configurations internal when explicitly requested and rejects a foreign toolkit', async () => {
+    const item = { id: 'ac_one', name: 'Disabled', toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', status: 'DISABLED' };
+    request.mockResolvedValueOnce({ items: [item] }).mockResolvedValueOnce({ items: [{ ...item, toolkit: { slug: 'other' } }] });
+    expect((await listAuthConfigs(client, 'gmail', undefined, true)).items[0].status).toBe('DISABLED');
+    expect(request.mock.calls[0][0]).toContain('show_disabled=true');
+    await expect(listAuthConfigs(client, 'gmail', undefined, true)).rejects.toMatchObject({ code: 'PROVIDER_INVALID_RESPONSE' });
   });
 });

@@ -3,6 +3,8 @@ export default {
   testEnvironment: 'node',
   testMatch: [
     '<rootDir>/src/lib/messaging/__tests__/exact*.test.ts',
+    '<rootDir>/src/lib/services/whatsapp/__tests__/routed-text*.test.ts',
+    '<rootDir>/src/app/api/agents/whatsapp/sendRoutedText/__tests__/*.test.ts',
     '<rootDir>/src/app/api/agents/tools/publish/__tests__/test-voice-delivery.test.ts',
   ],
   moduleNameMapper: { '^@/(.*)$': '<rootDir>/src/$1' },

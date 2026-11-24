@@ -54,13 +54,51 @@ function getApiKey(): string {
   return apiKey;
 }
 
+// Constructed only for a direct /messages POST refusal, never from a transport
+// exception. Carry no provider prose, receipt, or raw details into routing.
+export class ZavuWhatsAppChannelNotConnected extends Error {
+  readonly status = 409;
+  readonly code = "channel_not_connected";
+  constructor() { super("Zavu: the selected WhatsApp channel is not connected."); }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+// https://docs.zavu.dev/api-reference/send-a-message.md: 409 may ALSO be a
+// MessageResponse replay. Only accept a pure Error with explicit code and
+// details.channel; unknown keys/shapes could carry a placement or replay.
+function isWhatsAppDisconnection(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  const parts = [payload];
+  if (isRecord(payload.error)) parts.push(payload.error);
+  else if ("error" in payload && typeof payload.error !== "string") return false;
+
+  const fields = ["code", "details", "channel", "message"];
+  const envelope = [...fields, "error", "success"];
+  if ("success" in payload && payload.success !== false) return false;
+  for (const part of parts) {
+    const allowed = part === payload ? envelope : fields;
+    if (Object.keys(part).some(key => !allowed.includes(key))
+      || ("message" in part && typeof part.message !== "string")
+      || ("code" in part && part.code !== "channel_not_connected")
+      || ("channel" in part && part.channel !== "whatsapp")) return false;
+    if ("details" in part && (!isRecord(part.details) || part.details.channel !== "whatsapp"
+      || Object.keys(part.details).length !== 1)) return false;
+  }
+  return parts.some(part => part.code === "channel_not_connected") && parts.some(part => "details" in part);
+}
+
 export async function zavuFetch<T>(
   path: string,
   init: RequestInit = {},
   options?: { silentStatuses?: readonly number[]; acceptMessageReplay?: boolean }
 ): Promise<T> {
-  const response = await fetch(`${ZAVU_API_BASE}${path}`, {
+  const messagePost = path === "/messages" && init.method === "POST";
+  const url = `${ZAVU_API_BASE}${path}`;
+  const response = await fetch(url, {
     ...init,
+    ...(messagePost ? { redirect: "error" } : {}), // Don't replay a send on a redirect.
     headers: {
       Authorization: `Bearer ${getApiKey()}`,
       "Content-Type": "application/json",
@@ -78,20 +116,20 @@ export async function zavuFetch<T>(
 
   // Zavu replays an existing message with HTTP 409 for an idempotent send.
   // Opt in only for message POSTs; other conflicts must still fail.
-  const messageReplay = options?.acceptMessageReplay === true
-    && path === "/messages" && init.method === "POST"
-    && response.status === 409 && typeof payload?.message?.id === "string"
-    && payload.message.id.length > 0;
+  const directMessageConflict = messagePost && response.status === 409
+    && !response.redirected && (!response.url || response.url === url);
+  const messageReplay = options?.acceptMessageReplay === true && directMessageConflict
+    && typeof payload?.message?.id === "string" && payload.message.id.length > 0;
   if (!response.ok && !messageReplay) {
-    const errorMsg = payload.message || payload.error || `Zavu API ${response.status}`;
     if (!options?.silentStatuses?.includes(response.status)) {
       // Provider responses may echo credentials or email content. Log only the
       // operation and status, never the raw response/error body.
       console.error(`[Zavu API Error] ${init.method || "GET"} ${path} failed with status ${response.status}`);
     }
-    const error = new Error(errorMsg);
+    if (directMessageConflict && isWhatsAppDisconnection(payload)) throw new ZavuWhatsAppChannelNotConnected();
+    const error = new Error(payload?.message || payload?.error || `Zavu API ${response.status}`);
     (error as any).status = response.status;
-    (error as any).code = payload.code || payload.error?.code;
+    (error as any).code = payload?.code || payload?.error?.code;
     throw error;
   }
 

@@ -127,6 +127,7 @@ describe('Documented direct execution REST error envelope', () => {
       [execute,400,{error},'CONNECTOR_ACCOUNT_MISMATCH'],[execute,400,{error:{...error,status:403}},'PROVIDER_REJECTED'],
       [execute,400,{error:{...error,code:0}},'PROVIDER_REJECTED'],[execute,400,{error:{...error,slug:'unknown'}},'PROVIDER_REJECTED'],
       [execute,400,{error:{...error,message:'x'.repeat(4200)}},'PROVIDER_REJECTED'], [execute,400,{successful:true,error},'PROVIDER_REJECTED'],
+      ['/auth_configs',400,{error},'PROVIDER_AUTH_CONFIG_INVALID'],['/auth_configs',409,{error},'PROVIDER_REJECTED'],
       ['/connected_accounts/link',400,{error},'PROVIDER_REJECTED'],[execute,401,{error},'PROVIDER_AUTH_FAILED'],
     ] as const) {
       http.mockReset(); http.mockResolvedValueOnce(jsonResponse(body,status));

@@ -67,6 +67,10 @@ discarded `link_token`. Completion consumes opaque `session_uri` plus trusted
 `user_id`, returning the exact account/toolkit after activation. The caller must
 bind initiating actor, nonce, expiry, credential revision and pending account in
 durable state; no status-success or callback-account-ID fallback is accepted.
+For new non-OAuth credential forms, the return URL carries only a local attempt
+selector. A separate completion branch reads the active account ID already stored
+by the server, checks the current auth config and scheme, and requires the exact
+project, actor, workspace, and cookie-bound attempt. It is not an OAuth fallback.
 Project/verifier binding is the separate operator-attestation module, not claimed
 project-key introspection. Provider `user_id` is deprecated in account responses;
 missing owner identity requires the documented filtered exact-account query.

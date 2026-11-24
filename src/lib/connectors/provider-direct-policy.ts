@@ -13,7 +13,7 @@ export type DirectAuthorizedConnector = AuthorizedConnector & { directProof: Dir
 const uuid = z.string().uuid();
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/);
 const ref = z.string().regex(/^[a-z]{20}$/);
-const kit = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,99}$/);
+const kit = z.string().regex(/^[a-z0-9_][a-z0-9_-]{0,99}$/);
 const slug = z.string().regex(/^[A-Z0-9][A-Z0-9_]{0,149}$/).refine(v => !v.startsWith('COMPOSIO_') && !/[^A-Z0-9_]/.test(v));
 const revision = z.number().int().positive(), instant = z.string().datetime({offset:true});
 const account = z.object({

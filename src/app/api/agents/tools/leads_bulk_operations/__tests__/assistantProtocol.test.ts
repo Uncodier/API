@@ -38,9 +38,45 @@ it.each([
   { ...apply, action: 'delete', status: undefined, confirmation_message: 'not a chat message' },
   { action: 'create', leads: [{ name: 'No contact' }] },
   { action: 'create', leads: [{ name: 'Wrong actor', email: 'test@example.test', user_id: host.userId }] },
+  { action: 'job_add', job_id: previewId, lead_ids: [leadId] },
+  { action: 'job_open', operation: 'delete', lead_ids: [leadId] },
+  { action: 'job_submit', job_id: previewId, expected_count: 1000, confirmation_message: 'Forged' },
+  { action: 'job_select', operation: 'delete', selection_filter: {} },
+  { action: 'job_select', operation: 'create', selection_filter: { all: true } },
+  { action: 'job_select', operation: 'delete', selection_filter: { all: true, status: 'new' } },
+  { action: 'job_preview', job_id: previewId },
 ])('rejects invalid and forged arguments before the RPC (%j)', async args => {
   expect(await execute(args)).toMatchObject({ success: false, executed: false });
   expect(rpc).not.toHaveBeenCalled();
+});
+
+it('submits a large job by receipt ID and keeps trusted host scope outside tool arguments', async () => {
+  response({ success: true, job_id: previewId, state: 'queued', operation: 'change_status', total_count: 1_001,
+    affected_count: 0, remaining_count: 1_001, batch_count: 21, completed_batches: 0, error_code: null, failed_batch: null });
+  expect(await execute({ action: 'job_submit', job_id: previewId.toUpperCase(), expected_count: 1_001 }))
+    .toMatchObject({ job_id: previewId, state: 'queued', affected_count: 0 });
+  expect(rpc).toHaveBeenCalledWith('assistant_lead_job_command', {
+    p_site: host.siteId, p_user: host.userId, p_instance: host.instanceId, p_action: host.actionId,
+    p_command: 'job_submit', p_job: previewId, p_data: expect.objectContaining({ expected_count: 1_001 }),
+  });
+});
+
+it('passes an exact selection filter and returns bounded preview pages', async () => {
+  const base = { success: true, job_id: previewId, operation: 'delete', total_count: 1, affected_count: 0,
+    remaining_count: 1, batch_count: 1, completed_batches: 0, error_code: null, failed_batch: null };
+  const selection_filter = { status: 'new' };
+  const request = { action: 'job_select', operation: 'delete', selection_filter };
+  response({ ...base, state: 'selecting', selection_filter });
+  expect(await execute(request)).toMatchObject({ state: 'selecting', selection_filter });
+  expect(rpc).toHaveBeenLastCalledWith('assistant_lead_job_command', expect.objectContaining({
+    p_command: 'job_select', p_data: expect.objectContaining({ selection_filter }),
+  }));
+  response({ ...base, state: 'selecting', selection_filter: { all: true } });
+  expect(await execute(request)).toMatchObject({ code: 'LEAD_BULK_JOB_OUTCOME_UNKNOWN' });
+  const preview_items = [{ id: leadId, name: 'Lead A', status: 'new' }];
+  response({ ...base, state: 'review', selection_filter, batch_number: 1, next_batch_number: null, preview_items });
+  expect(await execute({ action: 'job_preview', job_id: previewId, batch_number: 1 }))
+    .toMatchObject({ batch_number: 1, next_batch_number: null, preview_items });
 });
 
 it('pegs the request to the host scope and canonicalizes IDs without forwarding transport metadata', async () => {

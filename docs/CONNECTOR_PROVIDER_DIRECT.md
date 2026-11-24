@@ -62,9 +62,13 @@ values. It signals truncation or omitted fields; `result_omitted: true` with
 `no_supported_data` is not a provider failure or evidence of zero rows.
 `SUPABASE_LIST_TABLES` can include inventory plus separate coverage facts.
 Recognized Supabase SQL results have `result.rows`, including an explicit
-empty array. For KPIs, request aggregates for the selected scope and prefer
-the dedicated read-only action. The beta `read_only` flag is not a write
-prevention guarantee. Return exact decimals as SQL text when precision matters.
+empty array. The beta action can label an explicit row result `SELECT` or
+`WITH`; in both cases the reported count must match the array. Neither the
+label nor the beta `read_only` flag is a write-prevention guarantee. Only direct
+SQL column names can use the bounded long snake-case alias exception; secret
+patterns, known private values and cell redaction still apply. For KPIs, request
+aggregates for the selected scope and prefer the dedicated read-only action.
+Return exact decimals as SQL text when precision matters.
 
 Tool results are available to the active model on the original turn only.
 After receiving data, the host limits follow-ups to the same authorized

@@ -112,6 +112,19 @@ describe('Composio bound account lifecycle adapter', () => {
     expect(JSON.stringify(result)).not.toContain(token);
   });
 
+  it('creates a private hosted credentials link with only the server attempt as callback context', async () => {
+    const callbackUrl = 'https://app.example.test/connectors/callback?credential_attempt=33333333-3333-4333-8333-333333333333';
+    request.mockResolvedValueOnce({ connected_account_id: 'ca_one', redirect_url: 'https://connect.composio.dev/link',
+      expires_at: new Date(Date.now() + 60_000).toISOString() });
+    await createAuthLink(client, { authConfigId: 'ac_one', userId: 'site_one', callbackUrl, privateAccount: true });
+    expect(request).toHaveBeenCalledWith('/connected_accounts/link', { method: 'POST', body: {
+      auth_config_id: 'ac_one', user_id: 'site_one', callback_url: callbackUrl, experimental: { account_type: 'PRIVATE' },
+    } });
+    await expect(createAuthLink(client, { authConfigId: 'ac_one', userId: 'site_one', callbackUrl: `${callbackUrl}&redirect=other` }))
+      .rejects.toMatchObject({ code: 'CONNECTOR_INVALID_INPUT' });
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['http://app.example.test/connectors/callback', 'https://app.example.test/other', 'https://app.example.test/connectors/callback?attempt=forged'])
     ('rejects noncanonical callback %s before initiation', async callbackUrl => {
       await expect(createAuthLink(client, { authConfigId: 'ac_one', userId: 'site_one', callbackUrl })).rejects.toMatchObject({ code: 'CONNECTOR_INVALID_INPUT' });

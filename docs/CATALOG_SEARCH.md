@@ -99,14 +99,13 @@ update requires no new indexing backfill or Temporal worker change.
 3. Deploy market-fit consumers against the same API/Supabase environment. There is
    no silent return to divergent local `ILIKE` when the shared endpoint fails.
 4. Set `CATALOG_INDEXING_ENABLED=true` in API to enable the checked-in minute cron.
-   Each tick starts/reuses `catalog-index-backfill:all` with `backfill: true`.
-   Temporal scans existing products before draining jobs; the cron itself never
-   generates embeddings. Unchanged indexed documents are reused, but each scan
-   can revive exhausted jobs, so monitor persistent failures and provider cost.
-5. The initial backfill now starts automatically on the first enabled tick after
-   deployment. Service-authenticated `POST /api/catalog/index/start` remains
-   available for manual/site-scoped runs. Indexing incurs embedding-provider usage;
-   local tests do not execute paid backfills.
+   Each tick starts/reuses `catalog-index-drain` with `backfill: false`. Source
+   writes and relationship refresh events enqueue work transactionally; the cron
+   processes only pending work, without rescanning existing products.
+5. Request the initial scan explicitly through service-authenticated
+   `POST /api/catalog/index/start` with `backfill: true`. Use `site_id` for a
+   site-scoped rebuild and `after_id` to resume from a known cursor. Backfill can
+   revive exhausted jobs and incur embedding-provider usage; plan it deliberately.
 6. Inspect indexing coverage, retries/exhausted jobs, cost and real relevance.
 7. Set `CATALOG_SEMANTIC_SEARCH_ENABLED=true` in API when ready. Until then shared
    retrieval remains lexical (exact SKU/name, FTS, escaped substring, trigram).
@@ -264,8 +263,33 @@ The endpoint explicitly drains up to 100 lexical refresh requests and reports
 `refreshed`; the compatibility claim RPC can drain another 100. `remaining` includes
 ready refresh/embedding work, but not delayed retries, live leases or exhausted jobs.
 Temporal recognizes lexical-only progress and yields when nothing can advance.
-The periodic dispatcher resumes ready work, including delayed retries. A backfill
-and a normal drain can coexist safely because the database claims jobs atomically.
+The periodic dispatcher resumes ready work, including delayed retries that have
+become eligible. A backfill and a normal drain can coexist because the database
+claims jobs atomically. On upgrade, let any existing global backfill finish;
+the new cron will not start another. No Temporal workflow change is required if
+the deployed worker already supports the drain input. After rollout, confirm the
+cron returns `catalog-index-drain`, that normal writes still reach the index,
+and that `backfill_catalog_search` is quiet apart from intentional scans.
+
+### Exhausted-job alert
+
+Each enabled, authenticated cron tick also makes a separate presence check for
+`catalog_embedding_jobs.status = 'exhausted'`. It reads only `status`, returns at
+most one row, and aborts the read after 1.5 seconds. It never requeues jobs or
+scans catalog source items. The `catalog_index_queue` receipt and the refreshed
+Cron Jobs card in `/api/status` (`checks.catalogIndexQueue`) are separate from
+dispatch acceptance. `/api/status/systems/cron` serves the stored snapshot; its
+service-authenticated `?live=1` variant reads current receipts. Exhausted jobs or an
+unavailable probe report `degraded`; missing or stale evidence is `skipped`,
+not green. A clean sample means **no exhausted jobs observed**, not that every
+item is indexed or that all pending work completed.
+
+Route the fixed `[Catalog index queue] exhausted` warning or the health reason
+`exhausted` to the operator's existing alert receiver. The implementation does
+not provision a remote alert subscription. Diagnose the provider failure first;
+then request an intentional site-scoped backfill if recovery requires one, and
+confirm the exhausted state clears. A `200` from the minute cron alone never
+clears this signal.
 
 ## Validation and remaining production checks
 

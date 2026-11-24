@@ -105,11 +105,15 @@ beforeAll(() => {
   `);
   db.migrate(migration);
   db.migrate(assignmentMigration);
+  db.migrate('20261123180000_assistant_lead_bulk_jobs.sql');
+  db.migrate('20261123181000_assistant_lead_bulk_selection_index.sql');
+  db.migrate('20261123181100_assistant_lead_bulk_selection_review.sql');
 }, 30000);
 
 beforeEach(() => {
   scope = { site, instance, user: owner, action: ownerAction };
-  db.query(`TRUNCATE assistant_lead_bulk_previews, lead_links, leads, lead_events, instance_logs,
+  db.query(`TRUNCATE assistant_lead_bulk_job_items, assistant_lead_bulk_job_batches, assistant_lead_bulk_jobs,
+    assistant_lead_bulk_previews, lead_links, leads, lead_events, instance_logs,
     site_member_location_restrictions, site_members, site_ownership, remote_instances, sites;
     INSERT INTO sites VALUES('${site}','${owner}'),('${otherSite}','${member}');
     INSERT INTO remote_instances VALUES('${instance}','${site}',false),('${otherInstance}','${site}',false);
@@ -122,6 +126,156 @@ beforeEach(() => {
     ${userAction(otherAction, { at: otherInstance })} ${userAction(keyAction, { admitted: false })}`);
 });
 afterAll(() => db?.stop());
+
+function jobSql(command: string, data: unknown = {}, id?: string) {
+  return `SELECT assistant_lead_job_command(${[scope.site, scope.user, scope.instance, scope.action, command].map(quote).join(',')},
+    ${id ? quote(id) : 'NULL'}, ${quote(JSON.stringify(data))});`;
+}
+const job = (...args: Parameters<typeof jobSql>) => JSON.parse(db.query(service(jobSql(...args))).split('\n').at(-1)!);
+const tick = () => JSON.parse(db.query(service('SELECT assistant_lead_job_tick();')).split('\n').at(-1)!);
+const selectTick = () => JSON.parse(db.query(service('SELECT assistant_lead_job_select_tick();')).split('\n').at(-1)!);
+
+it('stages 1,001 matching leads with one filtered request, freezes membership, and applies only that selection', () => {
+  db.query(`INSERT INTO leads (site_id,user_id,name,status) SELECT '${site}','${owner}','Scanned '||i,'contacted' FROM generate_series(1,1001) i;`);
+  const args = { operation: 'change_status', status: 'qualified', selection_filter: { status: 'contacted' } };
+  const { job_id: id } = job('job_select', args);
+  expect(job('job_select', args)).toMatchObject({ job_id: id, state: 'selecting' });
+  expect(job('job_select', { ...args, selection_filter: { all: true } })).toMatchObject({ code: 'invalid_job_state' });
+  expect(job('job_open', { operation: 'change_status', status: 'qualified' })).toMatchObject({ code: 'invalid_job_state' });
+  expect(selectTick()).toMatchObject({ outcome: 'staged' });
+  expect(job('job_seal', { expected_count: 49 }, id)).toMatchObject({ code: 'invalid_job_state' });
+  expect(job('job_add', { batch_number: 2, lead_ids: [a] }, id)).toMatchObject({ code: 'invalid_job_state' });
+  for (let i = 0; i < 20; i++) expect(selectTick()).toMatchObject({ outcome: 'staged' });
+  expect(selectTick()).toMatchObject({ processed: false });
+  expect(tick()).toMatchObject({ processed: false });
+  expect(job('job_status', {}, id)).toMatchObject({ state: 'draft', total_count: 1001 });
+  expect(job('job_seal', { expected_count: 1001 }, id)).toMatchObject({ state: 'review' });
+  db.query(`UPDATE leads SET status='contacted' WHERE id='${a}';`);
+  expect(job('job_submit', { expected_count: 1001 }, id)).toMatchObject({ state: 'queued' });
+  const { batch_count: batches } = job('job_status', {}, id);
+  for (let i = 0; i < batches; i++) expect(tick()).toMatchObject({ outcome: 'applied' });
+  expect(tick()).toMatchObject({ processed: false });
+  expect(job('job_status', {}, id)).toMatchObject({ state: 'completed', affected_count: 1001 });
+  expect(db.query(`SELECT status FROM leads WHERE id='${a}';`)).toBe('contacted');
+});
+
+it('paginates a sealed delete preview, marks changed leads, and still requires a separate exact chat confirmation', () => {
+  const { job_id: id } = job('job_open', { operation: 'delete' });
+  job('job_add', { batch_number: 1, lead_ids: [a] }, id);
+  job('job_add', { batch_number: 2, lead_ids: [b] }, id);
+  expect(job('job_preview', { batch_number: 1 }, id)).toMatchObject({ code: 'invalid_job_state' });
+  job('job_seal', { expected_count: 2 }, id);
+  expect(job('job_preview', { batch_number: 1 }, id)).toMatchObject({ batch_number: 1, next_batch_number: 2,
+    preview_items: [{ id: a, name: 'Lead A', status: 'new' }] });
+  db.query(`UPDATE leads SET name='Unreviewed edit' WHERE id='${b}';`);
+  expect(job('job_preview', { batch_number: 2 }, id)).toMatchObject({ batch_number: 2, next_batch_number: null, preview_items: [{ id: b, changed: true }] });
+  expect(job('job_submit', { expected_count: 2 }, id)).toMatchObject({ code: 'confirmation_required' });
+  scope = { ...scope, user: member, action: memberAction };
+  expect(job('job_preview', { batch_number: 1 }, id)).toMatchObject({ code: 'access_denied' });
+  expect(db.result('SET ROLE authenticated; SELECT assistant_lead_job_select_tick();').stderr).toContain('42501');
+  expect(db.result(service(`SELECT assistant_lead_job_command_base('${site}','${owner}','${instance}','${ownerAction}','job_status','${id}','{}');`)).stderr).toContain('42501');
+});
+
+it('stages 1,001 leads without writing, then commits each batch exactly once after the chat ends', () => {
+  const { job_id: id } = job('job_open', { operation: 'create' });
+  expect(job('job_open', { operation: 'create' })).toMatchObject({ job_id: id });
+  for (let i = 1; i <= 21; i++) {
+    const data = { batch_number: i, leads: Array.from({ length: i === 21 ? 1 : 50 }, (_, n) => ({
+      name: `Lead ${i}-${n}`, email: `lead-${i}-${n}@example.test`, status: 'new',
+    })) };
+    expect(job('job_add', data, id)).toMatchObject({ success: true, batch_count: i });
+    if (i === 1) expect(job('job_add', data, id)).toMatchObject({ replayed: true, total_count: 50 });
+  }
+  expect(job('job_seal', { expected_count: 1_000 }, id)).toMatchObject({ code: 'invalid_job_state' });
+  expect(job('job_seal', { expected_count: 1_001 }, id)).toMatchObject({ state: 'review' });
+  expect(tick()).toMatchObject({ processed: false });
+  expect(count()).toBe(3);
+  expect(job('job_submit', { expected_count: 1_001 }, id)).toMatchObject({ state: 'queued', affected_count: 0 });
+  db.query(`UPDATE instance_logs SET details=details || '{"status":"completed"}' WHERE id='${ownerAction}';`);
+  expect(tick()).toMatchObject({ outcome: 'applied' });
+  expect(count()).toBe(53);
+  for (let i = 0; i < 20; i++) expect(tick()).toMatchObject({ outcome: 'applied' });
+  expect(tick()).toMatchObject({ processed: false });
+  expect(count()).toBe(1_004);
+  scope.action = randomUUID();
+  db.query(userAction(scope.action));
+  expect(job('job_submit', { expected_count: 1_001 }, id)).toMatchObject({ state: 'completed', affected_count: 1_001, remaining_count: 0 });
+  expect(count('assistant_lead_bulk_job_items')).toBe(0);
+});
+
+it('rejects missing and duplicate IDs without altering the manifest; a stale later batch stops the job', () => {
+  const { job_id: id } = job('job_open', { operation: 'change_status', status: 'qualified' });
+  expect(job('job_add', { batch_number: 1, lead_ids: [a, foreign] }, id)).toMatchObject({ code: 'missing_leads', missing_lead_ids: [foreign] });
+  expect(job('job_add', { batch_number: 1, lead_ids: [a] }, id)).toMatchObject({ state: 'draft', total_count: 1 });
+  expect(job('job_add', { batch_number: 2, lead_ids: [a, b] }, id)).toMatchObject({ code: 'duplicate_leads', duplicate_lead_ids: [a] });
+  expect(job('job_add', { batch_number: 2, lead_ids: [b] }, id)).toMatchObject({ total_count: 2 });
+  job('job_seal', { expected_count: 2 }, id);
+  job('job_submit', { expected_count: 2 }, id);
+  expect(tick()).toMatchObject({ outcome: 'applied' });
+  db.query(`UPDATE leads SET name='Changed after review' WHERE id='${b}';`);
+  expect(tick()).toMatchObject({ outcome: 'failed' });
+  expect(job('job_status', {}, id)).toMatchObject({ state: 'failed', error_code: 'selection_changed', failed_batch: 2,
+    affected_count: 1, remaining_count: 1 });
+  expect(db.query(`SELECT status FROM leads WHERE id='${a}';`)).toBe('qualified');
+  expect(db.query(`SELECT status FROM leads WHERE id='${b}';`)).toBe('new');
+});
+
+it('requires an exact deletion confirmation and stops on live permission revocation', () => {
+  const { job_id: id } = job('job_open', { operation: 'delete' });
+  job('job_add', { batch_number: 1, lead_ids: [a] }, id);
+  const review = job('job_seal', { expected_count: 1 }, id);
+  expect(job('job_submit', { expected_count: 1 }, id)).toMatchObject({ code: 'confirmation_required' });
+  expect(db.result(`SET ROLE authenticated; ${jobSql('job_status', {}, id)}`).stderr).toContain('42501');
+  expect(db.result('SET ROLE authenticated; SELECT assistant_lead_job_tick();').stderr).toContain('42501');
+  scope.action = otherAction;
+  scope.instance = otherInstance;
+  expect(job('job_status', {}, id)).toMatchObject({ code: 'access_denied' });
+  scope = { site, instance, user: owner, action: randomUUID() };
+  db.query(userAction(scope.action, { message: review.confirmation_message }));
+  expect(job('job_submit', { expected_count: 1 }, id)).toMatchObject({ state: 'queued' });
+  db.query(`UPDATE sites SET user_id='${member}' WHERE id='${site}';`);
+  expect(tick()).toMatchObject({ outcome: 'failed' });
+  expect(count()).toBe(3);
+});
+
+it('cancels pending batches and prunes expired staged payloads', () => {
+  const { job_id: id } = job('job_open', { operation: 'delete' });
+  job('job_add', { batch_number: 1, lead_ids: [a] }, id);
+  expect(job('job_cancel', {}, id)).toMatchObject({ state: 'cancelled' });
+  expect(tick()).toMatchObject({ processed: false });
+  db.query(`UPDATE assistant_lead_bulk_jobs SET updated_at=now()-interval '8 days';`);
+  db.query(service('SELECT assistant_lead_job_prune();'));
+  expect(count('assistant_lead_bulk_jobs')).toBe(0);
+  expect(count('assistant_lead_bulk_job_items')).toBe(0);
+});
+
+it('does not process later batches while a worker owns the job and retries after a lock timeout', async () => {
+  const { job_id: id } = job('job_open', { operation: 'assign_to_me' });
+  job('job_add', { batch_number: 1, lead_ids: [a] }, id);
+  job('job_add', { batch_number: 2, lead_ids: [b] }, id);
+  job('job_seal', { expected_count: 2 }, id);
+  job('job_submit', { expected_count: 2 }, id);
+  const holder = pgClient(`BEGIN; SELECT id FROM leads WHERE id='${a}' FOR UPDATE;\n\\echo LEAD_HELD`, false);
+  const workerSql = service('SELECT assistant_lead_job_tick();');
+  let worker: ReturnType<typeof pgClient> | undefined;
+  try {
+    await waitFor(() => holder.output().includes('LEAD_HELD'));
+    worker = pgClient(`SET application_name='bulk_job_test'; ${workerSql}`);
+    await waitFor(() => db.query(`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name='bulk_job_test' AND wait_event_type='Lock');`) === 't');
+    expect(tick()).toMatchObject({ processed: false });
+    expect(JSON.parse((await worker.done).split('\n').at(-1)!)).toMatchObject({ outcome: 'retry' });
+  } finally {
+    holder.child.stdin.end('ROLLBACK;\n');
+    await Promise.allSettled([holder.done, ...(worker ? [worker.done] : [])]);
+  }
+  expect(job('job_status', {}, id)).toMatchObject({ state: 'queued', completed_batches: 0 });
+  expect(tick()).toMatchObject({ processed: false });
+  db.query(`UPDATE assistant_lead_bulk_jobs SET due_at=now() WHERE id='${id}';`);
+  expect(tick()).toMatchObject({ outcome: 'applied' });
+  expect(db.query(`SELECT assignee_id FROM leads WHERE id='${b}';`)).toBe(member);
+  expect(tick()).toMatchObject({ outcome: 'applied' });
+  expect(job('job_status', {}, id)).toMatchObject({ state: 'completed', affected_count: 2 });
+});
 
 it('permits only the service RPC and requires a bound, server-admitted user action', () => {
   for (const role of ['anon', 'authenticated']) {

@@ -17,7 +17,7 @@ interface EmailWorkflowArgs extends OutboundMediaInput {
 
 interface WhatsAppWorkflowArgs extends OutboundMediaInput {
   response_format?: 'text' | 'audio';
-  phone_number: string;     // ✅ REQUERIDO - Número de teléfono destinatario
+  phone_number?: string;    // Required for legacy, unsaved, audio and media sends.
   message: string;          // ✅ REQUERIDO - Mensaje a enviar
   site_id: string;          // ✅ REQUERIDO - ID del sitio
   from?: string;            // 🔸 OPCIONAL - Remitente (default: "AI Assistant")
@@ -243,7 +243,9 @@ export class BusinessWorkflowService extends BaseWorkflowService {
     try {
       validateResponseFormat(args.response_format, 'whatsapp');
       const media = await validateOutboundMedia(args, 'whatsapp');
-      if (!args.phone_number || (!args.message && !media) || !args.site_id) {
+      const savedText = process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY === 'true' && !!args.conversation_id?.trim()
+        && !!args.message_id?.trim() && args.response_format !== 'audio' && !media;
+      if ((!args.phone_number && !savedText) || (!args.message && !media) || !args.site_id) {
         return {
           success: false,
           error: {

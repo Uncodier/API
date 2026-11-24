@@ -24,6 +24,10 @@
   "regions": ["iad1"],
   "crons": [
     {
+      "path": "/api/cron/lead-bulk",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/catalog-index",
       "schedule": "* * * * *"
     },

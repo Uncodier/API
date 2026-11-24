@@ -52,7 +52,7 @@ export async function reuseInterventionMessage(
       ...(media.content.mimeType ? { mime_type: media.content.mimeType } : {}) };
   } catch { return null; }
   // Template approval/dispatch is owned by its workflow, not the Retry button.
-  if (customData.template_delivery) return null;
+  if (customData.template_delivery || customData.whatsapp_text_delivery) return null;
   // A retry may omit the selection, but may never change the saved choice
   // (including the legacy, unspecified mode).
   let responseFormat: ResponseFormat | undefined;
@@ -78,6 +78,7 @@ export async function reuseInterventionMessage(
   }) : undefined;
   if (audioRouting) customData.connection_id = audioRouting.connectionId;
   delete customData.error_message;
+  if (customData.error_code === 'WHATSAPP_RECIPIENT_UNVERIFIED') delete customData.error_code;
   customData.command_status = 'pending';
   customData.status = 'pending';
 

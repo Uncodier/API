@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { invalidInput, invalidProviderResponse } from './composio-transport';
 
 export const providerId = z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/);
-export const toolkitSlug = z.string().regex(/^[a-z0-9_-]{1,100}$/);
+export const toolkitSlug = z.string().regex(/^[a-z0-9_][a-z0-9_-]{0,99}$/);
 export const toolSlug = z.string().regex(/^[A-Z0-9_]{1,150}$/).refine(value => !value.startsWith('COMPOSIO_'));
 export const safeText = (max: number) => z.string().max(max).regex(/^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]*$/);
 export const opaqueCursor = z.string().min(1).max(2048).regex(/^[^\u0000-\u0020\u007f]+$/);

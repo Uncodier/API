@@ -69,3 +69,10 @@ it('retains the lease when the created ID cannot be verified, without replaying 
   expect(release).not.toHaveBeenCalled();
   expect(request).toHaveBeenCalledTimes(1);
 });
+
+it('releases the lease on a definite provider config validation rejection without retrying', async () => {
+  request.mockRejectedValueOnce(new ConnectorError('PROVIDER_AUTH_CONFIG_INVALID', 'Rejected.', 422));
+  await expect(createManagedOAuth('site', 'user', slug)).rejects.toMatchObject({ code: 'PROVIDER_AUTH_CONFIG_INVALID' });
+  expect(release).toHaveBeenCalledWith(acquire.mock.calls[0][0], 'lock-owner');
+  expect(request).toHaveBeenCalledTimes(1);
+});

@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 const states = new Set(['queued', 'sent', 'delivered', 'read', 'failed']);
 const rank: Record<string, number> = { queued: 1, sending: 1, accepted: 1, sent: 2, failed: 3, delivered: 4, read: 5 };
+type ReceiptRow = { id: string; conversation_id: string; custom_data: Record<string, any> };
 
 /** Called only after signature verification and durable webhook admission. */
 export async function reconcileTemplateDeliveryEvent(event: any): Promise<void> {
@@ -20,20 +21,35 @@ export async function reconcileTemplateDeliveryEvent(event: any): Promise<void> 
     const { data: rows, error } = await supabaseAdmin.from('messages').select('id, conversation_id, custom_data, conversations!inner(site_id)')
       .eq('conversations.site_id', siteId).eq('custom_data->template_delivery->>provider_message_id', providerId).limit(2);
     if (error) throw new Error('Template delivery receipt lookup unavailable');
-    if (!rows?.length) {
+    const { data: routed, error: routedError } = await supabaseAdmin.from('messages').select('id, conversation_id, custom_data, conversations!inner(site_id)')
+      .eq('conversations.site_id', siteId).eq('custom_data->>provider_message_id', providerId)
+      .eq('custom_data->whatsapp_text_delivery->>provider_message_id', providerId).limit(2);
+    if (routedError) throw new Error('Routed WhatsApp receipt lookup unavailable');
+    const matches: ReceiptRow[] = [...(rows || []), ...(routed || [])];
+    if (!matches.length) {
       // A webhook can beat the HTTP send response. Do not acknowledge and lose
       // it or guess by recipient; let the provider retry after the ID is persisted.
       const { data: active, error: activeError } = await supabaseAdmin.from('messages').select('id, conversations!inner(site_id)')
         .eq('conversations.site_id', siteId).eq('custom_data->template_delivery->>sender_id', senderId)
         .eq('custom_data->template_delivery->>state', 'dispatching').limit(1);
-      if (activeError || active?.length) throw new Error('Template dispatch receipt is not yet available');
+      let waiting = supabaseAdmin.from('messages').select('id, conversations!inner(site_id)')
+        .eq('conversations.site_id', siteId).eq('custom_data->>status', 'placement_unknown')
+        .eq('custom_data->whatsapp_text_delivery->route->>sender', senderId).eq('custom_data->whatsapp_text_delivery->>state', 'attempting');
+      if (typeof event.data?.to === 'string') waiting = waiting.eq('custom_data->whatsapp_text_delivery->>recipient', event.data.to);
+      const { data: pending, error: pendingError } = await waiting.limit(1);
+      if (activeError || pendingError || active?.length || pending?.length) throw new Error('Template dispatch receipt is not yet available');
       return; // Unrelated non-template messages retain their existing handling.
     }
-    if (rows.length !== 1) throw new Error('Template provider receipt is ambiguous');
-    const row = rows[0];
+    if (matches.length !== 1) throw new Error('WhatsApp provider receipt is ambiguous');
+    const row = matches[0];
     const metadata = row.custom_data;
-    const receipt = metadata?.template_delivery;
-    if (!receipt || (receipt.sender_id || receipt.submitted_sender_id) !== senderId) return;
+    const field = routed?.length ? 'whatsapp_text_delivery' : 'template_delivery';
+    const receipt = metadata?.[field];
+    if (!receipt) return;
+    if (field === 'whatsapp_text_delivery') {
+      if (receipt.state !== 'accepted' || receipt.route?.provider !== 'zavu' || receipt.route.sender !== senderId
+        || metadata.provider_message_id !== providerId || !receipt.recipient) return;
+    } else if ((receipt.sender_id || receipt.submitted_sender_id) !== senderId) return;
     if (receipt.recipient && event.data?.to && receipt.recipient !== event.data.to) return;
     const previous = metadata.status === 'failed' && !['delivered', 'read'].includes(receipt.delivery_status || receipt.state)
       ? 'failed' : receipt.delivery_status || receipt.state;
@@ -44,8 +60,9 @@ export async function reconcileTemplateDeliveryEvent(event: any): Promise<void> 
     const status = state === 'read' ? 'delivered' : state;
     const next = { ...metadata, status, needs_reconciliation: false, command_status: state === 'failed' ? 'failed'
       : ['sent', 'delivered', 'read'].includes(state) ? 'completed' : 'pending',
-      error_message: state === 'failed' ? 'WhatsApp template delivery failed at the provider.' : null,
-      template_delivery: { ...receipt, state: receiptState, delivery_status: state,
+      error_message: state === 'failed' ? 'WhatsApp delivery failed at the provider.' : null,
+      // A negative webhook after provider acceptance must never reopen the connection fallback loop.
+      [field]: { ...receipt, state: field === 'whatsapp_text_delivery' ? 'accepted' : receiptState, delivery_status: state,
         provider_event_at: typeof event.timestamp === 'number' ? event.timestamp : null,
         ...(state === 'failed' ? { failure_code: String(event.data?.errorCode || 'PROVIDER_DELIVERY_FAILED').slice(0, 100) } : {}),
       },

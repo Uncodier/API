@@ -41,6 +41,7 @@ function normalizeAccount(data: z.infer<typeof accountSchema>, readScopes = true
     hostedSupabasePat: data.toolkit.slug === 'supabase' && data.state?.authScheme === 'API_KEY' && hosted,
     // Unreported grants are unknown, not proof of either an empty grant or permission.
     scopesKnown: rawScope != null, oauth2: data.state?.authScheme === 'OAUTH2', apiKeyAuth: data.state?.authScheme === 'API_KEY',
+    authScheme: data.state?.authScheme,
     status: data.status, userId: data.user_id, scopes: [...new Set(scopes)], name: data.alias || undefined,
     authConfigDisabled: data.auth_config.is_disabled, disabled: data.is_disabled, accountType: data.experimental?.account_type,
   };
@@ -109,18 +110,23 @@ function identityError(): never {
   throw new ConnectorError('CONNECTOR_ACCOUNT_MISMATCH', 'The provider account identity could not be verified.', 409);
 }
 
-const callbackSchema = z.string().max(2048).url().refine(value => {
+const callbackSchema = z.string().max(2048).url();
+function trustedCallback(value: string, privateAccount: boolean) {
   const url = new URL(value);
-  return url.protocol === 'https:' && !url.username && !url.password && !url.port && !url.search && !url.hash
-    && url.pathname === '/connectors/callback';
-});
+  const params = [...url.searchParams];
+  return url.protocol === 'https:' && !url.username && !url.password && !url.port && !url.hash &&
+    url.pathname === '/connectors/callback' && (!url.search || (privateAccount && params.length === 1 && params[0][0] === 'credential_attempt' &&
+      z.string().uuid().safeParse(params[0][1]).success));
+}
 const linkSchema = z.object({ connected_account_id: providerId, redirect_url: z.string().max(4096).url(), expires_at: z.string().datetime({ offset: true }) });
 
 /** Caller has already bound actor/nonce/credential revision in a durable pending attempt. */
-export async function createAuthLink(client: ComposioClient, options: { authConfigId: string; userId: string; callbackUrl: string }) {
-  const input = inputValue(z.object({ authConfigId: providerId, userId: providerId, callbackUrl: callbackSchema }).strict(), options);
+export async function createAuthLink(client: ComposioClient, options: { authConfigId: string; userId: string; callbackUrl: string; privateAccount?: true }) {
+  const input = inputValue(z.object({ authConfigId: providerId, userId: providerId, callbackUrl: callbackSchema, privateAccount: z.literal(true).optional() })
+    .strict().refine(value => trustedCallback(value.callbackUrl, value.privateAccount === true)), options);
   const data = providerValue(linkSchema, await client.request('/connected_accounts/link', { method: 'POST', body: {
     auth_config_id: input.authConfigId, user_id: input.userId, callback_url: input.callbackUrl,
+    ...(input.privateAccount && { experimental: { account_type: 'PRIVATE' } }),
   } }), true);
   const redirect = new URL(data.redirect_url);
   if (redirect.protocol !== 'https:' || redirect.username || redirect.password || redirect.port || redirect.hash

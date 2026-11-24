@@ -26,6 +26,9 @@ beforeEach(() => {
       }
       if (lookupError) return { data: null, error: { message: 'offline' } };
       if (filters['custom_data->template_delivery->>state'] === 'dispatching') return { data: dispatching ? [{ id: 'active' }] : [] };
+      if (filters['custom_data->whatsapp_text_delivery->>state'] === 'attempting') return { data: [] };
+      if (filters['custom_data->whatsapp_text_delivery->>provider_message_id'] && !row?.custom_data?.whatsapp_text_delivery) return { data: [] };
+      if (filters['custom_data->template_delivery->>provider_message_id'] && !row?.custom_data?.template_delivery) return { data: [] };
       return { data: row ? [structuredClone(row)] : [] };
     };
     const q: any = { select: () => q, contains: () => q, eq: (key: string, v: any) => { filters[key] = v; return q; },
@@ -79,4 +82,17 @@ it('rejects ambiguous site mapping and other channels without writes', async () 
   await reconcileTemplateDeliveryEvent(event('failed'));
   await reconcileTemplateDeliveryEvent({ ...event('failed'), data: { ...event('failed').data, channel: 'sms' } });
   expect(writes).toBe(0);
+});
+
+it('applies verified events to a routed Zavu receipt without ever unlocking provider fallback', async () => {
+  row.custom_data = { status: 'queued', provider_message_id: 'provider', whatsapp_text_delivery: { state: 'accepted',
+    provider_message_id: 'provider', recipient: '+15555550100', route: { provider: 'zavu', sender: 'sender' } } };
+  await reconcileTemplateDeliveryEvent({ ...event('failed'), senderId: 'foreign' });
+  expect(writes).toBe(0);
+  await reconcileTemplateDeliveryEvent(event('failed'));
+  expect(row.custom_data).toMatchObject({ status: 'failed', whatsapp_text_delivery: { state: 'accepted', delivery_status: 'failed' } });
+  await reconcileTemplateDeliveryEvent(event('queued'));
+  expect(writes).toBe(1);
+  await reconcileTemplateDeliveryEvent(event('delivered'));
+  expect(row.custom_data.status).toBe('delivered');
 });

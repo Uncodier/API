@@ -12,6 +12,7 @@ export default {
     '<rootDir>/src/lib/messaging/__tests__/exact-email-attachments.test.ts',
     '<rootDir>/src/app/api/agents/chat/intervention/__tests__/send-intervention-by-channel.test.ts',
     '<rootDir>/src/app/api/agents/chat/intervention/__tests__/reuse-intervention-message.test.ts',
+    '<rootDir>/src/app/api/agents/chat/intervention/__tests__/business-workflow-response-format.test.ts',
     '<rootDir>/src/lib/services/email/__tests__/native-attachments.test.ts',
     '<rootDir>/src/app/api/agents/tools/sendEmail/__tests__/*.test.ts',
   ],

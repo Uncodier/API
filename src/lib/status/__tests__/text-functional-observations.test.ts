@@ -33,6 +33,7 @@ import { getTextObservationKey } from '../handlers/ai/passive-probes';
 import { recordTelemetry } from '../telemetry';
 import { createOpenRouterClient, getOpenRouterChatModel, OpenRouterConfigurationError } from '@/lib/services/ai/openrouter';
 import { requestOpenRouterChat } from '@/lib/services/ai/openrouter-chat-request';
+import { getProviderRetryDecision } from '@/lib/services/ai/provider-retry-policy';
 import { createHarnessModel } from '@/lib/harness/__tests__/retired/model';
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { chargeOpenRouterUsage } from '@/lib/services/billing/openrouter-usage-billing';
@@ -352,10 +353,28 @@ describe('real mainstream caller paths with only provider/persistence doubles', 
   it('actual executor stream callback failure settles once, never retries, and is not provider failure', async () => {
     create.mockResolvedValueOnce(stream([chunk('Hello', null), chunk(' world')]));
     const executor = new AIAgentExecutor({ provider: 'openrouter', model, siteId: 'synthetic-site' });
-    await expect(executor.act({ tools: [], prompt: 'Synthetic question', maxIterations: 1, stream: true,
-      onStreamStart: async () => { throw new Error('Local persistence callback failed'); }, onStreamChunk: async () => {} }))
-      .rejects.toThrow('Local persistence callback failed');
+    const callbackFailure = Object.assign(new Error(`Local persistence callback failed: ${credentials[1]}`), { status: 503 });
+    const onStreamStart = jest.fn(async () => { throw callbackFailure; });
+    const onStreamChunk = jest.fn(async () => {});
+    const act = executor.act({ tools: [], prompt: 'Synthetic question', maxIterations: 1, stream: true,
+      onStreamStart, onStreamChunk });
+
+    // A locally interrupted accepted generation requires reconciliation, not a
+    // retry or a provider-health receipt. The raw callback error stays private.
+    await expect(act).rejects.toMatchObject({
+      message: 'Inference interrupted after acceptance; reconciliation required',
+      inferenceAccepted: true,
+    });
+    const failure = await act.catch((error: unknown) => error);
+    expect(failure).not.toHaveProperty('cause');
+    expect(String(failure)).not.toContain(credentials[1]);
+    expect(getProviderRetryDecision({ status: 503, cause: failure })).toBeUndefined();
+    expect(onStreamStart).toHaveBeenCalledTimes(1);
+    expect(onStreamChunk).not.toHaveBeenCalled();
     expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
+    expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({
+      generationId: 'synthetic-generation', siteId: 'synthetic-site',
+    }));
     expect(create).toHaveBeenCalledTimes(1); expect(telemetry).not.toHaveBeenCalled();
   });
 

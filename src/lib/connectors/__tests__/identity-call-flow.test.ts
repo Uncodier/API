@@ -45,7 +45,9 @@ beforeEach(() => {
     } },
     '@/lib/services/robot-instance/vision-message-images': { hydrateMessageImages: async (v: any) => v, dehydrateMessageImages: (v: any) => v },
     '@/lib/services/robot-instance/owner-connector-transcript': ownerTranscript,
-    '@/lib/services/robot-instance/owner-connector-answer': { ownerConnectorAnswerAvailable: async () => privateAnswerReady },
+    '@/lib/services/robot-instance/owner-connector-answer': {
+      loadOwnerConnectorFollowup: async () => undefined, ownerConnectorAnswerAvailable: async () => privateAnswerReady,
+    },
     './utils': { getInstanceAssistantTools: async (...args: any[]) => [{ name: 'connector', execute: async () => {
       try { return await assistantConnectorContext({ siteId: args[0], userId: args[1], instanceId: args[2], host: args[12], agentId: args[13], catalogUserSession: args[17] })(); }
       catch (e: any) { return { code: e.code }; }

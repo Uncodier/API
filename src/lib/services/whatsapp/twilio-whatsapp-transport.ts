@@ -6,6 +6,8 @@ export interface TwilioWhatsAppSendResult {
   messageId?: string;
   error?: string;
   errorCode?: number;
+  /** Actual HTTP status, not a provider code embedded in a proxy error. */
+  httpStatus?: number;
   errorType?: string;
   suggestion?: string;
 }
@@ -182,6 +184,7 @@ async function postTwilioWhatsAppMessage(params: {
       success: false,
       error: `${errorInfo.description}: ${errorMessage}`,
       errorCode: twilioErrorCode,
+      httpStatus: response.status,
       errorType: errorInfo.type,
       suggestion: errorInfo.suggestion,
     };

@@ -14,14 +14,15 @@ function field(value: object, key: string): unknown {
   return d?.enumerable && 'value' in d ? d.value : undefined;
 }
 
-/** Only inspect the direct SELECT result wrapper. Do not search nested data or infer
- * rows from rows_affected alone (which can also describe a write). */
+/** Decode the provider's explicit result rows, not the query's effect. The beta
+ * integration can label a CTE result WITH; that label does not prove read-only. */
 export function supabaseSqlRows(action: SqlAction, data: unknown): readonly unknown[] | undefined {
   if (!object(data)) return;
   const rows = field(data, 'result');
   if (!Array.isArray(rows) || !rows.every(object)) return;
   if (action === beta) {
-    if (field(data, 'command') !== 'SELECT' || field(data, 'rows_affected') !== rows.length) return;
+    const command = field(data, 'command');
+    if ((command !== 'SELECT' && command !== 'WITH') || field(data, 'rows_affected') !== rows.length) return;
   } else if (Object.keys(data).some(key => key !== 'result' && key !== 'rows_returned') ||
              (Object.hasOwn(data, 'rows_returned') && field(data, 'rows_returned') !== rows.length)) return;
   return rows;
@@ -40,7 +41,7 @@ export function supabaseSqlReport(rows: readonly unknown[] | undefined, credenti
 
   const filter = directOutputFilter(credential, privateValues);
   const keys = Object.keys(first);
-  const visible = keys.filter(filter.field);
+  const visible = keys.filter(filter.sqlColumn);
   const columns = visible.slice(0, 5); // Existing private report DTO permits at most five columns.
   if (!columns.length) return status('Makinari did not display any columns from the SQL response. This does not confirm an empty result.');
   const preview: string[][] = [];

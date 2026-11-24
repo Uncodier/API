@@ -4,19 +4,28 @@ import { createRedactor } from '@/lib/harness/security';
 export type DirectReport = { title: string; note: string; columns: string[]; rows: string[][] };
 const safeField = /^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/;
 const privateField = /credential|secret|token|password|passwd|privatekey|publickey|apikey|accesskey|auth|cookie|session|signature|signedurl|headers|diagnostic|stacktrace|debug|rawresponse|^logs?$|connectionstring|clientkey|bearer|certificate/i;
-const sensitiveText = /-----BEGIN|\b(?:Bearer|Basic)\s|(?:\w+:\/\/)|\b(?:sk[-_]|sbp_|sb_secret_|gh[pousr]_|xox[baprs]-|AIza|AKIA)|[a-zA-Z0-9+_=/.-]{36,}|(?:token|key|password|authorization|credential|secret)\s*[:=]|[\u0000-\u0008\u000b-\u001f\u007f\u202a-\u202e\u2066-\u2069]/i;
+const secretPattern = /-----BEGIN|\b(?:Bearer|Basic)\s|(?:\w+:\/\/)|\b(?:sk[-_]|sbp_|sb_secret_|gh[pousr]_|xox[baprs]-|AIza|AKIA)|(?:token|key|password|authorization|credential|secret)\s*[:=]|[\u0000-\u0008\u000b-\u001f\u007f\u202a-\u202e\u2066-\u2069]/i;
+const opaqueText = /[a-zA-Z0-9+_=/.-]{36,}/;
+const descriptiveSqlAlias = /^(?:[a-z]{1,20}[0-9]{0,4}_){3,}[a-z]{1,20}[0-9]{0,4}$/;
 const businessUuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 
 export function directOutputFilter(credential: string, privateValues: string[] = []) {
   const redact = createRedactor([credential, ...privateValues]);
+  function field(key: string, allowSqlAlias: boolean) {
+    return safeField.test(key) && !Object.hasOwn(Object.prototype, key) && key !== 'prototype' &&
+      !privateField.test(key.replace(/[^a-zA-Z0-9]/g, '')) && !secretPattern.test(key) && redact(key) === key &&
+      (!opaqueText.test(key) || (allowSqlAlias && key.length <= 63 && descriptiveSqlAlias.test(key)));
+  }
   return {
-    field: (key: string) => safeField.test(key) && !Object.hasOwn(Object.prototype, key) && key !== 'prototype' &&
-      !privateField.test(key.replace(/[^a-zA-Z0-9]/g, '')) && !sensitiveText.test(key) && redact(key) === key,
+    field: (key: string) => field(key, false),
+    // SQL aliases can be long. Only relax the opaque-length heuristic for
+    // bounded, descriptive identifiers, never known secrets or cell values.
+    sqlColumn: (key: string) => field(key, true),
     cell(value: unknown, maxLength = 200, allowBusinessUuid = false) {
       if (value === null) return 'null';
       if (typeof value === 'string') {
         const uuid = allowBusinessUuid && value.length === 36 && businessUuid.test(value);
-        return value.length <= maxLength && (uuid || !sensitiveText.test(value)) && redact(value) === value ? value : undefined;
+        return value.length <= maxLength && (uuid || (!secretPattern.test(value) && !opaqueText.test(value))) && redact(value) === value ? value : undefined;
       }
       // The JSON transport cannot represent arbitrarily large integers exactly.
       if (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value) &&

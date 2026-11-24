@@ -260,11 +260,12 @@ export async function claimKey(
   key: string,
   ttlSeconds: number,
   operation: 'key-claim' | 'telemetry-sample' = 'key-claim',
+  value = '1',
 ): Promise<KeyClaimResult> {
   const { available, configured, result } = await command<string>([
     'SET',
     key,
-    '1',
+    value,
     'EX',
     ttlSeconds,
     'NX',

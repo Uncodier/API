@@ -1,8 +1,11 @@
 import { z } from 'zod';
 import { listVisibleConnectors, loadConnectorCredential, requireConnectorSiteAccess } from './access';
-import { getToolkit, listAuthConfigs, listToolkits, type ComposioToolkit } from './composio-catalog';
+import { getToolkit, listToolkits, type ComposioToolkit } from './composio-catalog';
 import { managedOAuthPreset } from './managed-oauth-policy';
+import { canHostConnection, canUseHostedConfig, connectionSetup, existingSetupKey, needsNoAccount } from './connection-onboarding';
+import { readAuthConfigs } from './auth-config-provisioning';
 import { createComposioClient } from './composio-transport';
+import { toolkitSlug } from './composio-validation';
 import { CONNECTOR_DOMAINS, getDomainSkills, getToolkitDomains } from './domains';
 import { projectConnections } from './connection-service';
 import { ConnectorError, type Connector } from './types';
@@ -10,7 +13,7 @@ import { catalogPageCursor, catalogPageNumber, catalogPagination } from './catal
 import { filteredCatalogPage, paginateFilteredCatalog, scanConnectedCatalog, scanProviderCatalog } from './filtered-catalog';
 
 export const siteQuerySchema = z.object({ site_id: z.string().uuid() }).strict();
-export const toolkitSlugSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,99}$/);
+export const toolkitSlugSchema = toolkitSlug;
 export const domainCountsQuerySchema = siteQuerySchema.extend({
   q: z.string().trim().max(200).regex(/^[^\u0000-\u001f\u007f]*$/).optional(),
   tab: z.enum(['all', 'connected']).default('all'),
@@ -35,7 +38,7 @@ export function projectToolkit(toolkit: ComposioToolkit, visible: Pick<Connector
   return {
     slug: toolkit.slug, name: toolkit.name, description: toolkit.description, logo: toolkit.logo_url,
     domains: mapped, skills: getDomainSkills(mapped), tools_count: toolkit.tools_count,
-    auth_schemes: toolkit.auth_schemes,
+    auth_schemes: toolkit.auth_schemes, toolkit_type: toolkit.toolkit_type,
     connection_count: visible.filter(connection => connection.toolkit_slug === toolkit.slug).length,
   };
 }
@@ -118,27 +121,18 @@ export async function getConnectorDetail(siteId: string, userId: string, slug: s
   const credential = await loadConnectorCredential(siteId);
   const visible = (await listVisibleConnectors(siteId, userId)).filter(connection => connection.toolkit_slug === slug);
   const client = createComposioClient(credential.apiKey);
-  const toolkit = await getToolkit(client, slug);
   // Auth configuration references are management metadata, never an ordinary member's ACL.
-  const configs = access.can_manage ? await listAuthConfigs(client, slug) : null;
-  if (configs) {
-    const seen = new Set<string>();
-    for (let reads = 1; configs.next_cursor && reads < 5; reads++) {
-      if (seen.has(configs.next_cursor)) throw new ConnectorError('PROVIDER_INVALID_RESPONSE', 'The provider returned repeated auth configuration pages.', 502);
-      seen.add(configs.next_cursor);
-      const next = await listAuthConfigs(client, slug, configs.next_cursor);
-      configs.items.push(...next.items); configs.next_cursor = next.next_cursor;
-    }
-    if (configs.next_cursor) throw new ConnectorError('AUTH_CONFIG_LIMIT', 'Too many auth configurations to safely display. Narrow the provider configuration first.', 422);
-    if (new Set(configs.items.map(config => config.id)).size !== configs.items.length) {
-      throw new ConnectorError('PROVIDER_INVALID_RESPONSE', 'The provider returned duplicate auth configurations.', 502);
-    }
-  }
+  const [toolkit, configs] = await Promise.all([
+    getToolkit(client, slug), access.can_manage ? readAuthConfigs(client, slug, true) : null,
+  ]);
   const connections = await projectConnections(siteId, userId, visible);
   return {
     toolkit: projectToolkit(toolkit, connections), connections,
-    auth_configs: (configs?.items ?? []).map(config => ({ id: config.id, name: config.name, auth_scheme: config.authScheme ?? 'Unknown' })),
-    can_create_managed_oauth: !!configs && !configs.items.some(config => config.authScheme === 'OAUTH2') && !!managedOAuthPreset(toolkit),
-    auth_configs_next_cursor: configs?.next_cursor ?? null, can_manage: access.can_manage, credential_source: credential.source,
+    auth_configs: (configs ?? []).filter(config => config.status === 'ENABLED').map(config => ({ id: config.id, name: config.name, auth_scheme: config.authScheme ?? 'Unknown',
+      ...(canUseHostedConfig(toolkit, config) && { setup_key: existingSetupKey(credential.revision, toolkit, config) }) })),
+    can_create_managed_oauth: !!configs && !configs.length && !!managedOAuthPreset(toolkit),
+    ...(configs ? { connection_setup: connectionSetup(toolkit, configs, credential.revision) }
+      : canHostConnection(toolkit) && needsNoAccount(toolkit) ? { connection_setup: { kind: 'no_auth' as const } } : {}),
+    auth_configs_next_cursor: null, can_manage: access.can_manage, credential_source: credential.source,
   };
 }

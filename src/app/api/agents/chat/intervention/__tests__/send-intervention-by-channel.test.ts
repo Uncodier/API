@@ -96,6 +96,29 @@ describe('Intervention response format dispatch', () => {
     else expect(args.response_format).toBe('text');
   });
 
+  it('uses the provider-aware WhatsApp workflow for saved Zavu text, not for audio', async () => {
+    const contact = { leadPhone: '+15551234567', channelDelivery: true };
+    const previous = process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY;
+    try {
+      delete process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY;
+      await sendMessageByChannel('whatsapp', 'Hello', contact, 'site', null, 'chat', 'lead', 'existing', 'text');
+      expect(sendChannel).toHaveBeenCalledWith(expect.objectContaining({ message_id: 'existing' }));
+      expect(sendWhatsapp).not.toHaveBeenCalled();
+      process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY = 'true';
+      await sendMessageByChannel('whatsapp', 'Hello', contact, 'site', null, 'chat', 'lead', 'saved', 'text');
+      expect(sendWhatsapp).toHaveBeenCalledWith(expect.objectContaining({ message_id: 'saved' }));
+      await sendMessageByChannel('whatsapp', 'Hello', { channelDelivery: true }, 'site', null, 'chat', 'lead', 'only-inbound', 'text');
+      expect(sendWhatsapp.mock.calls.at(-1)?.[0]).toMatchObject({ message_id: 'only-inbound' });
+      expect(sendWhatsapp.mock.calls.at(-1)?.[0]).not.toHaveProperty('phone_number');
+      expect(sendChannel).toHaveBeenCalledTimes(1);
+      await sendMessageByChannel('whatsapp', 'Hello', contact, 'site', null, 'chat', 'lead', 'audio-row', 'audio');
+      expect(sendChannel).toHaveBeenCalledWith(expect.objectContaining({ message_id: 'audio-row', response_format: 'audio' }));
+    } finally {
+      if (previous === undefined) delete process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY;
+      else process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY = previous;
+    }
+  });
+
   it.each(['voice', 'email', 'web', 'instagram'])('never dispatches unsupported audio on %s', async (channel) => {
     const result = await sendMessageByChannel(channel, 'Hello', { leadPhone: '+15551234567' },
       'site', null, 'conversation', 'lead', 'message', 'audio');

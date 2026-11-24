@@ -6,6 +6,7 @@ import {connectedAccountReady, connectionAttempt, projectMetadataAction, project
 import type { DirectAuthorizedConnector } from './provider-direct-policy';
 import { readTokenProviderBinding } from './provider-project-binding';
 import { verifyAccountIdentity, verifyDirectAccountIdentity } from './composio-accounts';
+import { acceptsDirectAccount, acceptsDirectToolkit } from './direct-compatibility';
 import { getToolkit } from './composio-catalog';
 import { createComposioClient, invalidProviderResponse, validateJson, type ComposioClient } from './composio-transport';
 import { inputValue, providerValue, safeText, toolkitSlug, toolSlug } from './composio-validation';
@@ -97,7 +98,7 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
     }
   }
   const toolkit = await getToolkit(client, connector.toolkit_slug);
-  if (toolkit.toolkit_type !== 'api' || toolkit.enabled === false) unsupportedDirectTool();
+  if (!acceptsDirectToolkit(toolkit)) unsupportedDirectTool();
   const identify=directProof.kind==='connected_account' && directProof.authScheme===undefined ? verifyAccountIdentity : verifyDirectAccountIdentity;
   const account = await identify(client, {accountId:connector.provider_account_id, userId:provider.provider_user_id,
     toolkitSlug:connector.toolkit_slug, authConfigId:connector.auth_config_id});
@@ -112,7 +113,7 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
   if (directProof.kind==='connected_account' && directProof.authScheme &&
       !(directProof.authScheme==='API_KEY' ? account.apiKeyAuth : account.oauth2)) notReady();
   if (project && connector.toolkit_slug==='supabase' && !account.hostedSupabasePat) notReady();
-  if (account.accountType !== 'PRIVATE' || (!account.oauth2 && !account.apiKeyAuth)) notReady();
+  if (!acceptsDirectAccount(account)) notReady();
   if (directProof.kind===undefined || directProof.kind==='attested') current(directProof.expiresAt);
   // Only the app decides its grants. The pin binds the execution contract to
   // this verified authority; it is not a cache of provider permission reports.

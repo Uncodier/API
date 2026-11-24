@@ -58,6 +58,15 @@ describe('intervention retry ownership and atomic claim', () => {
     expect(filters.filter(([key]) => key === 'user_id')).toEqual([['user_id', userId], ['user_id', userId]]);
   });
 
+  it('clears a recipient-preflight error on an explicit retry, but never clears it over a routed receipt', async () => {
+    Object.assign(customData, { error_code: 'WHATSAPP_RECIPIENT_UNVERIFIED', whatsapp_text_delivery: { state: 'unknown' } });
+    expect(await reuseInterventionMessage(messageId, conversationId, userId, 'Hello')).toBeNull();
+    delete customData.whatsapp_text_delivery;
+    expect(await reuseInterventionMessage(messageId, conversationId, userId, 'Hello')).not.toBeNull();
+    expect(updatedMetadata).toMatchObject({ status: 'pending', command_status: 'pending' });
+    expect(updatedMetadata).not.toHaveProperty('error_code');
+  });
+
   it('allows the legacy pending status with a failed command marker', async () => {
     customData.status = 'pending';
     await expect(reuseInterventionMessage(messageId, conversationId, userId, 'Hello')).resolves.not.toBeNull();
@@ -76,6 +85,7 @@ describe('intervention retry ownership and atomic claim', () => {
 
   it.each([
     { status: 'sent' }, { status: 'delivered' }, { status: 'placement_unknown' },
+    { whatsapp_text_delivery: { state: 'unknown' } },
     { status: 'queued' }, { status: 'running' }, { command_status: 'success' },
     { provider_call_id: 'call' }, { call_status: 'queued' }, { call_status: 'placement_unknown' },
   ])('never retries advanced delivery state %j', async (extra) => {

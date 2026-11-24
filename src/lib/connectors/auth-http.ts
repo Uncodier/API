@@ -4,13 +4,19 @@ import { readCatalogJson, CatalogBodyTooLargeError } from '@/lib/services/catalo
 import { requireConnectorSiteAccess } from './access';
 import { ConnectorError } from './types';
 import { finishConnectorAuth, getAuthAttempt, startConnectorAuth } from './auth-attempts';
+import { toolkitSlug } from './composio-validation';
 
 const site = z.string().uuid();
 const startSchema = z.object({
-  site_id: site, toolkit_slug: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,99}$/),
+  site_id: site, toolkit_slug: toolkitSlug,
   auth_config_id: z.string().regex(/^[a-zA-Z0-9_-]{1,150}$/), nonce: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
-const completeSchema = z.object({ site_id: site, nonce: startSchema.shape.nonce, session_uri: z.string().min(1).max(4096) }).strict();
+const hostedSchema = startSchema.extend({ expected_setup: z.string().regex(/^[a-f0-9]{64}$/), auth_config_id: startSchema.shape.auth_config_id.optional() });
+const completionScope = z.object({ site_id: site, nonce: startSchema.shape.nonce }).strict();
+const completeSchema = z.union([
+  completionScope.extend({ continuation: startSchema.shape.nonce, session_uri: z.string().min(1).max(4096) }),
+  completionScope.extend({ hosted_credentials: z.literal(true) }),
+]);
 const headers = { 'Cache-Control': 'private, no-store' };
 
 async function actor(request: Request, siteId: string) {
@@ -22,7 +28,7 @@ async function actor(request: Request, siteId: string) {
   return data.user.id;
 }
 
-export async function connectorAuthHandler(request: Request, operation: 'start' | 'start-ask' | 'get' | 'complete', id?: string): Promise<Response> {
+export async function connectorAuthHandler(request: Request, operation: 'start' | 'start-ask' | 'start-hosted' | 'get' | 'complete', id?: string): Promise<Response> {
   try {
     if (id) site.parse(id);
     if (operation === 'get') {
@@ -35,6 +41,16 @@ export async function connectorAuthHandler(request: Request, operation: 'start' 
     }
     if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw new ConnectorError('JSON_REQUIRED', 'JSON content type required.', 415);
     const body = await readCatalogJson(request, 16_384);
+    if (operation === 'start-hosted') {
+      if (new URL(request.url).search) throw new ConnectorError('INVALID_REQUEST', 'Send connection parameters in the request body.', 400);
+      const input = hostedSchema.parse(body);
+      const userId = await actor(request, input.site_id);
+      if (process.env.CONNECTORS_HOSTED_STARTS_ENABLED !== 'true') {
+        throw new ConnectorError('HOSTED_STARTS_PAUSED', 'New hosted connections are temporarily paused.', 503);
+      }
+      return Response.json(await startConnectorAuth({ siteId: input.site_id, userId, toolkitSlug: input.toolkit_slug,
+        authConfigId: input.auth_config_id, nonce: input.nonce, expectedSetup: input.expected_setup, hosted: true }), { status: 201, headers });
+    }
     if (operation === 'start' || operation === 'start-ask') {
       if (new URL(request.url).search) throw new ConnectorError('INVALID_REQUEST','Send connection parameters in the request body.',400);
       const input = startSchema.parse(body);
@@ -43,8 +59,14 @@ export async function connectorAuthHandler(request: Request, operation: 'start' 
         nonce: input.nonce, ...(operation==='start-ask' && {askOnConnect:true as const}) }), { status: 201, headers });
     }
     const input = completeSchema.parse(body);
-    const userId = await actor(request, input.site_id);
-    return Response.json(await finishConnectorAuth({ siteId: input.site_id, userId, attemptId: id!, nonce: input.nonce, sessionUri: input.session_uri }), { headers });
+    const userId = await actor(request, input.site_id).catch(error => {
+      if ('hosted_credentials' in input && error instanceof ConnectorError && error.code === 'STORAGE_UNAVAILABLE') {
+        throw new ConnectorError('CREDENTIAL_CHECK_UNAVAILABLE', 'The account check is temporarily unavailable. Check again.', 503);
+      }
+      throw error;
+    });
+    return Response.json(await finishConnectorAuth({ siteId: input.site_id, userId, attemptId: id!, nonce: input.nonce,
+      ...('session_uri' in input ? { sessionUri: input.session_uri, continuation: input.continuation } : { hostedCredential: true as const }), }), { headers });
   } catch (error) {
     if (error instanceof ConnectorError) return Response.json({ error: { code: error.code, message: error.message } }, { status: error.status, headers });
     if (error instanceof z.ZodError || error instanceof SyntaxError || error instanceof CatalogBodyTooLargeError) {
