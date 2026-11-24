@@ -45,9 +45,6 @@ export async function connectorAuthHandler(request: Request, operation: 'start' 
       if (new URL(request.url).search) throw new ConnectorError('INVALID_REQUEST', 'Send connection parameters in the request body.', 400);
       const input = hostedSchema.parse(body);
       const userId = await actor(request, input.site_id);
-      if (process.env.CONNECTORS_HOSTED_STARTS_ENABLED !== 'true') {
-        throw new ConnectorError('HOSTED_STARTS_PAUSED', 'New hosted connections are temporarily paused.', 503);
-      }
       return Response.json(await startConnectorAuth({ siteId: input.site_id, userId, toolkitSlug: input.toolkit_slug,
         authConfigId: input.auth_config_id, nonce: input.nonce, expectedSetup: input.expected_setup, hosted: true }), { status: 201, headers });
     }

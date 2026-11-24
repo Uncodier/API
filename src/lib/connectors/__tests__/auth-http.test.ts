@@ -18,12 +18,6 @@ const userId = '22222222-2222-4222-8222-222222222222';
 const attemptId = '33333333-3333-4333-8333-333333333333';
 const token = randomBytes(32).toString('hex');
 const nonce = randomBytes(32).toString('hex');
-const originalGate = process.env.CONNECTORS_HOSTED_STARTS_ENABLED;
-beforeEach(() => { process.env.CONNECTORS_HOSTED_STARTS_ENABLED = 'true'; });
-afterEach(() => {
-  if (originalGate === undefined) delete process.env.CONNECTORS_HOSTED_STARTS_ENABLED;
-  else process.env.CONNECTORS_HOSTED_STARTS_ENABLED = originalGate;
-});
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -74,15 +68,10 @@ it('forwards only strict completion proof and denies URL account claims', async 
   expect(finish).toHaveBeenCalledWith({ siteId, userId, nonce, continuation, sessionUri: 'opaque', attemptId });
 });
 
-it('starts generic hosted onboarding only for the verified workspace manager and never accepts provider settings', async () => {
+it('allows hosted onboarding by default only for a verified workspace manager and rejects caller-supplied provider settings', async () => {
   const legacy = { site_id: siteId, toolkit_slug: '_1password', nonce };
   expect((await startHosted(request(legacy))).status).toBe(400);
   const input = { ...legacy, expected_setup: randomBytes(32).toString('hex') };
-  delete process.env.CONNECTORS_HOSTED_STARTS_ENABLED;
-  const paused = await startHosted(request(input));
-  expect(paused.status).toBe(503);
-  expect(await paused.json()).toMatchObject({ error: { code: 'HOSTED_STARTS_PAUSED' } });
-  process.env.CONNECTORS_HOSTED_STARTS_ENABLED = 'true';
   expect((await startHosted(request(input, null))).status).toBe(401);
   access.mockRejectedValueOnce(new ConnectorError('ACCESS_DENIED', 'Manager required', 403));
   expect((await startHosted(request(input))).status).toBe(403);
