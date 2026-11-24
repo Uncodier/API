@@ -45,6 +45,10 @@ function normalizeToolkit(toolkit: z.infer<typeof toolkitSchema>) {
       ...(legacyModes ?? []), ...(toolkit.composio_managed_auth?.map(app => app.mode) ?? [])])],
     managed_oauth_scopes: defaultApp?.mode === 'OAUTH2' ? defaultApp.scopes.available : [],
     default_managed_auth: defaultManagedAuth,
+    // List responses advertise managed schemes without the detailed app ID.
+    // This is a discovery hint only; provisioning still verifies the exact app.
+    advertises_managed_oauth: (defaults === undefined ? legacyModes : defaultApp?.managed_app_id ? [defaultApp.mode] : [])
+      ?.some(mode => mode === 'OAUTH2' || mode === 'OAUTH1') === true,
     empty_config_schemes: methods.filter(method => {
       const fields = creationFields.safeParse(method.fields);
       return fields.success && fields.data.auth_config_creation.required.length === 0 && singleMethod(method.mode);

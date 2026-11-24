@@ -1,4 +1,5 @@
 import { POST } from '@/app/api/agents/chat/intervention/route';
+import { randomBytes } from 'node:crypto';
 import { getConversationChannel, sendMessageByChannel } from '@/app/api/agents/chat/intervention/send-intervention-by-channel';
 import { canAccessSite, getRequestSitePrincipal } from '@/lib/security/site-access';
 import { AudioRoutingError, resolveAudioRouting } from '@/lib/services/channels/audio-routing';
@@ -49,6 +50,17 @@ const MSG_ID = '33333333-3333-4333-8333-333333333333';
 const SITE_ID = '44444444-4444-4444-8444-444444444444';
 
 describe('POST /api/agents/chat/intervention', () => {
+  // The permission client is mocked; never depend on a developer's Supabase env.
+  const originalUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const originalKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  beforeAll(() => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://supabase.example.test';
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = randomBytes(24).toString('hex');
+  });
+  afterAll(() => {
+    if (originalUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL; else process.env.NEXT_PUBLIC_SUPABASE_URL = originalUrl;
+    if (originalKey === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY; else process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = originalKey;
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     (resolveAudioRouting as jest.Mock).mockResolvedValue({ kind: 'zavu', connectionId: 'selected-second', senderId: 'sender-second' });
@@ -91,7 +103,7 @@ describe('POST /api/agents/chat/intervention', () => {
     expect((await response.json()).data.message.custom_data.response_format).toBe('audio');
     const messages = fromMock.mock.results.find((_, i) => fromMock.mock.calls[i][0] === 'messages')!.value;
     expect(messages.insert).toHaveBeenCalledWith([expect.objectContaining({
-      custom_data: { command_status: 'pending', status: 'pending', response_format: 'audio', connection_id: 'selected-second' },
+      custom_data: { command_status: 'pending', status: 'accepted', dispatch_owner: 'chat_intervention', response_format: 'audio', connection_id: 'selected-second' },
     })]);
     expect(sendMessageByChannel).toHaveBeenCalledWith(channel, 'Hello', expect.any(Object), SITE_ID,
       undefined, CONV_ID, undefined, MSG_ID, 'audio', {message_type:undefined, media_url:undefined, mime_type:undefined});
@@ -196,7 +208,7 @@ describe('POST /api/agents/chat/intervention', () => {
       expect(response.status).toBe(200);
       expect((sendMessageByChannel as jest.Mock).mock.calls[0][8]).toBe('audio');
       expect(messages.update).toHaveBeenCalledWith({ custom_data: {
-        status: 'pending', command_status: 'pending', response_format: 'audio', connection_id: 'selected-second',
+        status: 'accepted', command_status: 'pending', dispatch_owner: 'chat_intervention', response_format: 'audio', connection_id: 'selected-second',
       } });
     }
   });
@@ -220,13 +232,15 @@ describe('POST /api/agents/chat/intervention', () => {
     expect(body.success).toBe(true);
     expect(body.data.status).toBe('accepted');
     expect(body.data.message.message_id).toBe(MSG_ID);
+    expect(body.data.message.custom_data).toMatchObject({ status: 'accepted', command_status: 'pending', dispatch_owner: 'chat_intervention' });
+    expect(body.data.message.custom_data).not.toHaveProperty('sent_at');
     expect(body.data.channel_send.workflowId).toBe('wf-started');
     expect(sendMessageByChannel).toHaveBeenCalledTimes(1);
     expect(fromMock).toHaveBeenCalledWith('messages');
     const messagesChain = fromMock.mock.results.find((_, i) => fromMock.mock.calls[i][0] === 'messages')?.value;
     expect(messagesChain.insert).toHaveBeenCalledWith([
       expect.objectContaining({
-        custom_data: { command_status: 'pending', status: 'pending' },
+        custom_data: { command_status: 'pending', status: 'accepted', dispatch_owner: 'chat_intervention' },
         content: 'Hello from the team',
         role: 'team_member',
       }),
@@ -339,6 +353,14 @@ describe('POST /api/agents/chat/intervention', () => {
     expect(response.status).toBe(401);
     expect(fromMock).not.toHaveBeenCalled();
   });
+
+  it.each([{ dispatch_owner: 'chat_intervention' }, { status: 'accepted' }, { custom_data: { status: 'accepted' } }])(
+    'never delegates approval or dispatch ownership to caller-provided fields: %j', async extra => {
+      const res = await POST(new Request('http://localhost/api/agents/chat/intervention', { method: 'POST',
+        headers: { Authorization: 'Bearer test-session' }, body: JSON.stringify({ conversationId: CONV_ID, message: 'Hello', ...extra }) }));
+      expect(res.status).toBe(400);
+      expect(fromMock).not.toHaveBeenCalled(); expect(sendMessageByChannel).not.toHaveBeenCalled();
+    });
 
   it('requires the session-scoped insert capability before saving', async () => {
     mockPermission.mockResolvedValue({ data: false, error: null });

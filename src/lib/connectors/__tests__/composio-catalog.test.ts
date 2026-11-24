@@ -7,6 +7,18 @@ describe('Composio catalogue normalization', () => {
   const client: ComposioClient = { request };
   beforeEach(() => request.mockReset());
 
+  it('distinguishes managed OAuth from generic OAuth and API keys in one catalogue request', async () => {
+    const base = toolkitFixture();
+    request.mockResolvedValue({ items: [
+      { ...base, slug: 'metaads', auth_schemes: ['OAUTH2', 'API_KEY'], composio_managed_auth_schemes: ['OAUTH2'] },
+      { ...base, auth_schemes: ['OAUTH2'] },
+      { ...base, auth_schemes: ['API_KEY'], composio_managed_auth_schemes: ['API_KEY'] },
+      { ...base, composio_managed_auth: [], composio_managed_auth_schemes: ['OAUTH2'] },
+    ] });
+    expect((await listToolkits(client)).items.map(item => item.advertises_managed_oauth)).toEqual([true, false, false, false]);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it('normalizes metadata and truthful pagination without returning raw fields', async () => {
     const credential = secret();
     request.mockResolvedValue({ items: [{ ...toolkitFixture(), credentials: credential }], next_cursor: 'next_page', total_items: 700 });

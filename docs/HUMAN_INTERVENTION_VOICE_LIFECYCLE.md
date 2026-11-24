@@ -6,7 +6,13 @@ conversation resources are resolved server-side. API keys additionally require
 write scope; a service credential without a bound user is not a human author.
 The endpoint no longer implicitly creates or renames conversations.
 
-The API saves a team-member message before attempting external delivery. For
+Pressing Send in Conversations approves the authenticated team member's own
+intervention. The API inserts the message with `status: accepted`,
+`command_status: pending` and `dispatch_owner: chat_intervention` before attempting
+delivery. This is human approval, **not** a provider receipt. Direct dispatch owns
+the row; the scheduled approved-message batch must not send it a second time.
+Deploy the queue/claim exclusions before rolling out these API writes. This
+does not approve assistant drafts or retroactively enqueue historical messages. For
 the persisted `voice` channel, delivery uses the existing tracked Zavu call
 service directly, **not Temporal**. Other channel workflows are unchanged.
 
@@ -34,8 +40,9 @@ to avoid overwriting newer callbacks. Terminal delivery rows are not regressed
 to queued by a late placement response.
 
 Retries require the original author, conversation, role, unchanged content,
-and a failed state without advanced delivery evidence. An atomic pending-state
-claim prevents concurrent retry requests from both sending. Existing call or
+and a failed state without advanced delivery evidence. An atomic claim restores
+the same manual-approval metadata, leaving command execution pending, and
+prevents concurrent retry requests from both sending. Existing call or
 unknown-delivery records are never automatically redialed, including failed
 delivery claims that require separate reconciliation.
 

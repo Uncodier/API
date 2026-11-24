@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
 import { resolveAudioRouting } from '@/lib/services/channels/audio-routing';
 import { validateOutboundMedia, type OutboundMediaInput } from '@/lib/services/channels/outbound-media';
+import { manualDispatchMetadata } from './manual-dispatch';
 
 export type SavedInterventionMessage = {
   conversationId: string;
@@ -79,8 +80,7 @@ export async function reuseInterventionMessage(
   if (audioRouting) customData.connection_id = audioRouting.connectionId;
   delete customData.error_message;
   if (customData.error_code === 'WHATSAPP_RECIPIENT_UNVERIFIED') delete customData.error_code;
-  customData.command_status = 'pending';
-  customData.status = 'pending';
+  Object.assign(customData, manualDispatchMetadata);
 
   const { data: claimed, error: updateError } = await supabaseAdmin
     .from('messages')

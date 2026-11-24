@@ -97,7 +97,11 @@ it('does not treat an inventory read failure as a reason to dispatch', async () 
   expect(writeRoutedText).not.toHaveBeenCalled();
 });
 
-it('marks an unverified recipient as a correctable preflight failure without trying any sender', async () => {
+it.each([
+  { status: 'sending' },
+  { status: 'accepted', command_status: 'pending', dispatch_owner: 'chat_intervention' },
+])('rejects an unverified recipient before any provider attempt, even with manual approval: %j', async initial => {
+  ctx.metadata = initial;
   const error = new RoutedTextRecipientError();
   error.snapshot = { role: ctx.role, content: ctx.content, metadata: snap(ctx.metadata) };
   jest.mocked(loadRoutedText).mockRejectedValueOnce(error);

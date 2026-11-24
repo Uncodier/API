@@ -63,7 +63,7 @@ describe('intervention retry ownership and atomic claim', () => {
     expect(await reuseInterventionMessage(messageId, conversationId, userId, 'Hello')).toBeNull();
     delete customData.whatsapp_text_delivery;
     expect(await reuseInterventionMessage(messageId, conversationId, userId, 'Hello')).not.toBeNull();
-    expect(updatedMetadata).toMatchObject({ status: 'pending', command_status: 'pending' });
+    expect(updatedMetadata).toMatchObject({ status: 'accepted', command_status: 'pending', dispatch_owner: 'chat_intervention' });
     expect(updatedMetadata).not.toHaveProperty('error_code');
   });
 

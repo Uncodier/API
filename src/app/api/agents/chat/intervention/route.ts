@@ -12,11 +12,7 @@ import { SocialCommentError } from '@/lib/services/social-comments/metadata';
 import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
 import { AudioRoutingError, resolveAudioRouting } from '@/lib/services/channels/audio-routing';
 import { validateOutboundMedia, type OutboundMediaInput } from '@/lib/services/channels/outbound-media';
-
-const PENDING_CUSTOM_DATA = {
-  command_status: 'pending',
-  status: 'pending',
-};
+import { manualDispatchMetadata } from './manual-dispatch';
 
 async function saveMessages(
   userId: string,
@@ -37,7 +33,7 @@ async function saveMessages(
       user_id: userId,
       content: interventionMessage,
       role: 'team_member',
-      custom_data: { ...commentMetadata, ...PENDING_CUSTOM_DATA,
+      custom_data: { ...commentMetadata, ...manualDispatchMetadata,
         ...mediaInput,
         ...(connectionId !== undefined ? { connection_id: connectionId } : {}),
         ...(responseFormat !== undefined ? { response_format: responseFormat } : {}) },
@@ -218,7 +214,7 @@ export async function POST(request: Request) {
         message_id: savedMessages.interventionMessageId,
         role: 'team_member',
         user_id: user_id,
-        custom_data: { ...commentMetadata, ...mediaInput,
+        custom_data: { ...commentMetadata, ...mediaInput, ...manualDispatchMetadata,
           ...(responseFormat !== undefined ? { response_format: responseFormat } : {}) },
       }
     };

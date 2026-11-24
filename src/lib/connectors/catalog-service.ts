@@ -39,6 +39,7 @@ export function projectToolkit(toolkit: ComposioToolkit, visible: Pick<Connector
     slug: toolkit.slug, name: toolkit.name, description: toolkit.description, logo: toolkit.logo_url,
     domains: mapped, skills: getDomainSkills(mapped), tools_count: toolkit.tools_count,
     auth_schemes: toolkit.auth_schemes, toolkit_type: toolkit.toolkit_type,
+    managed_oauth: toolkit.advertises_managed_oauth === true && toolkit.enabled !== false && toolkit.slug !== 'supabase',
     connection_count: visible.filter(connection => connection.toolkit_slug === toolkit.slug).length,
   };
 }
