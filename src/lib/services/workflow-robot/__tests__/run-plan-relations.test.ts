@@ -7,6 +7,7 @@ const updatePlan = jest.fn();
 const prepareAssistantContext = jest.fn();
 const processAssistantTurn = jest.fn();
 
+jest.unstable_mockModule('@/app/api/cron/workflows/connector-admission', () => ({ isConnectorWorkflow: async () => false }));
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({
   supabaseAdmin: { from: () => ({
     select: () => ({ eq: () => ({ single: async () => ({ data: plan, error: null }) }) }),

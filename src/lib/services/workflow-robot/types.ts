@@ -29,6 +29,7 @@ export interface WorkflowStepSettings {
 }
 
 export interface WorkflowGraphNode {
+  task_connector_id?: string | null;
   id: string;
   instance_id: string;
   parent_node_id: string | null;

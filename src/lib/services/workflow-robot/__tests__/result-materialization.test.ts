@@ -5,8 +5,9 @@ import { materializeRunFromGraph } from '../materialize';
 describe('result contract version at materialization', () => {
   let inserts: Array<{ table: string; payload: any }>;
   let existing: any;
+  let selected: string | null;
   beforeEach(() => {
-    jest.clearAllMocks(); inserts = []; existing = null;
+    jest.clearAllMocks(); inserts = []; existing = null; selected = null;
     from.mockImplementation((table: string) => {
       let payload: any;
       const query: any = {};
@@ -19,7 +20,7 @@ describe('result contract version at materialization', () => {
         if (table === 'remote_instances') return { data: { id: 'instance', site_id: 'site', user_id: 'user', name: 'Task' }, error: null };
         if (table === 'instance_nodes') return { data: [
           { id: 'trigger', type: 'wf-trigger', instance_id: 'instance', site_id: 'site', settings: { trigger: { kind: 'channel_message' } } },
-          { id: 'step', type: 'wf-step', parent_node_id: 'trigger', instance_id: 'instance', site_id: 'site', prompt: { text: 'Analyze input' }, settings: {} },
+          { id: 'step', task_connector_id: selected, type: 'wf-step', parent_node_id: 'trigger', instance_id: 'instance', site_id: 'site', prompt: { text: 'Analyze input' }, settings: {} },
         ], error: null };
         if (table === 'workflow_triggers') return { data: { template_plan_id: 'template', node_id: 'trigger' }, error: null };
         if (table === 'workflow_runs') return { data: existing, error: null };
@@ -29,6 +30,14 @@ describe('result contract version at materialization', () => {
       query.then = (resolve: any, reject: any) => Promise.resolve(result()).then(resolve, reject);
       return query;
     });
+  });
+
+  it('does not turn a selected connector into an ordinary manual, dry-run, or event plan', async () => {
+    selected = 'selected-account';
+    for (const payload of [{ dry_run: true }, { trigger_payload: { kind: 'cron' } }, {}]) {
+      await expect(materializeRunFromGraph({ instance_id: 'instance', ...payload })).rejects.toThrow('explicitly published');
+    }
+    expect(inserts).toEqual([]);
   });
 
   it('pins v2 on a new ordinary run without writing the version to its template', async () => {

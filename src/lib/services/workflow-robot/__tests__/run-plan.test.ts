@@ -1,3 +1,4 @@
+jest.mock('@/app/api/cron/workflows/connector-admission', () => ({ isConnectorWorkflow: jest.fn(async () => false) }));
 const mockUpdateEq = jest.fn();
 const mockFinishClaim = jest.fn();
 const mockClaim = jest.fn();
@@ -93,6 +94,15 @@ describe('runWorkflowPlan claim recovery', () => {
     mockProcurementAccess.mockResolvedValue(undefined);
     mockPlanRouting.mockImplementation(async (_id, siteId) => ({ payer: 'platform', siteId }));
     mockResolveCredential.mockResolvedValue({});
+  });
+
+  it('blocks manual resume of a connector instance before routing, sandbox or model execution', async () => {
+    const { isConnectorWorkflow } = await import('@/app/api/cron/workflows/connector-admission');
+    jest.mocked(isConnectorWorkflow).mockResolvedValueOnce(true);
+    await expect(runWorkflowPlan('plan-1')).rejects.toThrow('ordinary runner');
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockProcessAssistantTurn).not.toHaveBeenCalled();
+    expect(mockEnsureWorkflowSandbox).not.toHaveBeenCalled();
   });
 
   it('restores the private customer pin before claim, ignoring mutable metadata routing', async () => {

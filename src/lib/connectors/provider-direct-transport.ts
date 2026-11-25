@@ -1,4 +1,5 @@
 import 'server-only';
+import { descriptorContainsPrivateValue } from './descriptor-privacy';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {connectedAccountReady, connectionAttempt, projectMetadataAction, projectScopedConnection,
@@ -119,9 +120,9 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
   // this verified authority; it is not a cache of provider permission reports.
   // Projection must not expose server secrets/bindings even if upstream metadata
   // repeats them inside a seemingly ordinary field name or enum literal.
-  const visible = JSON.stringify(parameters);
-  if ([credential.apiKey, project, connectionAttempt(directProof), 'resourceBoundary' in directProof ? directProof.resourceBoundary : undefined, connector.provider_account_id, connector.auth_config_id].some(privateValue =>
-    privateValue && (visible.includes(JSON.stringify(privateValue)) || (privateValue.length >= 12 && visible.includes(privateValue))))) unsupportedDirectTool();
+  if (descriptorContainsPrivateValue(parameters, [credential.apiKey, project, connectionAttempt(directProof),
+    'resourceBoundary' in directProof ? directProof.resourceBoundary : undefined, connector.provider_account_id,
+    connector.auth_config_id, provider.project_id, provider.provider_user_id, provider.credential_revision])) unsupportedDirectTool();
   const schemaHash = hashConnectorSchema({ mode:'direct-account-v3', slug, toolkit:toolkit.slug, version:tool.version,
     input:hashConnectorSchema(directSchemaContract(tool.input_parameters)),
     output:tool.output_parameters ? hashConnectorSchema(directSchemaContract(tool.output_parameters)) : null,

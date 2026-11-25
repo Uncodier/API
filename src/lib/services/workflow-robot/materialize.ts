@@ -17,7 +17,7 @@ export { buildRunSteps };
 async function loadGraph(instanceId: string): Promise<WorkflowGraphNode[]> {
   const { data, error } = await supabaseAdmin
     .from('instance_nodes')
-    .select('id, instance_id, parent_node_id, type, status, prompt, settings, site_id, user_id')
+    .select('id, instance_id, parent_node_id, type, status, prompt, settings, site_id, user_id, task_connector_id')
     .eq('instance_id', instanceId)
     .in('type', [...WF_NODE_TYPES]);
 
@@ -236,6 +236,10 @@ export async function materializeRunFromGraph(
     if (!nodes.length || !nodes.some((node) => node.type === 'wf-step' || node.type === 'wf-condition')) {
       throw new Error('Channel trigger branch has no executable steps');
     }
+  }
+  // Selected connector tasks are never emulated with an assistant, sandbox, or manual test.
+  if (nodes.some(node => node.task_connector_id != null)) {
+    throw new Error('Connector tasks require an explicitly published scheduled run.');
   }
   let steps: any[] = [];
   let templateId: string;

@@ -1,3 +1,4 @@
+import { isConnectorWorkflow } from '@/app/api/cron/workflows/connector-admission';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { withAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
 import { getPlanRouting } from './plan-routing';
@@ -149,6 +150,7 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
   if ((plan.metadata as any)?.pre_response_only === true) {
     throw new Error('Channel message runs require bounded execution');
   }
+  if (await isConnectorWorkflow(plan.instance_id)) throw new Error('Scheduled connector runs cannot use the ordinary runner.');
   const routing = await getPlanRouting(plan.id, plan.site_id);
   return withAssistantRouting(plan.site_id, routing, () => runRoutedWorkflowPlan(runPlanId, plan, options));
 }
