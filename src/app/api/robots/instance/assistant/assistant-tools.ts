@@ -174,7 +174,7 @@ export const getAssistantToolDefinitions = (
     ...createProcurementTools({ siteId, userId }),
     subscriptionPlanItemsTool(siteId),
     subscriptionsTool(siteId),
-    schedulingTool(siteId, instanceId),
+    schedulingTool(siteId, instanceId, commandSource, userId),
     getFinderCategoryIdsTool(siteId),
     analyzeICPTotalCountTool(siteId),
     createIcpMiningTool(siteId),

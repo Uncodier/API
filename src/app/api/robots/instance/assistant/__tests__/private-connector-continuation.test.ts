@@ -95,7 +95,7 @@ it.each(['ok','revoked after dispatch','malformed receipt','publication denied']
     const messages = [{role:'user',content:'Refresh and compare the figures.'}];
     const op = f.run(f.context,messages);
     if (mode !== 'ok') {
-      await expect(op).rejects.toMatchObject({name:'RecoveryError',code:'inactive'});
+      await expect(op).rejects.toMatchObject({name:'RecoveryError',code:'private_context_unavailable'});
       if (mode !== 'publication denied') expect(f.ownerAnswers.publishOwnerConnectorAnswer).not.toHaveBeenCalled();
     } else {
       const out = await op;

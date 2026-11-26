@@ -24,10 +24,15 @@ jest.mock('../../src/lib/scheduling/appointments', () => ({
   }),
 }));
 
-function post(body: Record<string, unknown>) {
+import { resolveToolRequestPrincipal, canToolPrincipalAccessSite } from '@/lib/security/tool-request-principal';
+jest.mock('@/lib/security/tool-request-principal', () => ({
+  resolveToolRequestPrincipal: jest.fn(), canToolPrincipalAccessSite: jest.fn(),
+}));
+
+function post(body: Record<string, unknown>, headers?: Record<string, string>) {
   return POST(
     new NextRequest('http://localhost/api/agents/tools/scheduling/schedule', {
-      method: 'POST',
+      method: 'POST', headers,
       body: JSON.stringify(body),
     })
   );
@@ -39,8 +44,33 @@ describe('scheduling schedule route list/update', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue({ internal: true });
+    (canToolPrincipalAccessSite as jest.Mock).mockResolvedValue(true);
   });
 
+  const create = { site_id: siteId, context_id: leadId, title: 'Meeting', start_datetime: '2099-02-01T15:00:00Z',
+    duration: 30, timezone: 'UTC' };
+  const turn = '33333333-3333-4333-8333-333333333333';
+  it('requires a credential and site access before create/replay', async () => {
+    (resolveToolRequestPrincipal as jest.Mock).mockResolvedValueOnce(null);
+    expect((await post(create)).status).toBe(401);
+    (canToolPrincipalAccessSite as jest.Mock).mockResolvedValueOnce(false);
+    expect((await post(create)).status).toBe(403);
+    (resolveToolRequestPrincipal as jest.Mock).mockResolvedValueOnce({ internal: false });
+    expect((await post(create, { 'x-native-scheduling-turn': turn })).status).toBe(403);
+    expect(createAppointment).not.toHaveBeenCalled();
+  });
+  it('ignores body-supplied operation identity and distinguishes a verified replay from creation', async () => {
+    const appointment = { id: 'existing', status: 'cancelled' };
+    (createAppointment as jest.Mock).mockResolvedValueOnce({ appointment, replayed: false })
+      .mockResolvedValueOnce({ appointment, replayed: true });
+    expect((await post({ ...create, turn, id: turn })).status).toBe(201);
+    expect(createAppointment).toHaveBeenLastCalledWith(expect.not.objectContaining({ turn }), undefined);
+    const response = await post(create, { 'x-native-scheduling-turn': turn });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ replayed: true, appointment_id: 'existing', status: 'cancelled' });
+    expect(createAppointment).toHaveBeenLastCalledWith(expect.objectContaining(create), turn);
+  });
   it('lists appointments for a lead via action=list', async () => {
     (listAppointments as jest.Mock).mockResolvedValue([
       {

@@ -1,5 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
+import * as recordGrounding from '@/lib/services/robot-instance/ask-record-grounding';
+import { linkedAskRecordIds } from '@/lib/services/robot-instance/ask-record-links';
 import { NextRequest, NextResponse } from 'next/server';
 import { loadRuntimeModule as load } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { parseRecoveryExecution } from '@/lib/services/robot-instance/assistant-recovery-schema';
@@ -44,6 +46,7 @@ beforeEach(() => {
       return { isDone: true, text: 'done', messages };
     } },
     '@/lib/services/robot-instance/vision-message-images': { hydrateMessageImages: async (v: any) => v, dehydrateMessageImages: (v: any) => v },
+    '@/lib/services/robot-instance/ask-record-grounding': recordGrounding,
     '@/lib/services/robot-instance/owner-connector-transcript': ownerTranscript,
     '@/lib/services/robot-instance/owner-connector-answer': {
       loadOwnerConnectorFollowup: async () => undefined, ownerConnectorAnswerAvailable: async () => privateAnswerReady,
@@ -93,6 +96,7 @@ async function route(body: Record<string, unknown>) {
     '@/lib/database/supabase-client': { supabaseAdmin },
     'workflow/api': { start: async (_fn: any, args: any[]) => ({ result: await run(...args) }) },
     './workflow': { runAssistantWorkflow: run },
+    '@/lib/services/robot-instance/ask-record-links': { linkedAskRecordIds },
     './ask-submission': { claimAskSubmission: async () => ({ id: action, replay: false }), firstAskInstanceId: () => instance },
     './response-stream': { assistantResponseStream: (v: any) => NextResponse.json(v.result) },
     './publish-tool-overrides': {},

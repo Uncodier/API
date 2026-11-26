@@ -208,8 +208,9 @@ export async function executeAssistantStep(
           }
         } : undefined;
 
-        // HYDRATE MESSAGES BEFORE ACTING
-        const hydratedMessages = await hydrateMessageImages(messages);
+        // The linked-Record host resolves the original user assets before adding
+        // private data. Model-produced parts must never trigger a later download.
+        const hydratedMessages = options.privateAssetsHydrated ? messages : await hydrateMessageImages(messages);
 
         executionResult = await executor.act({
                 tools: prepared.tools,
@@ -267,7 +268,7 @@ export async function executeAssistantStep(
           return result;
   } catch (error: any) {
       const providerFailure = describeOpenRouterFailure(error);
-      console.error('Error executing assistant step:', providerFailure ?? { name: error?.name });
+      console.error('Error executing assistant step:', providerFailure ?? (options.ownerConnectorContext ? { private: true } : { name: error?.name }));
       throw error;
   }
 }

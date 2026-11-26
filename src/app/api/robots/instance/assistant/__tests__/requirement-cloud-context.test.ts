@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { TransientBindingPreflightError } from '../assistant-turn-retry';
 import { resolveAssistantFileEnvironment } from '../cloud-context';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
@@ -7,7 +8,7 @@ jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest
 type Row = { id: string; site_id: string; instance_id?: string; metadata: Record<string, unknown> };
 type Query = { table: string; eq: jest.Mock; not: jest.Mock; limit: jest.Mock; order: jest.Mock; range: jest.Mock };
 
-function fixture() {
+function fixture(failureCode?: string) {
   const scope = { siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID() };
   const queries: Query[] = [];
   const rows: Record<string, Row[]> = { requirements: [], instance_plans: [] };
@@ -19,7 +20,7 @@ function fixture() {
     let order: { field: string; ascending: boolean } | undefined;
     const execute = async (start: number, end: number) => {
       if (failures.has(table) || failures.has(`${table}:${start}`)) {
-        return { data: null, error: new Error('Offline lookup unavailable') };
+        return { data: null, error: Object.assign(new Error('Offline lookup unavailable'), { code: failureCode }) };
       }
       const selected = rows[table].filter(row => filters.every(filter => filter(row)));
       if (order) {
@@ -199,6 +200,15 @@ test.each(['requirements', 'instance_plans', 'instance_plans:1000'])('unavailabl
   if (source.endsWith(':1000')) for (let i = 0; i < 1000; i++) f.plan(id);
   f.failures.add(source);
   await expect(resolveAssistantFileEnvironment(f.scope)).rejects.toThrow(/^Requirement file environment is unavailable$/);
+});
+
+test.each(['PGRST003', '53300', '57P03', '42501', 'unknown'])('classifies %s only at the pre-effect lookup', async code => {
+  const f = fixture(code);
+  f.failures.add('requirements');
+  const preflight = resolveAssistantFileEnvironment(f.scope, 'initial-preflight');
+  if (['42501', 'unknown'].includes(code)) await expect(preflight).rejects.not.toBeInstanceOf(TransientBindingPreflightError);
+  else await expect(preflight).rejects.toBeInstanceOf(TransientBindingPreflightError);
+  await expect(resolveAssistantFileEnvironment(f.scope)).rejects.not.toBeInstanceOf(TransientBindingPreflightError);
 });
 
 test('a plan pointing to an inaccessible requirement cannot become standalone', async () => {

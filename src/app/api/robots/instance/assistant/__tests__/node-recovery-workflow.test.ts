@@ -117,10 +117,18 @@ describe('node execution continuation workflow', () => {
     h.processAssistantTurn.mockResolvedValue({ recoverableFailure: true });
     expect(await h.run()).toMatchObject({ execution_status: 'continuing' });
     expect(h.processAssistantTurn).toHaveBeenCalledTimes(1);
-    expect(h.spawnSilentContinueStep).toHaveBeenCalledWith(expect.objectContaining({ userMessageLogId: 'user-log' }));
+    expect(h.spawnSilentContinueStep).toHaveBeenCalledWith(expect.objectContaining({ userMessageLogId: 'user-log', generation: 0 }));
     expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
     expect(h.checkpointRecoveryStep).not.toHaveBeenCalled();
     expect(h.completeUserMessageStep).not.toHaveBeenCalled();
+  });
+
+  it('does not start a downgraded continuation from an older retry envelope', async () => {
+    const h = setup();
+    h.processAssistantTurn.mockResolvedValue({ recoverableFailure: true, retryNotBefore: Date.now() + 1000 });
+    expect(await h.run({ userMessageLogId: 'user-log', catalogUserSession: true })).toMatchObject({ success: false });
+    expect(h.sleep).not.toHaveBeenCalled();
+    expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
   });
 
   it('returns a safe terminal message when continuation is exhausted', async () => {

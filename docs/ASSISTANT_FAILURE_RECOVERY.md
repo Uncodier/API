@@ -3,8 +3,11 @@
 The durable `processAssistantTurn` step keeps `maxRetries = 0`. Replaying a whole
 turn can duplicate tools, outbound messages, publications, or paid operations.
 
-When the shared core rejects with a recognized transient admission HTTP error or
-confirmed DNS/refused-connection error, the settled wrapper may release its turn. This is
+OpenRouter already retries request admission locally (at most two retries with a
+20-second wait budget); this does not replay stream consumption or tools. The
+settled wrapper accepts recognized SDK admission failures or a sanitized customer
+provider rejection, not arbitrary errors carrying similar status or cause fields.
+It may release the turn for deferred recovery. This is
 allowed only for the current trusted action/generation, with an unchanged node
 binding, a saved conversation, a single-output execution, and an explicitly empty
 tool-observation list. Node turns are excluded because response-node writes can
@@ -29,6 +32,22 @@ and a Workflow timer. Neither the workflow nor maintenance may claim recovery
 before that deadline. Missing headers use a one-second minimum backoff. Invalid
 headers or waits exceeding 24 hours fail closed; requested waits are never shortened.
 Cancellation and ownership are rechecked after waiting.
+
+The initial standalone requirement-binding read also has a fast lane. Only a
+returned pool timeout (`PGRST003`), exhausted connections (`53300`), or database
+not ready (`57P03`) before tool construction and model dispatch qualifies. It
+waits one second and uses the same release and claim path. Only generation zero
+qualifies: a second binding outage does not start another continuation. All
+binding and authorization reads run again; a tool-time binding check, permission
+denial, ambiguous binding, or unclassified outage does not qualify. The claim
+compares the workflow's generation as well as the checkpoint revision, so a
+workflow waking after another claimant cannot take that claimant's turn.
+
+A connector-capable or connector-selected turn is not released on either path.
+A stale in-flight private checkpoint or a private retry deadline from an older
+writer cannot be claimed to answer without the original connector access.
+Private preflight handling stays with its owner-aware runtime. No provider,
+workflow engine or database rollout is verified by the offline tests.
 
 Unrecoverable errors produce a generic public failure message and a failed outcome,
 not a raw exception or internal path. The instance error log stores a bounded,

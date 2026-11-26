@@ -36,6 +36,14 @@ describe('assistant lifecycle SSE', () => {
     expect(text).not.toContain('event: completed');
   });
 
+  it('reports a definite private-context pause without exposing error details or suggesting a retry', async () => {
+    const text = await assistantResponseStream({ runId: 'run', status: Promise.resolve('completed'),
+      returnValue: Promise.resolve({ success: false, execution_status: 'paused', code: 'ASSISTANT_PRIVATE_CONTEXT_UNAVAILABLE', message: 'private detail' }) }, 'instance', 'log').text();
+    expect(text).toContain('ASSISTANT_PRIVATE_CONTEXT_UNAVAILABLE');
+    expect(text).not.toContain('private detail');
+    expect(text).not.toContain('ASSISTANT_WORKFLOW_INCOMPLETE');
+  });
+
   it('reports the credit-specific error and renewal date, then reaches EOF', async () => {
     const text = await assistantResponseStream({ runId: 'run', status: Promise.resolve('completed'),
       returnValue: Promise.resolve({ success: false, code: 'INSUFFICIENT_CREDITS', execution_status: 'paused',

@@ -9,6 +9,7 @@ import { readAssistantStepResult } from '../requirement-host';
 import { createAssistantWorkspaceTools } from '../workspace-tools';
 import { withAssistantRouting } from '../execution-routing';
 import * as ownerTranscript from '@/lib/services/robot-instance/owner-connector-transcript';
+import * as recordGrounding from '@/lib/services/robot-instance/ask-record-grounding';
 export const siteId = randomUUID(), instanceId = randomUUID(), nodeId = randomUUID();
 
 export function turn(creditExhausted = false, failure?: Error) {
@@ -20,8 +21,9 @@ export function turn(creditExhausted = false, failure?: Error) {
   });
   const ownerAnswers = {confirmOwnerConnectorContext:jest.fn(async (_claims: string[]) => undefined),
     ownerConnectorAnswerAvailable:jest.fn(async () => true),
-    loadOwnerConnectorFollowup:jest.fn(async (_scope:unknown): Promise<undefined | {source_id:string,answer:string,connector_ids:string[],tool_context:{claim_id:string,result:unknown}[]} | {unavailable:true}> => undefined),
-    privateContextUnavailable:() => {throw new RecoveryError('inactive');},
+    loadOwnerConnectorFollowup:jest.fn(async (_scope:unknown): Promise<undefined | {source_id:string,answer:string,connector_ids:string[],record_ids?:string[],tool_context:{claim_id:string,result:unknown}[]} | {unavailable:true}> => undefined),
+    loadOwnerAskRecords:jest.fn(async (_scope:unknown,_ids:readonly string[]):Promise<unknown[]> => []),
+    privateContextUnavailable:() => {throw new RecoveryError('private_context_unavailable');},
     publishOwnerConnectorAnswer:jest.fn(async (_scope:unknown,_claims:string[],_text:string) => 'Open your owner answer')};
   const run = loadRuntimeModule<typeof import('../assistant-turn-core')>(
     'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
@@ -40,6 +42,7 @@ export function turn(creditExhausted = false, failure?: Error) {
       './conversation-recovery-tools': { CONVERSATION_RECOVERY_INSTRUCTION: '', getConversationRecoveryTools: () => [] },
       '@/lib/services/tool-execution-context': contextModule,
       '@/lib/services/robot-instance/owner-connector-transcript': ownerTranscript,
+      '@/lib/services/robot-instance/ask-record-grounding': recordGrounding,
       '@/lib/services/robot-instance/owner-connector-answer': ownerAnswers,
       '@/lib/services/robot-instance/assistant-respawn-policy': { SILENT_CONTINUE_PROMPT },
       '@/lib/services/robot-instance/assistant-recovery': { assertAssistantRecoveryActive: async () => undefined,

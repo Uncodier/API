@@ -16,8 +16,21 @@ it.each(['missing RPC','legacy shape','wrong destination','malformed entry','ove
   else if (reason === 'wrong destination') respond({...data,connector_ids:[]});
   else if (reason === 'malformed entry') respond({...data,tool_context:[{claim_id:randomUUID()}]});
   else respond({...data,tool_context:[{claim_id:randomUUID(),result:'x'.repeat(131072)}]});
-  await expect(loadOwnerConnectorFollowup(scope)).rejects.toMatchObject({name:'RecoveryError'});
+  await expect(loadOwnerConnectorFollowup(scope)).rejects.toMatchObject({code:'private_context_unavailable'});
   expect(mockRpc.mock.calls).toEqual([['connector_ask_context',{p_action_id:scope.userMessageLogId}]]);
+});
+
+it('retries only the same context read after a transient gateway failure', async () => {
+  mockRpc.mockReturnValueOnce({abortSignal:async () => ({status:503,error:{code:'unavailable'}})});
+  respond(null);
+  await expect(loadOwnerConnectorFollowup(scope)).resolves.toBeUndefined();
+  expect(mockRpc.mock.calls).toEqual(Array(2).fill(['connector_ask_context',{p_action_id:scope.userMessageLogId}]));
+});
+
+it.each([[503,2],[403,1]])('bounds retries on HTTP %i and does not downgrade the connector policy', async (status, calls) => {
+  mockRpc.mockReturnValue({abortSignal:async () => ({status,error:{code:'unavailable'}})});
+  await expect(loadOwnerConnectorFollowup(scope)).rejects.toMatchObject({code:'private_context_unavailable'});
+  expect(mockRpc).toHaveBeenCalledTimes(calls);
 });
 
 it('passes only fresh claims + projected entries and exact prior authority to the combined write', async () => {

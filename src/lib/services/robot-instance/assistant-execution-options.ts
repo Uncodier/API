@@ -4,8 +4,10 @@ import type { AssistantExecutionBoundary } from './assistant-execution-boundary'
 export interface AssistantExecutionOptions {
   /** Host-only callbacks, not JSON configuration. */
   executionBoundary?: AssistantExecutionBoundary;
-  /** Owner-only connector data is already in this model context. No shared text or tool logs. */
+  /** Owner-only workspace data is already in this model context. No shared text or tool logs. */
   ownerConnectorContext?: true;
+  /** Caller hydrated user assets before adding native Records. Never resolve media from the private model transcript. */
+  privateAssetsHydrated?: true;
   maxOutputTokens?: number;
   use_sdk_tools?: boolean;
   provider?: AIProvider;

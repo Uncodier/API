@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
 import { isValid, addMinutes, isPast } from 'date-fns';
 import { loadSchedulingDirectory } from './calendar-directory';
 import {
@@ -66,10 +66,6 @@ export interface UpdateAppointmentParams {
   description?: string;
   reminder?: number | string;
   participants?: string[];
-}
-
-function generateCalendarLink(appointmentId: string): string {
-  return `https://cal.example.com/event/${appointmentId}`;
 }
 
 export async function checkAppointmentAvailability(
@@ -168,13 +164,10 @@ export async function listAppointments(params: ListAppointmentsParams): Promise<
   return (data || []) as AppointmentRow[];
 }
 
-export async function createAppointment(params: CreateAppointmentParams): Promise<AppointmentRow> {
+export async function createAppointment(params: CreateAppointmentParams, turn?: string) {
   const startDate = parseInstantOrWallClock(params.start_datetime, params.timezone);
   if (!isValid(startDate)) {
     throw Object.assign(new Error('El formato de fecha y hora no es válido. Usar formato ISO 8601'), { status: 422 });
-  }
-  if (isPast(startDate)) {
-    throw Object.assign(new Error('No se puede programar una cita en el pasado'), { status: 422 });
   }
 
   const endDate = addMinutes(startDate, params.duration);
@@ -182,11 +175,33 @@ export async function createAppointment(params: CreateAppointmentParams): Promis
   const end_datetime = endDate.toISOString();
   const participants = params.participants || [];
 
+  // A new turn may rebook a cancelled/moved appointment. Within a turn, the
+  // slot and assignees distinguish bookings; generated titles and notes do not.
+  const appointment_id = turn ? uuidv5(JSON.stringify([
+    'native-appointment:v1', params.site_id.toLowerCase(), params.context_id.toLowerCase(), startUtc,
+    params.duration, [...new Set(participants.map(id => id.trim().toLowerCase()))].sort(),
+  ]), turn) : uuidv4();
+  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
+  const table = () => supabaseAdmin.schema(schema).from('appointments');
+  const findReplay = async () => {
+    const { data, error } = await table().select('*').eq('site_id', params.site_id)
+      .eq('context_id', params.context_id).eq('id', appointment_id).maybeSingle();
+    if (error) throw new Error('Could not verify the existing appointment');
+    return data as AppointmentRow | null;
+  };
+  if (turn) {
+    const existing = await findReplay();
+    if (existing) return { appointment: existing, replayed: true };
+  }
+  if (isPast(startDate)) {
+    throw Object.assign(new Error('Cannot schedule an appointment in the past'), { status: 422 });
+  }
   const isAvailable = await checkAppointmentAvailability(
     startUtc,
     end_datetime,
     params.site_id,
-    participants
+    participants,
+    turn ? appointment_id : undefined
   );
   if (!isAvailable) {
     throw Object.assign(new Error('El horario solicitado no está disponible'), {
@@ -195,7 +210,6 @@ export async function createAppointment(params: CreateAppointmentParams): Promis
     });
   }
 
-  const appointment_id = uuidv4();
   const appointmentData = {
     id: appointment_id,
     title: params.title,
@@ -210,24 +224,25 @@ export async function createAppointment(params: CreateAppointmentParams): Promis
     description: params.description,
     reminder: params.reminder,
     status: 'confirmed',
-    calendar_link: generateCalendarLink(appointment_id),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 
-  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
-  const { data: appointment, error } = await supabaseAdmin
-    .schema(schema)
-    .from('appointments')
+  const { data: appointment, error } = await table()
     .insert([appointmentData])
     .select()
     .single();
 
   if (error) {
+    // The PK arbitrates concurrent deliveries. Never overwrite the winner.
+    if (turn && error.code === '23505') {
+      const existing = await findReplay();
+      if (existing) return { appointment: existing, replayed: true };
+    }
     throw new Error('Error al programar la cita');
   }
 
-  return appointment as AppointmentRow;
+  return { appointment: appointment as AppointmentRow, replayed: false };
 }
 
 export async function updateAppointment(params: UpdateAppointmentParams): Promise<AppointmentRow> {
@@ -333,7 +348,7 @@ export function appointmentPublicFields(appointment: AppointmentRow) {
     end_utc: appointment.end_datetime,
     timezone: tz,
     status: appointment.status,
-    calendar_link: appointment.calendar_link,
+    calendar_link: appointment.calendar_link ?? null,
     context_id: appointment.context_id,
     duration: appointment.duration,
     participants: appointment.participants,

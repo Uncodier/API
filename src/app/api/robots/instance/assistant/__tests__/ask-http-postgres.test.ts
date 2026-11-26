@@ -163,3 +163,29 @@ it('an interrupted first-session creation cannot be adopted and started by a ret
   expect(response.status).toBe(503);
   expect(count('instance_logs')).toBe(0); expect(start).not.toHaveBeenCalled();
 });
+
+
+it('rejects too many explicit Record sources without recording or starting an incomplete turn', async () => {
+  const message = Array.from({length:9}, () => `/records/${randomUUID()}`).join(' ');
+  const response = await post({...base,message});
+  expect(response.status).toBe(400);
+  expect(await response.json()).toMatchObject({execution_started:false,error:{code:'ASK_RECORD_LINK_LIMIT'}});
+  expect(count('instance_logs')).toBe(0);
+  expect(start).not.toHaveBeenCalled();
+});
+
+it('binds only explicit native Record references to the trusted submission', async () => {
+  const ids = [randomUUID(), randomUUID()], forged = randomUUID();
+  const message = `Compare /records/${ids[0]} and https://app.makinari.com/records/${ids[1]}`;
+  expect((await post({...base,message,ask_linked_record_ids:[forged]})).status).toBe(200);
+  expect(JSON.parse(db.query("SELECT details->'ask_linked_record_ids' FROM instance_logs"))).toEqual(ids);
+});
+
+it('does not add native sources to another member’s instance, even when the instance is visible', async () => {
+  db.query(`UPDATE remote_instances SET user_id='${randomUUID()}' WHERE id='${instance}'`);
+  const response = await post({...base,message:`Analyze /records/${randomUUID()}`});
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({execution_started:false,error:{code:'ASK_RECORDS_REQUIRE_OWNER'}});
+  expect(count('instance_logs')).toBe(0);
+  expect(start).not.toHaveBeenCalled();
+});

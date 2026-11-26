@@ -71,6 +71,31 @@ function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true,
 }
 
 describe('assistant private execution context wiring', () => {
+  it('routes native scheduling create with the host action and bound site', async () => {
+    const userId = randomUUID();
+    const source = { siteId, userId, instanceId, actionId: randomUUID() };
+    const native = jest.requireActual<typeof import('@/app/api/agents/tools/scheduling/assistantProtocol')>(
+      '@/app/api/agents/tools/scheduling/assistantProtocol');
+    const tools = catalog(undefined, { '@/app/api/agents/tools/scheduling/assistantProtocol': native })
+      .getAssistantTools(siteId, userId, instanceId, [], undefined, undefined, undefined, undefined, undefined,
+        undefined, source);
+    const router = tools.find(t => t.name === 'tools')!;
+    const original = process.env.SERVICE_API_KEY;
+    process.env.SERVICE_API_KEY = randomBytes(24).toString('hex');
+    const fetch = jest.spyOn(global, 'fetch').mockImplementation(async () => Response.json({ success: true }));
+    try {
+      await router.execute({ action: 'call', name: 'scheduling', args: JSON.stringify({ action: 'schedule',
+        context_id: randomUUID(), start_datetime: '2099-01-02T15:00:00Z', duration: 30, timezone: 'UTC', title: 'Visit' }) });
+      expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/scheduling\/schedule$/), expect.objectContaining({
+        headers: expect.objectContaining({ 'x-native-scheduling-turn': expect.any(String) }),
+      }));
+      expect(JSON.parse(String(fetch.mock.calls[0][1]?.body)).site_id).toBe(siteId);
+    } finally {
+      fetch.mockRestore();
+      if (original === undefined) delete process.env.SERVICE_API_KEY; else process.env.SERVICE_API_KEY = original;
+    }
+  });
+
   it('registers video analysis beside transcription with host scope in every UI output mode', async () => {
     const execute = jest.fn(async () => ({ description: 'Offline video description' }));
     const analyzeVideoTool = jest.fn(() => ({ name: 'analyze_video', description: 'Analyze video',
@@ -240,7 +265,7 @@ describe('assistant private execution context wiring', () => {
         './assistant-turn-core': { processAssistantTurn: processTurn },
         '@/lib/services/robot-instance/assistant-recovery': { releaseFailedAssistantTurn: jest.fn() },
         '@/lib/services/robot-instance/assistant-recovery-schema': { RecoveryError },
-        '@/lib/services/robot-instance/assistant-failure-policy': { getProviderRetryDecision: () => undefined },
+        './assistant-turn-retry': { settledTurnRetry: () => undefined },
         './requirement-host': { readRequirementAssistantHost: () => undefined },
       });
     const context = {} as Parameters<typeof processAssistantTurn>[0];

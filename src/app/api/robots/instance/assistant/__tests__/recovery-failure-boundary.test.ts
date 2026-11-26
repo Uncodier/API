@@ -3,7 +3,7 @@ import { FatalError } from '@workflow/errors';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { execution, recoveryDatabase, scope } from '@/lib/services/robot-instance/test-support/assistant-recovery-fixture';
 import { RecoveryError } from '@/lib/services/robot-instance/assistant-recovery-schema';
-import { getProviderRetryDecision } from '@/lib/services/robot-instance/assistant-failure-policy';
+import { settledTurnRetry, TransientBindingPreflightError } from '../assistant-turn-retry';
 
 let db: ReturnType<typeof recoveryDatabase>;
 let recovery: typeof import('@/lib/services/robot-instance/assistant-recovery');
@@ -54,7 +54,7 @@ beforeAll(async () => {
       './assistant-turn-core': { processAssistantTurn: core },
       '@/lib/services/robot-instance/assistant-recovery': recovery,
       '@/lib/services/robot-instance/assistant-recovery-schema': { RecoveryError },
-      '@/lib/services/robot-instance/assistant-failure-policy': { getProviderRetryDecision },
+      './assistant-turn-retry': { settledTurnRetry },
       './requirement-host': { readRequirementAssistantHost: () => undefined },
     },
   );
@@ -73,6 +73,34 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); });
 
 describe('recovery failure across the durable assistant boundary', () => {
+  it('pauses the owned action when private context cannot be verified instead of leaving it eligible for cron', async () => {
+    core.mockRejectedValueOnce(new RecoveryError('private_context_unavailable'));
+    pause.mockImplementationOnce(async () => { db.action().details.status = 'paused'; });
+    const result = await run(scope.instanceId, 'Check availability', scope.siteId, scope.userId, [], false,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, { userMessageLogId: scope.userMessageLogId });
+    expect(result).toMatchObject({success:false, execution_status:'paused', code:'ASSISTANT_PRIVATE_CONTEXT_UNAVAILABLE'});
+    expect(pause).toHaveBeenCalledWith(scope.userMessageLogId, 0);
+    await expect(recovery.claimAssistantRecovery(scope, {allowStaleInFlight:true})).rejects.toMatchObject({code:'inactive'});
+    expect(spawn).not.toHaveBeenCalled();
+  });
+  it('releases a transient preflight once, without serializing the transcript', async () => {
+    const messages = [{role: 'user', content: 'Original question'}];
+    await recovery.initializeAssistantRecovery(scope, execution);
+    await recovery.markAssistantRecoveryInFlight(scope, messages);
+    core.mockRejectedValueOnce(new TransientBindingPreflightError());
+    const result = await durableTurn({ recoveryScope: scope }, messages);
+    expect(result).toEqual({ recoverableFailure: true, retryNotBefore: Date.now() + 1000, isDone: false, text: '' });
+    expect(db.snapshot()).toMatchObject({ inFlight: false, messages });
+    jest.spyOn(Date, 'now').mockReturnValue(result.retryNotBefore);
+    const claim = await recovery.claimAssistantRecovery({ ...scope, generation: 0 });
+    await recovery.loadAssistantRecovery(scope, claim.resumeToken);
+    const owner = { ...scope, generation: claim.snapshot.respawnCount };
+    await recovery.markAssistantRecoveryInFlight(owner, messages);
+    core.mockRejectedValueOnce(new TransientBindingPreflightError());
+    await expect(durableTurn({ recoveryScope: owner }, messages)).rejects.toThrow();
+    expect(db.snapshot()).toMatchObject({ inFlight: true, respawnCount: 1 });
+  });
+
   it('preserves uncertain effects for delayed agent continuation instead of terminalizing the action', async () => {
     let effects = 0;
     const messages = [{ role: 'user', content: 'Send the requested message' }];

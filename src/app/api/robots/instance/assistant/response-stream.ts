@@ -81,6 +81,8 @@ export function assistantResponseStream(
                     : 'Tus créditos se han agotado para continuar este ciclo.', {
                     next_credit_reset_at: typeof creditResult.next_credit_reset_at === 'string' ? creditResult.next_credit_reset_at : null,
                   });
+                } else if ((result as { code?: string }).code === 'ASSISTANT_PRIVATE_CONTEXT_UNAVAILABLE') {
+                  fail('ASSISTANT_PRIVATE_CONTEXT_UNAVAILABLE', 'The assistant paused because it could not verify access to all private sources. No tools were retried.');
                 } else if ((result as { execution_status?: string }).execution_status === 'continuing') {
                   fail('ASSISTANT_WORKFLOW_CONTINUING', 'Assistant execution is continuing in the background. Check this session before sending again.');
                 } else {

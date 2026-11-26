@@ -1,3 +1,4 @@
+import { checkLinkedRecordTurns } from './fixtures/linked-record-ask-postgres';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -10,7 +11,7 @@ function sqlFunction(sql: string, name: string) {
   return definition;
 }
 
-it('releases facts against the active claim and real parent RLS, without creating or consuming a report', () => {
+it('reauthorizes connector and native Record Ask turns under real RLS without a shared report', () => {
   const db = freshPostgres();
   const [claim, owner, site, instance, agent, action, nextAction, connector, attempt] = Array.from({length:9}, () => randomUUID());
   const digest = randomBytes(32).toString('hex');
@@ -213,5 +214,6 @@ it('releases facts against the active claim and real parent RLS, without creatin
       '[{"claim_id":"${claim}","result":{"count":1}}]');`;
     expect(db.query(`BEGIN; DELETE FROM connector_result_private.ask_answers WHERE action_id='${action}';
       UPDATE connector_result_private.direct_turn_heads SET action_id='${action}'; ${asService(first)} ROLLBACK;`)).toContain('\nt\n');
+    checkLinkedRecordTurns(db,{owner,site,instance,prior:fourthAction,connector,data});
   } finally { db.stop(); }
 }, 20_000);

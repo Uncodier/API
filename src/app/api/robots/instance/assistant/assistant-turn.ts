@@ -1,7 +1,7 @@
 import { processAssistantTurn as processTurn } from './assistant-turn-core';
 import { releaseFailedAssistantTurn } from '@/lib/services/robot-instance/assistant-recovery';
 import { RecoveryError } from '@/lib/services/robot-instance/assistant-recovery-schema';
-import { getProviderRetryDecision } from '@/lib/services/robot-instance/assistant-failure-policy';
+import { settledTurnRetry } from './assistant-turn-retry';
 import { readRequirementAssistantHost } from './requirement-host';
 
 /** No automatic replay of a step that can publish, send or mutate state. */
@@ -17,12 +17,14 @@ export async function processAssistantTurn(...args: Parameters<typeof processTur
       // control decision as data without releasing the turn or losing evidence.
       return { recoveryUnavailable: true, recoveryCode: error.code, isDone: false, text: '' };
     }
-    const retry = getProviderRetryDecision(error);
-    if (scope && !requirementHost && retry) {
+    // A resumed workflow does not inherit owner connector admission.
+    const retry = scope && !requirementHost && !args[0].catalogUserSession && !args[0].connectorIdHint
+      ? settledTurnRetry(error, scope.generation ?? 0) : undefined;
+    if (scope && retry) {
       try {
         await releaseFailedAssistantTurn(scope, retry.retryAt);
         // Carry the decision as data: Workflow's FatalError can hide the cause.
-        return { recoverableFailure: true, retryNotBefore: retry.retryAt, isDone: false, text: '', messages: args[1] };
+        return { recoverableFailure: true, retryNotBefore: retry.retryAt, isDone: false, text: '' };
       } catch {
         // Missing evidence, uncertain effects, changed ownership: fail closed.
       }

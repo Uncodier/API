@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { resolveToolRequestPrincipal, canToolPrincipalAccessSite } from '@/lib/security/tool-request-principal';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   appointmentPublicFields,
@@ -5,6 +7,14 @@ import {
   listAppointments,
   updateAppointment,
 } from '@/lib/scheduling/appointments';
+
+const uuid = z.string().uuid();
+const createInput = z.object({
+  site_id: uuid, context_id: uuid, title: z.string().min(1), start_datetime: z.string().min(1),
+  duration: z.number().int().min(5), timezone: z.string().min(1),
+  participants: z.array(z.string().trim().min(1)).optional(), location: z.string().nullish(),
+  description: z.string().nullish(), reminder: z.union([z.number(), z.string()]).nullish(),
+});
 
 function httpError(error: unknown, fallback: string) {
   const err = error as { message?: string; status?: number; code?: string };
@@ -23,15 +33,17 @@ function httpError(error: unknown, fallback: string) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const principal = await resolveToolRequestPrincipal(request);
+    if (!principal) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     const body = await request.json();
     const action = body.action || 'schedule';
     const site_id = body.site_id;
 
-    if (!site_id) {
-      return NextResponse.json(
-        { success: false, error: 'El ID del sitio es requerido' },
-        { status: 400 }
-      );
+    if (!uuid.safeParse(site_id).success) {
+      return NextResponse.json({ success: false, error: 'Invalid site ID' }, { status: 400 });
+    }
+    if (!await canToolPrincipalAccessSite(principal, site_id)) {
+      return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
     }
 
     if (action === 'list') {
@@ -87,69 +99,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const {
-      title,
-      start_datetime,
-      duration,
-      timezone,
-      context_id,
-      participants = [],
-      location,
-      description,
-      reminder,
-    } = body;
-
-    if (!title) {
-      return NextResponse.json(
-        { success: false, error: 'El título y el ID del sitio son requeridos' },
-        { status: 400 }
-      );
+    const parsed = createInput.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ success: false, error: 'Invalid appointment details' }, { status: 400 });
     }
-    if (!start_datetime) {
-      return NextResponse.json(
-        { success: false, error: 'La fecha y hora de inicio son requeridas' },
-        { status: 400 }
-      );
+    const turn = request.headers.get('x-native-scheduling-turn');
+    if (turn !== null && (!principal.internal || !uuid.safeParse(turn).success)) {
+      return NextResponse.json({ success: false, error: 'Invalid native scheduling scope' }, { status: 403 });
     }
-    if (!duration || duration < 5) {
-      return NextResponse.json(
-        { success: false, error: 'La duración debe ser de al menos 5 minutos' },
-        { status: 400 }
-      );
-    }
-    if (!timezone) {
-      return NextResponse.json(
-        { success: false, error: 'La zona horaria es requerida' },
-        { status: 400 }
-      );
-    }
-    if (!context_id) {
-      return NextResponse.json(
-        { success: false, error: 'El ID de contexto es requerido' },
-        { status: 400 }
-      );
-    }
-
-    const appointment = await createAppointment({
-      title,
-      start_datetime,
-      duration,
-      timezone,
-      context_id,
-      site_id,
-      participants,
-      location,
-      description,
-      reminder,
-    });
-
-    return NextResponse.json(
-      {
-        success: true,
-        ...appointmentPublicFields(appointment),
-      },
-      { status: 201 }
-    );
+    const { appointment, replayed } = await createAppointment({
+      ...parsed.data, reminder: parsed.data.reminder ?? undefined,
+      location: parsed.data.location ?? undefined, description: parsed.data.description ?? undefined,
+    }, turn ?? undefined);
+    return NextResponse.json({ success: true, ...appointmentPublicFields(appointment), replayed },
+      { status: replayed ? 200 : 201 });
   } catch (error) {
     console.error('Error al procesar la programación de cita:', error);
     return httpError(error, 'Error al procesar la solicitud de programación');

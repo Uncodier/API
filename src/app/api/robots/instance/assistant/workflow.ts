@@ -182,6 +182,13 @@ Connected accounts in private Ask:
     turns++;
     const stepResult = await processAssistantTurn(context, messages);
     if (stepResult.recoveryUnavailable) {
+      if (stepResult.recoveryCode === 'private_context_unavailable') {
+        if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
+        await pauseUserMessageStep(userMessageLogId, recoveryScope.generation ?? 0);
+        return { instance_id: instanceId, success: false, execution_status: 'paused',
+          code: 'ASSISTANT_PRIVATE_CONTEXT_UNAVAILABLE',
+          message: 'Private source access could not be verified. The assistant paused without using unverified data. Retry in a new Ask turn after checking access.' };
+      }
       // Do not terminalize an interrupted action or save a fabricated completed
       // turn. Eligible conversations remain available to the fenced stale cron;
       // node/plan recovery, cancellation and ownership restrictions still apply.
@@ -190,9 +197,11 @@ Connected accounts in private Ask:
         message: 'Assistant execution was interrupted; its recovery checkpoint was retained without replaying tools' };
     }
     if (stepResult.recoverableFailure) {
+      // Also fence envelopes produced by an older step implementation.
+      if (options?.catalogUserSession || options?.connectorIdHint) throw new Error('Private continuation unavailable');
       if (typeof stepResult.retryNotBefore === 'number') await sleep(new Date(stepResult.retryNotBefore));
       if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
-      const spawned = await spawnSilentContinueStep(recoveryScope);
+      const spawned = await spawnSilentContinueStep({ ...recoveryScope, generation: recoveryScope.generation ?? 0 });
       if (spawned) return {
         instance_id: instanceId, success: false, execution_status: 'continuing',
         message: 'Execution is continuing after a temporary interruption', instance_node_id: instanceNodeId,

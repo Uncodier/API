@@ -51,6 +51,13 @@ is marked `paused` rather than left `running`. Background continuations retain
 the original user-log ID for their terminal checkpoint and report
 `ASSISTANT_WORKFLOW_CONTINUING`, not a fabricated successful answer.
 
+Private Ask requires the `20261126010000_connector_ask_turn_context.sql`
+migration before deploying the matching API. The authorized context lookup
+retries once on transient connection, gateway or lock failures. It never
+retries a tool call. If verification still fails (including a missing RPC),
+the owned action is paused and SSE reports `ASSISTANT_PRIVATE_CONTEXT_UNAVAILABLE`.
+Do not restart it in a background generation without its private context.
+
 The API observes the workflow status and reads its return value on completion.
 It does not return the unused `run.readable`: this workflow writes its output
 to `instance_logs`, not to `getWritable()`. Consumers must handle terminal

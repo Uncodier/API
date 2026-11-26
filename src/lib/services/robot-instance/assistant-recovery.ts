@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { askRecordSourceIds, requireFreshRecordAsk } from './ask-record-grounding';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { captureRecoveryNodeFingerprint } from './assistant-recovery-fingerprint';
 import { buildInterruptedRecoveryContext, mergeInterruptedRecoveryContext, summarizeRecoveryTool } from './assistant-recovery-context';
@@ -177,6 +178,7 @@ export async function releaseFailedAssistantTurn(scope: AssistantRecoveryScope, 
       throw new RecoveryError('invalid_state');
     }
     if (!active.snapshot.inFlight || active.snapshot.inFlightKind !== 'turn' ||
+        active.snapshot.execution.catalogUserSession || active.snapshot.execution.connectorIdHint ||
         active.snapshot.execution.instanceNodeId ||
         !Array.isArray(active.snapshot.toolObservations) || active.snapshot.toolObservations.length ||
         (active.snapshot.execution.expectedResultsAmount ?? 1) !== 1 ||
@@ -259,6 +261,14 @@ async function interruptedContext(scope: AssistantRecoveryScope, active: ActiveR
   return buildInterruptedRecoveryContext(active.snapshot.toolObservations ?? [], tools.data ?? []);
 }
 
+// A respawn no longer has the original interactive admission. Inspect the
+// trusted action itself, not the synthetic continuation prompt or transcript.
+function guardRecordAskResume(active: ActiveRecovery) {
+  if (!active.snapshot.execution.instanceNodeId && active.snapshot.execution.callerSource === 'interactive' && active.message) {
+    requireFreshRecordAsk(askRecordSourceIds(active.message));
+  }
+}
+
 export async function claimAssistantRecovery(scope: AssistantRecoveryScope, options?: {
   allowStaleInFlight: boolean; conversationOnly?: boolean;
 }): Promise<{
@@ -268,6 +278,13 @@ export async function claimAssistantRecovery(scope: AssistantRecoveryScope, opti
   return safeRecovery(async () => {
     const active = await readRecovery(scope);
     if (active.snapshot.lease_token) throw new RecoveryError('conflict');
+    guardRecordAskResume(active);
+    // A workflow-directed retry pins its generation through the claim CAS.
+    if (scope.generation !== undefined) assertOwner(scope, active.snapshot);
+    // Neither a stale in-flight turn nor a release from an older retry step is
+    // proof that a new workflow can answer without the original connector access.
+    if ((active.snapshot.execution.catalogUserSession || active.snapshot.execution.connectorIdHint) &&
+        (active.snapshot.inFlight || active.snapshot.retryNotBefore)) throw new RecoveryError('in_flight');
     if (active.snapshot.retryNotBefore && Date.parse(active.snapshot.retryNotBefore) > Date.now()) {
       throw new RecoveryError('in_flight');
     }
@@ -320,6 +337,7 @@ export async function loadAssistantRecovery(scope: AssistantRecoveryScope, resum
   return safeRecovery(async () => {
     const active = await readRecovery(scope);
     if (!resumeToken || active.snapshot.lease_token !== resumeToken) throw new RecoveryError('conflict');
+    guardRecordAskResume(active);
     if (active.snapshot.inFlight) throw new RecoveryError('in_flight');
     const { lease_token: _consumed, ...snapshot } = active.snapshot;
     return compareAndSwap(scope, active, snapshot);

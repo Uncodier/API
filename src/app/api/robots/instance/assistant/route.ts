@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { linkedAskRecordIds } from '@/lib/services/robot-instance/ask-record-links';
 import { admitAssistantRouting, validateAssistantInferenceAdmission } from './execution-routing';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -21,6 +22,7 @@ import { resolveAssistantRequestMode } from './execution-mode';
 // ------------------------------------------------------------------------------------
 
 export const maxDuration = 800; // 13 min (Pro + Fluid Compute); falls back to 300s without it
+
 
 const AssistantSchema = z.object({
   instance_id: z.string().uuid('instance_id must be valid UUID').transform(value => value.toLowerCase()).optional(),
@@ -124,6 +126,16 @@ export async function POST(request: NextRequest) {
         code: 'ASSISTANT_REQUEST_ID_REQUIRED', message: 'A request ID is required for an interactive Ask submission.',
       } }, { status: 400 });
     }
+    let recordIds: string[] = [];
+    if (catalogUserSession) {
+      try { recordIds = linkedAskRecordIds(message); }
+      catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+        return NextResponse.json({ success: false, execution_started: false, error: {
+          code: 'ASK_RECORD_LINK_LIMIT', message: 'Reference at most eight distinct Records per Ask turn.',
+        } }, { status: 400 });
+      }
+    }
     const leadBulkUserSession = principal.userSession === true && !principal.internal && !providedNodeId && expectedResults === 1;
     const leadBulkAdmission = leadBulkUserSession ? { lead_bulk_user_session: true } : {};
     const requestedImport = approvedCommunityImport(message);
@@ -189,6 +201,11 @@ export async function POST(request: NextRequest) {
       siteId = instance.site_id;
       userId = principal.internal ? providedUserId || instance.user_id : principal.userId!;
       instanceStatus = instance.status || 'running';
+      if (recordIds.length && instance.user_id !== principal.userId) {
+        return NextResponse.json({ success: false, execution_started: false, error: {
+          code: 'ASK_RECORDS_REQUIRE_OWNER', message: 'Use your own Ask conversation to reference private Records.',
+        } }, { status: 403 });
+      }
       if (connectorIdHint) {
         if (instance.user_id !== principal.userId) {
           return NextResponse.json({ error: 'Selected account unavailable for this conversation.' }, { status: 403 });
@@ -204,7 +221,7 @@ export async function POST(request: NextRequest) {
     }
     if (!userId) return NextResponse.json({ error: 'Assistant actor unavailable' }, { status: 403 });
     const userAction = await claimAskSubmission({ instanceId, siteId, userId, principal, body: parsedBody, observeFirstSend, connectionPolicy: catalogUserSession,
-      details: { ...leadBulkAdmission, ...(providedInstanceId ? { instance_status: instanceStatus } : { is_creation: true }),
+      details: { ...leadBulkAdmission, ...(recordIds.length > 0 && { ask_linked_record_ids: recordIds }), ...(providedInstanceId ? { instance_status: instanceStatus } : { is_creation: true }),
         status: 'running', instance_node_id: providedNodeId, execution_mode: executionMode } });
     const turn = { instance_id: instanceId, user_log_id: userAction.id };
     if (userAction.replay) {

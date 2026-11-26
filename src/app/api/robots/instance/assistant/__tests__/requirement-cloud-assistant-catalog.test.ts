@@ -106,7 +106,7 @@ test.each(['cloud', 'workspace', undefined] as const)('canonical assistant wires
   const injected = ['read_files', 'sandbox_get_or_create', 'deployment_create', 'read_cloud_file'].map(descriptor);
   f.context.customTools = injected.filter(tool => tool.name !== 'read_files');
   await f.run(f.context, []);
-  expect(f.resolveAssistantFileEnvironment).toHaveBeenCalledWith({ ...f.scope, requirementId: f.requirementId });
+  expect(f.resolveAssistantFileEnvironment).toHaveBeenCalledWith({ ...f.scope, requirementId: f.requirementId }, 'initial-preflight');
   const { names, router } = await f.exposedNames();
   expect(names).toContain('deliver_file');
   expect(await router.execute({ action: 'describe', name: 'deliver_file' })).toMatchObject({ success: true });

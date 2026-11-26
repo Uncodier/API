@@ -95,6 +95,18 @@ describe('trusted action lifecycle and CAS', () => {
     await expect(recovery.assertAssistantRecoveryActive(scope)).rejects.toMatchObject({ code: 'inactive' });
   });
 
+  it('blocks fresh and previously claimed resumes for an explicitly linked interactive action', async () => {
+    await recovery.initializeAssistantRecovery(scope,{...execution,callerSource:'interactive',catalogUserSession:true,executionMode:'direct'});
+    await recovery.checkpointAssistantRecovery(scope,{messages:receipts});
+    const explicit = `Compare /records/${randomUUID()}`;
+    database.action().message = explicit;
+    await expect(recovery.claimAssistantRecovery(scope)).rejects.toMatchObject({code:'private_context_unavailable'});
+    database.action().message = 'Unlinked user request';
+    const claim = await recovery.claimAssistantRecovery(scope);
+    database.action().message = explicit; // Simulate a lease issued by an earlier runtime.
+    await expect(recovery.loadAssistantRecovery(scope,claim.resumeToken)).rejects.toMatchObject({code:'private_context_unavailable'});
+  });
+
   it('ignores untrusted/new other-site actions but blocks a newer trusted action by another user', async () => {
     await ready();
     database.tables.instance_logs.push({ ...database.action(), id: 'untrusted', trusted_user_action: false, created_at: '2026-10-01T00:00:00Z' });
@@ -168,6 +180,28 @@ describe('checkpoint, token ownership, and effect fencing', () => {
     expect(database.snapshot()).toMatchObject({ inFlight: false, messages: receipts, continuation: { responseNodeIds: ['response-1'] } });
     expect((await recovery.claimAssistantRecovery(scope)).snapshot.respawnCount).toBe(1);
   });
+  it('rejects release based on persisted connector admission even if the live context lost it', async () => {
+    await recovery.initializeAssistantRecovery(scope, { ...execution, callerSource: 'interactive', catalogUserSession: true });
+    await recovery.markAssistantRecoveryInFlight(scope, receipts);
+    await expect(recovery.releaseFailedAssistantTurn(scope)).rejects.toMatchObject({ code: 'in_flight' });
+    expect(database.snapshot().inFlight).toBe(true);
+    const expired = new Date(Date.now() - 60 * 60_000).toISOString();
+    database.snapshot().lastActivityAt = database.snapshot().inFlightSince = expired;
+    await expect(recovery.claimAssistantRecovery(scope, { allowStaleInFlight: true })).rejects.toMatchObject({ code: 'in_flight' });
+    // An older release writer may already have cleared inFlight.
+    database.snapshot().inFlight = false;
+    database.snapshot().retryNotBefore = expired;
+    await expect(recovery.claimAssistantRecovery(scope)).rejects.toMatchObject({ code: 'in_flight' });
+  });
+
+  it('rejects an old generation that wakes after another claim was consumed', async () => {
+    await readyConversation();
+    const claim = await recovery.claimAssistantRecovery({ ...scope, generation: 0 });
+    await recovery.loadAssistantRecovery(scope, claim.resumeToken);
+    await expect(recovery.claimAssistantRecovery({ ...scope, generation: 0 })).rejects.toMatchObject({ code: 'conflict' });
+    expect(database.snapshot().respawnCount).toBe(1);
+  });
+
   it('blocks maintenance and concurrent claims until the durable provider deadline', async () => {
     await readyConversation();
     await recovery.markAssistantRecoveryInFlight(scope, receipts);

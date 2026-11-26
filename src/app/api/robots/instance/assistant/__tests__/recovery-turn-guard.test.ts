@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { APIError } from 'openai/error';
 import type { AssistantContext } from '../types';
 import { RecoveryError } from '@/lib/services/robot-instance/assistant-recovery-schema';
 import { attachRequirementAssistantHost } from '../requirement-host';
@@ -101,14 +102,21 @@ describe('per-turn and per-tool recovery guards', () => {
   });
 
   it('carries a settled transient error as recoverable data only after a safe release', async () => {
-    execute.mockRejectedValue(Object.assign(new Error('Provider unavailable'), { statusCode: 503 }));
+    execute.mockRejectedValue(new APIError(503, undefined, 'Provider unavailable', undefined));
     expect(await processAssistantTurn(context, [{ role: 'user', content: 'Publish' }])).toMatchObject({ recoverableFailure: true });
     expect(releaseFailedTurn).toHaveBeenCalledWith(scope, expect.any(Number));
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it.each([{ catalogUserSession: true as const }, { connectorIdHint: 'selected' }])('never releases a connector-capable turn %j', async admission => {
+    const error = new APIError(429, undefined, 'Provider busy', undefined);
+    execute.mockRejectedValue(error);
+    await expect(processAssistantTurn({ ...context, ...admission }, [])).rejects.toBe(error);
+    expect(releaseFailedTurn).not.toHaveBeenCalled();
+  });
+
   it('fails closed when transient failure has uncertain effects', async () => {
-    const error = Object.assign(new Error('Provider unavailable'), { statusCode: 503 });
+    const error = new APIError(503, undefined, 'Provider unavailable', undefined);
     execute.mockRejectedValue(error);
     releaseFailedTurn.mockRejectedValue(new Error('in_flight'));
     await expect(processAssistantTurn(context, [])).rejects.toBe(error);
@@ -120,7 +128,7 @@ describe('per-turn and per-tool recovery guards', () => {
     { error: { metadata: { generation_id: 'synthetic-generation' } } },
     { inferenceAccepted: true }, { cause: { usage: { cost: 0.01 } } },
   ])('never releases a transient error with acceptance evidence %j', async evidence => {
-    const error = Object.assign(new Error('Provider error'), { status: 503 }, evidence);
+    const error = Object.assign(new APIError(503, undefined, 'Provider error', undefined), evidence);
     execute.mockRejectedValue(error);
     await expect(processAssistantTurn(context, [])).rejects.toBe(error);
     expect(releaseFailedTurn).not.toHaveBeenCalled();
@@ -132,6 +140,7 @@ describe('per-turn and per-tool recovery guards', () => {
     execute.mockRejectedValue(error);
     await expect(processAssistantTurn(context, [])).rejects.toBe(error);
     execute.mockRejectedValue(Object.assign(error, { status: 503 }));
+    await expect(processAssistantTurn(context, [])).rejects.toBe(error);
     await expect(processAssistantTurn({ ...context, recoveryScope: undefined }, [])).rejects.toBe(error);
     expect(releaseFailedTurn).not.toHaveBeenCalled();
   });

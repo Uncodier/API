@@ -17,6 +17,29 @@ describe('scheduling assistant transport', () => {
   });
   afterEach(() => { jest.restoreAllMocks(); jest.useRealTimers(); process.env = originalEnv; });
 
+  it('passes a host-only scheduling turn on create, stable across regenerated calls but not new actions', async () => {
+    transport.mockImplementation(async () => json({ success: true }));
+    const source = { siteId: 'site', userId: 'user', instanceId: 'instance', actionId: 'original-action' };
+    const args = { action: 'schedule' as const, title: 'Visit', context_id: 'lead', timezone: 'UTC',
+      start_datetime: '2099-01-01T09:00:00Z', duration: 30, site_id: 'spoofed', turn: 'spoofed', id: 'spoofed' };
+    for (const action of [source, { ...source }, { ...source, actionId: 'new-action' }, undefined]) {
+      await schedulingTool('site', 'instance', action, 'user').execute(args);
+    }
+    await schedulingTool('site', 'instance', source, 'user').execute({ action: 'list', context_id: 'lead' });
+    const turns = transport.mock.calls.map(([, init]) => init.headers['x-native-scheduling-turn']);
+    expect(turns[0]).toEqual(expect.any(String));
+    expect(turns[0]).toBe(turns[1]);
+    expect(turns[0]).not.toBe(turns[2]);
+    expect(turns.slice(3)).toEqual([undefined, undefined]);
+    const body = JSON.parse(transport.mock.calls[0][1].body);
+    expect(body.site_id).toBe(source.siteId);
+    expect(JSON.stringify(body)).not.toContain('spoofed');
+    delete process.env.SERVICE_API_KEY;
+    await expect(schedulingTool('site', 'instance', source, 'user').execute(args)).rejects.toMatchObject({ status: 403 });
+    expect(transport).toHaveBeenCalledTimes(5);
+    expect(() => schedulingTool('other-site', 'instance', source, 'user')).toThrow('scope');
+  });
+
   it.each([{}, { calendar_id: 'team-calendar' }, { user_id: 'personal-profile' }, { team_id: 'legacy-calendar' }])(
     'accepts each calendar target contract without requiring team_id: %j', async target => {
       transport.mockResolvedValue(json({ success: true, available_slots: [] }));

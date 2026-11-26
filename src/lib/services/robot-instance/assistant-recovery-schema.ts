@@ -58,7 +58,7 @@ export type AssistantRecoverySnapshot = {
 
 export type RecoveryErrorCode =
   | 'inactive' | 'missing' | 'context_changed' | 'in_flight'
-  | 'limit' | 'conflict' | 'invalid_state';
+  | 'limit' | 'conflict' | 'invalid_state' | 'private_context_unavailable';
 
 /** Safe to surface as a pause reason; never includes prompts, URLs, or DB errors. */
 export class RecoveryError extends Error {

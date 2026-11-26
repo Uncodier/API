@@ -1,5 +1,7 @@
 import { getApiBaseUrl } from '@/app/api/agents/tools/utils/fetch-helper';
 import { buildSchedulingRecovery } from '@/lib/scheduling/recovery';
+import type { RequirementCommandSource } from '@/lib/services/requirement-command';
+import { v5 as uuidv5 } from 'uuid';
 /**
  * Assistant Protocol Wrapper for Scheduling Tool
  * Unified tool for scheduling (check_availability, schedule, list, update)
@@ -72,6 +74,7 @@ async function fetchSchedulingTool(
   endpoint: string,
   args: SchedulingToolParams,
   body?: Record<string, unknown>,
+  schedulingTurn?: string,
 ) {
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -99,6 +102,10 @@ async function fetchSchedulingTool(
     return await Promise.race([
       (async () => {
         const headers: Record<string, string> = {};
+        if (schedulingTurn && !process.env.SERVICE_API_KEY?.trim()) {
+          throw new SchedulingRequestRejected('Scheduling authorization unavailable', undefined, 403);
+        }
+        if (schedulingTurn) headers['x-native-scheduling-turn'] = schedulingTurn;
         if (body) headers['Content-Type'] = 'application/json';
         if (process.env.SERVICE_API_KEY) headers['x-api-key'] = process.env.SERVICE_API_KEY;
         const response = await fetch(`${getApiBaseUrl()}${endpoint}`, {
@@ -151,11 +158,17 @@ async function fetchSchedulingTool(
   }
 }
 
-export function schedulingTool(site_id: string, _instance_id?: string) {
+export function schedulingTool(site_id: string, instanceId?: string, source?: RequirementCommandSource, userId?: string) {
+  // Persisted user-message identity comes from the host, never tool arguments.
+  if (source && (source.siteId !== site_id || source.instanceId !== instanceId || source.userId !== userId || !source.actionId || !source.userId)) {
+    throw new Error('Invalid scheduling turn scope');
+  }
+  const turn = source && uuidv5(JSON.stringify(['native-scheduling-turn:v1', site_id, instanceId,
+    source.userId, source.actionId]), uuidv5.URL);
   return {
     name: 'scheduling',
     description:
-      'First calendars action="list" for calendar_id (team) or user_id (person); never agent ID as team_id. For team/person appointments, not catalog inventory. Check availability with date, duration, timezone; copy verified slot start_utc and actual returned participant IDs to book. List caller appointments before schedule/update. On failure, recovery dates are NOT slots: confirm date then check; never book suggestions. Failed writes may have completed: list before retry. Voice: get_call_context is the live clock.',
+      'First calendars action="list" for calendar_id (team) or user_id (person); never agent ID as team_id. For team/person appointments, not catalog inventory. Check availability with date, duration, timezone; copy verified slot start_utc and actual returned participant IDs to book. List caller appointments before schedule/update. On failure, recovery dates are NOT slots: confirm date then check; never book suggestions. Failed writes may have completed: list before retry. A replay is not a new booking: report its current status and time, not the requested state. Voice: get_call_context is the live clock.',
     parameters: {
       type: 'object',
       properties: {
@@ -284,13 +297,21 @@ export function schedulingTool(site_id: string, _instance_id?: string) {
           '/api/agents/tools/scheduling/schedule',
           args,
           {
-            ...params,
+            title: params.title,
+            lead_id: params.lead_id ? context_id : undefined,
+            start_datetime: params.start_datetime,
+            timezone: params.timezone,
+            duration: params.duration,
+            location: params.location,
+            description: params.description,
+            reminder: params.reminder,
             action: 'schedule',
             participants: asParticipantArray(params.participants),
             resources: asParticipantArray(params.resources),
             context_id,
             site_id: site_id,
           },
+          turn,
         );
       }
 
