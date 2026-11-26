@@ -47,6 +47,11 @@ describe('customer speech and transcription actual adapters', () => {
     jest.mocked(global.fetch).mockResolvedValue(new Response(new Uint8Array([0,1,2]), { headers: { 'Content-Type': 'audio/pcm' } }));
     await expect(synthesizeSpeech({ text: 'Test', format: 'pcm' })).rejects.toThrow('do not replay');
   });
+  it('rejects an explicit accent before any customer charge or platform catalog request', async () => {
+    await expect(synthesizeSpeech({ text: 'Bonjour', language: 'fr-CA' })).rejects.toMatchObject({ status: 400 });
+    expect(beginCustomerInference).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
   it('does not dispatch when durable claim fails', async () => {
     jest.mocked(beginCustomerInference).mockRejectedValue(new Error('claim failed'));
     await expect(synthesizeSpeech({ text: 'Test' })).rejects.toThrow('claim failed');

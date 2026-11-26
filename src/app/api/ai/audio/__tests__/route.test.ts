@@ -94,4 +94,19 @@ describe('audio route routing contract', () => {
     expect((await POST(new NextRequest('https://example.invalid/api/ai/audio', { method: 'POST', body: '{' }))).status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('advertises the actual catalog voice in response headers without rewriting the requested region', async () => {
+    process.env.AZURE_SPEECH_REGION = 'canadacentral';
+    process.env.AZURE_SPEECH_KEY = randomBytes(24).toString('hex');
+    fetchMock.mockResolvedValueOnce(Response.json([
+      { Locale: 'pt-BR', ShortName: 'pt-BR-FranciscaNeural', Gender: 'Female', VoiceType: 'Neural', Status: 'GA' },
+      { Locale: 'pt-PT', ShortName: 'pt-PT-RaquelNeural', Gender: 'Female', VoiceType: 'Neural', Status: 'GA' },
+    ])).mockResolvedValueOnce(new Response('audio-data', { headers: { 'Content-Type': 'audio/mpeg' } }));
+    const response = await post({ text: 'Olá, como está?', language: 'pt-pt', voice: 'nova' });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-TTS-Text-Language')).toBe('pt-PT');
+    expect(response.headers.get('X-TTS-Voice')).toBe('pt-PT-RaquelNeural');
+    expect(response.headers.get('X-TTS-Model')).toBe('azure-speech-neural');
+    expect(fetchMock.mock.calls[1][1].body).toContain('pt-PT-RaquelNeural');
+  });
 });

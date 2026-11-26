@@ -38,6 +38,36 @@ describe('direct Azure speech', () => {
     await expect(synthesizeSpeech({ text: 'Hola', provider: 'azure' })).resolves.toMatchObject({ provider: 'azure' });
   });
 
+  it.each([['es', 'nova', 'es-MX', 'Dalia'], ['es', 'onyx', 'es-MX', 'Jorge'],
+    ['es-es', 'onyx', 'es-ES', 'Alvaro'], ['fr-ca', 'nova', 'fr-CA', 'Sylvie'], ['sw-KE', 'onyx', 'sw-KE', 'Rafiki']])('synthesizes %s / %s with the regional Speech voice', async (language, voice, locale, name) => {
+    process.env.AZURE_SPEECH_REGION = 'eastus';
+    process.env.AZURE_SPEECH_KEY = randomBytes(24).toString('hex');
+    fetchMock.mockImplementation(async url => String(url).endsWith('/voices/list') ? Response.json([
+      { Locale: locale, ShortName: `${locale}-${name}Neural`, Gender: voice === 'onyx' ? 'Male' : 'Female', Status: 'GA', VoiceType: 'Neural' },
+    ]) : audioResponse());
+    const result = await synthesizeSpeech({ language, voice, text: '¿Qué tal? A & B <break/>.' });
+    const post = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(post).toHaveLength(1);
+    const request = new Request(...post[0] as [RequestInfo, RequestInit]);
+    expect(request.url).toBe('https://eastus.tts.speech.microsoft.com/cognitiveservices/v1');
+    expect(request.headers.get('api-key')).toBeNull();
+    expect(request.headers.get('Ocp-Apim-Subscription-Key')).toBe(process.env.AZURE_SPEECH_KEY);
+    expect(request.headers.get('X-Microsoft-OutputFormat')).toBe('audio-24khz-96kbitrate-mono-mp3');
+    expect(await request.text()).toContain(`xml:lang="${locale}"><voice name="${locale}-${name}Neural">¿Qué tal? A &amp; B &lt;break/&gt;.`);
+    expect(result).toMatchObject({ language: locale, voice: `${locale}-${name}Neural`, model: 'azure-speech-neural' });
+  });
+
+  it.each([{ language: 'fr-CA', model: 'tts-hd' }, { language: 'ja-JP' }])('never silently ignores a region: %j', async options => {
+    await expect(synthesizeSpeech({ text: 'Bonjour', ...options })).rejects.toMatchObject({ status: options.model ? 400 : 503 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects partial regional configuration without sending a request', async () => {
+    process.env.AZURE_SPEECH_REGION = 'eastus';
+    await expect(synthesizeSpeech({ text: 'Hola', language: 'es' })).rejects.toMatchObject({ status: 503 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('accepts explicit language guidance without changing text or sending unsupported Azure fields', async () => {
     fetchMock.mockResolvedValue(audioResponse());
     const result = await synthesizeSpeech({ text: 'Bonjour, le monde.', voice: 'nova', language: 'fr' });

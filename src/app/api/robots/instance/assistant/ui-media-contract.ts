@@ -147,10 +147,7 @@ function audioOverrides(
     ...remaining,
     ...(format ? { format } : {}),
     ...(voice ? { voice } : {}),
-    // Keep the validated regional selection through text preparation. The TTS
-    // service normalizes it to its supported base language at the API boundary.
-    ...(language ? { language: typeof selections.language === 'string' && selections.language.trim().includes('-')
-      ? Intl.getCanonicalLocales(selections.language.trim())[0] : language } : {}),
+    ...(language ? { language } : {}),
   };
 }
 
@@ -161,7 +158,7 @@ function audioInstruction(overrides: Record<string, unknown>): string {
   const voiceRule = overrides.voice
     ? `You MUST honor the selected voice (${overrides.voice}).`
     : `Keep the previous conversation voice when known (${TTS_VOICES.join(', ')}); otherwise omit voice to use the configured default. Do not change voices simply because the language changes; auto is not a concrete voice.`;
-  return `${languageRule} Do not read prompt directives, language instructions, or voice instructions aloud; pass only the intended spoken content as text. ${voiceRule} Azure tts-hd detects language from the speech text; language guides text preparation, not a downstream synthesis field.`;
+  return `${languageRule} Do not read prompt directives, language instructions, or voice instructions aloud; pass only the intended spoken content as text. ${voiceRule} Pass the resolved language tag, preserving any selected script, region or dialect. If the context establishes only a base language, use that language; do not invent a region. Generate continuous speech in one call.`;
 }
 
 function restrictMediaOverrides(

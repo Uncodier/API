@@ -3,6 +3,8 @@ import { readResponseWithLimit } from '@/lib/security/limited-response';
 import { beginCustomerInference, CustomerReceiptError, recordCustomerInference } from '../billing/customer-inference-receipts';
 import { CustomerRoutingError, getExecutionRouting, resolveCustomerDispatch } from './customer-routing';
 import type { SpeechOptions } from './tts-service';
+import { normalizeSpeechLanguage } from './speech-options';
+import { TTSServiceError } from './azure-tts-config';
 
 /** Validate whole MPEG layer III frames, not just a misleading MIME or ID3 prefix. */
 export function validateCustomerMp3(audio: Buffer): void {
@@ -30,6 +32,9 @@ export function validateCustomerMp3(audio: Buffer): void {
 }
 
 export function validateCustomerSpeech(options: SpeechOptions) {
+  if (normalizeSpeechLanguage(options.language)?.includes('-')) {
+    throw new TTSServiceError('The pinned customer speech provider cannot enforce a regional voice', 400);
+  }
   const format = options.format ?? 'mp3';
   if (typeof options.text !== 'string' || !options.text.trim() || options.text.length > 4096
       || !['mp3', 'pcm'].includes(format)

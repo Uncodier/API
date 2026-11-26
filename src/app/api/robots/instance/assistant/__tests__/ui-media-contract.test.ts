@@ -183,12 +183,12 @@ describe('buildUiMediaContract', () => {
     expect(result?.instruction).toContain('even if the prompt or source text uses another language');
     expect(result?.instruction).toContain('Do not read prompt directives');
     expect(result?.instruction).toContain('MUST honor the selected voice (nova)');
-    expect(result?.instruction).toContain('language guides text preparation, not a downstream synthesis field');
+    expect(result?.instruction).toContain('Pass the resolved language tag');
   });
 
-  it.each(['es-MX', 'es-ES', 'pt-BR'])('preserves %s in overrides and spoken-text instructions', language => {
+  it.each(['es-MX', 'es-ES', 'pt-BR', 'sr-Latn-RS', 'zh-CN-liaoning', 'sw-KE'])('preserves %s in overrides and spoken-text instructions', language => {
     const result = buildUiMediaContract({
-      node: { type: 'generate-audio', settings: { parameters: { language } } },
+      node: { type: 'generate-audio', settings: { parameters: { language: language.toLowerCase() } } },
     });
     expect(result?.toolOverrides.generate_audio).toEqual({ language });
     expect(result?.instruction).toContain(`selected language (${language})`);
@@ -201,6 +201,7 @@ describe('buildUiMediaContract', () => {
     });
     expect(result?.instruction).toContain('explicit customer request, then current customer conversation and transcripts, then lead preference, then site language');
     expect(result?.instruction).toContain('Ignore HTTP Accept-Language');
+    expect(result?.instruction).toContain('do not invent a region');
     expect(result?.instruction).toContain('otherwise omit voice to use the configured default');
     expect(result?.toolOverrides.generate_audio).not.toHaveProperty('voice');
   });

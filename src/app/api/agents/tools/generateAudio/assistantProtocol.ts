@@ -1,6 +1,6 @@
 import { CreditService } from '@/lib/services/billing/CreditService';
-import { validateSpeechOptions, ttsMimeType, TTSProvider, TTSAudioFormat } from '@/lib/services/ai/tts-service';
-import { TTS_VOICES, TTS_LANGUAGES } from '@/lib/services/ai/speech-options';
+import { prepareSpeechOptions, ttsMimeType, TTSProvider, TTSAudioFormat } from '@/lib/services/ai/tts-service';
+import { TTS_VOICES } from '@/lib/services/ai/speech-options';
 import { getExecutionRouting, getCustomerOperationKey, requiresPlatformInferenceCredits } from '@/lib/services/ai/customer-routing';
 import { executionRoutingHeaders } from '@/lib/services/ai/customer-routing-http';
 import { createHash, randomUUID } from 'node:crypto';
@@ -36,7 +36,7 @@ export function generateAudioTool(
   const customerSpeech = getExecutionRouting(site_id)?.payer === 'customer';
   return {
     name: 'generate_audio',
-    description: 'Convert written text into speech or a voiceover through Azure directly. Resolve spoken language in this order: explicit customer request, current customer conversation (including available audio transcripts), lead language preference, site language. Never infer customer language from HTTP Accept-Language or internal instructions. Preserve the requested regional wording in the text. Write the complete spoken text in that language BEFORE calling this tool; Azure detects language from text and does not translate it or force an accent. Pass only intended spoken content, with natural punctuation, not markdown or language instructions. Honor an explicit voice selection; otherwise keep the previous conversation voice when known, or omit voice to use the configured voice. Returns a URL to the generated audio file. This is speech synthesis, not a music-generation tool.',
+    description: `Convert written text into speech or a voiceover through ${customerSpeech ? 'the pinned customer speech model' : 'Azure directly'}. Resolve spoken language in this order: explicit customer request, current customer conversation (including available audio transcripts), lead language preference, site language. Never infer customer language from HTTP Accept-Language or internal instructions. Preserve the requested regional wording in the text. Write the complete spoken text in that language BEFORE calling this tool; pass the resolved language, preserving a script, region or dialect specified by the customer or established by context. If only the base language is known, pass it; do not invent a region. Generate each continuous message in one call rather than synthesizing sentence fragments. Pass only intended spoken content, with natural punctuation, not markdown or language instructions. Honor an explicit voice selection; otherwise keep the previous conversation voice when known, or omit voice to use the configured voice. Returns a URL to the generated audio file. This is speech synthesis, not a music-generation tool.`,
     parameters: {
       type: 'object',
       properties: {
@@ -53,13 +53,12 @@ export function generateAudioTool(
           type: 'string',
           enum: ['auto', ...TTS_VOICES],
           default: 'auto',
-          description: 'Select an Azure multilingual voice: alloy, echo, fable, onyx, nova or shimmer. Honor an explicit user choice; otherwise keep the previous conversation voice when known. Auto or omission uses the configured voice. Do not change voices simply because the language changes.'
+          description: 'Select a voice profile (mapped to an available local voice for regional Azure speech): alloy, echo, fable, onyx, nova or shimmer. Honor an explicit user choice; otherwise keep the previous conversation voice when known. Auto or omission uses the configured voice. Do not change voices simply because the language changes.'
         },
         language: {
           type: 'string',
-          enum: ['auto', ...TTS_LANGUAGES],
           default: 'auto',
-          description: 'Spoken text language (ISO 639-1). Honor the user selection or infer it from the request/context for auto. Write or translate the text into this language BEFORE calling the tool; synthesis itself does not translate text or force an accent.'
+          description: customerSpeech ? 'Use a base language for text guidance. The pinned customer model cannot enforce a regional voice. Write the intended spoken text BEFORE calling the tool.' : 'Spoken language tag, e.g. fr, fr-CA, sr-Latn-RS or zh-CN-liaoning. Pass a specific locale only when supported by the request or context. Honor the user selection or infer it from the request/context for auto. Write or translate the text into this language BEFORE calling the tool; synthesis itself does not translate text.'
         },
         format: {
           type: 'string',
@@ -68,7 +67,7 @@ export function generateAudioTool(
         },
         model: {
           type: 'string',
-          description: 'Optional Azure speech deployment name, not a qualified provider/model ID. Omit to use the configured deployment.'
+          description: customerSpeech ? 'Omit to use the pinned customer speech model.' : 'Optional Azure speech deployment name for legacy synthesis. Omit for regional speech.'
         }
       },
       required: ['text']
@@ -79,7 +78,7 @@ export function generateAudioTool(
           return { success: false, error: 'text is required and must be a string', provider: 'none' };
         }
         // WhatsApp constrains the container, not the provider/account or model.
-        const speechOptions = validateSpeechOptions({
+        const speechOptions = await prepareSpeechOptions({
           text: args.text,
           provider: args.provider,
           voice: args.voice,
@@ -114,14 +113,16 @@ export function generateAudioTool(
 
         const apiUrl = `${process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000'}/api/ai/audio`;
         
+        // Let the API resolve the regional voice on its own host; a resolved
+        // Neural voice is not a valid input profile or OpenAI deployment.
         const requestBody = {
           ...(getExecutionRouting(site_id) ? { site_id } : {}),
           text: args.text,
           provider: provider,
-          voice: speechOptions.voice,
+          voice: speechOptions.native ? args.voice : speechOptions.voice,
           ...(speechOptions.language ? { language: speechOptions.language } : {}),
           format,
-          model: speechOptions.deployment
+          ...(!speechOptions.native && { model: provider === 'openrouter' ? args.model : speechOptions.deployment }),
         };
 
         const routing = getExecutionRouting(site_id);
@@ -149,8 +150,17 @@ export function generateAudioTool(
           throw new Error(`Audio generation failed: ${response.status} ${errorText}`);
         }
         
+        // A stale or differently configured API must not deliver a different accent
+        // while reporting the preflight selection. Never retry a billable request.
+        if (speechOptions.native && (response.headers.get('X-TTS-Model') !== speechOptions.deployment
+          || response.headers.get('X-TTS-Text-Language') !== speechOptions.language
+          || response.headers.get('X-TTS-Voice') !== speechOptions.voice)) {
+          await response.body?.cancel();
+          throw new Error('Audio API did not confirm the selected regional voice');
+        }
         // The audio API returns bytes; store them to give the tool a media URL.
         const audioBlob = await response.blob();
+        const actualProvider = response.headers.get('X-TTS-Provider') ?? provider;
         
         const { supabaseAdmin } = await import('@/lib/database/supabase-client');
         const { createInstanceLogCore } = await import('@/lib/tools/instance-log-core');
@@ -194,7 +204,7 @@ export function generateAudioTool(
               level: 'info',
               message: `Audio generated successfully: ${publicUrl}`,
               details: {
-                provider: provider,
+                provider: actualProvider,
                 audio_url: publicUrl,
                 text: args.text,
                 type: 'media_delivery',
@@ -210,19 +220,19 @@ export function generateAudioTool(
 
         return {
           success: true,
-          provider: provider,
+          provider: actualProvider,
           audio_url: publicUrl,
           mimeType,
           metadata: {
             format: fileExt,
-            voice: speechOptions.voice,
-            language: speechOptions.language ?? 'auto',
+            voice: response.headers.get('X-TTS-Voice') ?? speechOptions.voice,
+            language: response.headers.get('X-TTS-Text-Language') ?? speechOptions.language ?? 'auto',
             requested_language: args.language ?? 'auto',
             language_source: speechOptions.language ? 'tool_argument' : 'text_autodetection',
-            model: speechOptions.deployment,
+            model: response.headers.get('X-TTS-Model') ?? speechOptions.deployment,
             generated_at: new Date().toISOString()
           },
-          message: `Successfully generated audio using ${provider}. Audio is saved and ready to use. URL: ${publicUrl}`
+          message: `Successfully generated audio using ${actualProvider}. Audio is saved and ready to use. URL: ${publicUrl}`
         };
 
       } catch (error: any) {

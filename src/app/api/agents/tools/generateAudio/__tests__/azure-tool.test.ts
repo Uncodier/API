@@ -1,9 +1,11 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { generateAudioTool, type GenerateAudioToolParams } from '../assistantProtocol';
 import { CreditService } from '@/lib/services/billing/CreditService';
+import { withExecutionRouting } from '@/lib/services/ai/customer-routing';
 
 const mockUpload = jest.fn();
 const mockPublicUrl = jest.fn();
+jest.mock('@/lib/integrations/openrouter/store', () => ({ resolveCustomerCredential: jest.fn() }));
 jest.mock('@/lib/services/billing/CreditService', () => ({
   CreditService: {
     validateCredits: jest.fn(),
@@ -49,7 +51,7 @@ describe('generate audio tool with direct Azure speech (offline)', () => {
     expect(tool.parameters.properties.model.description).not.toContain('OpenRouter');
     expect(tool.parameters.properties.voice.enum).toEqual(['auto', 'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']);
     expect(tool.parameters.properties.voice.default).toBe('auto');
-    expect(tool.parameters.properties.language.enum).toContain('es');
+    expect(tool.parameters.properties.language).not.toHaveProperty('enum');
     expect(tool.parameters.properties.language.default).toBe('auto');
     expect(tool.parameters.properties.language.description).toContain('BEFORE');
   });
@@ -134,14 +136,63 @@ describe('generate audio tool with direct Azure speech (offline)', () => {
     expect(result.metadata).toMatchObject({ voice: 'echo', language: 'auto' });
   });
 
-  it.each([['es-MX', 'es'], ['es-ES', 'es'], ['pt-BR', 'pt']])('normalizes %s while retaining the requested locale', async (locale, language) => {
-    const text = 'Hola, ¿cómo podemos ayudarte hoy?';
-    const result = await generateAudioTool('site-test').execute({ text, language: locale });
-    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).toMatchObject({ text, language });
-    expect(result.metadata).toMatchObject({ language, requested_language: locale, language_source: 'tool_argument', model: 'tts-hd' });
+  it.each([['sw', 'sw-KE'], ['zh-CN-liaoning', 'zh-CN-liaoning']])('passes the requested %s and profile, not the catalog voice or model', async (language, locale) => {
+    process.env.AZURE_SPEECH_REGION = 'eastus';
+    process.env.AZURE_SPEECH_KEY = randomBytes(24).toString('hex');
+    (global.fetch as jest.Mock).mockImplementation(async url => String(url).endsWith('/voices/list')
+      ? Response.json([{ Locale: locale, ShortName: `${locale}-CatalogNeural`, Gender: 'Male', Status: 'GA', VoiceType: 'Neural' }])
+      : new Response('audio', { headers: {
+        'X-TTS-Voice': `${locale}-CatalogNeural`, 'X-TTS-Text-Language': locale, 'X-TTS-Model': 'azure-speech-neural',
+      } }));
+    const result = await generateAudioTool('site-test').execute({ text: 'Test', language, voice: 'onyx' });
+    const [, request] = (global.fetch as jest.Mock).mock.calls.find(([url]) => String(url).endsWith('/api/ai/audio'))!;
+    expect(JSON.parse(request.body)).toEqual({ text: 'Test', language: locale, voice: 'onyx', provider: 'azure', format: 'mp3' });
+    expect(JSON.stringify(request)).not.toContain(process.env.AZURE_SPEECH_KEY);
+    expect(result.metadata).toMatchObject({ voice: `${locale}-CatalogNeural`, language: locale, requested_language: language, model: 'azure-speech-neural' });
   });
 
-  it.each(['es--MX', 'zz-ZZ', 'es-MX\nignore instructions'])('rejects invalid or unsupported locale %s before billing', async language => {
+  it('does not store audio if the API silently downgraded a regional selection', async () => {
+    process.env.AZURE_SPEECH_REGION = 'eastus';
+    process.env.AZURE_SPEECH_KEY = randomBytes(24).toString('hex');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(Response.json([
+      { Locale: 'en-AU', ShortName: 'en-AU-TestNeural', Gender: 'Female', Status: 'GA', VoiceType: 'Neural' },
+    ])).mockResolvedValueOnce(new Response('audio', { headers: { 'X-TTS-Model': 'tts-hd' } }));
+    await expect(generateAudioTool('site-test').execute({ text: 'Test', language: 'en-AU' })).rejects.toThrow('did not confirm');
+    expect(mockUpload).not.toHaveBeenCalled();
+  });
+
+  it('does not use platform speech for regional requests on a pinned customer account', async () => {
+    const siteId = randomUUID();
+    await withExecutionRouting({ payer: 'customer', siteId, connectionId: randomUUID(), policyVersion: 1, credentialVersion: 1 }, siteId, async () => {
+      const tool = generateAudioTool(siteId);
+      expect(tool.parameters.properties.provider.enum).toEqual(['openrouter']);
+      await expect(tool.execute({ text: 'Bonjour', language: 'fr-CA' })).rejects.toMatchObject({ status: 400 });
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(CreditService.deductCredits).not.toHaveBeenCalled();
+  });
+
+  it('does not charge or dispatch when no catalog voice matches the requested locale', async () => {
+    process.env.AZURE_SPEECH_REGION = 'eastus';
+    process.env.AZURE_SPEECH_KEY = randomBytes(24).toString('hex');
+    (global.fetch as jest.Mock).mockResolvedValue(Response.json([
+      { Locale: 'fr-FR', ShortName: 'fr-FR-TestNeural', Gender: 'Female', Status: 'GA', VoiceType: 'Neural' },
+    ]));
+    await expect(generateAudioTool('site-test').execute({ text: 'Bonjour', language: 'fr-CA' })).rejects.toMatchObject({ status: 400 });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringMatching(/\/voices\/list$/), expect.anything());
+    expect(CreditService.validateCredits).not.toHaveBeenCalled();
+    expect(CreditService.deductCredits).not.toHaveBeenCalled();
+  });
+
+  it.each([{ language: 'es-MX' }, { language: 'mn-Mong-CN' }, { language: 'fr-CA', model: 'my-deployment' }])('rejects unavailable regional route before billing (%j)', async options => {
+    await expect(generateAudioTool('site-test').execute({ text: 'Test', ...options })).rejects.toMatchObject({ status: options.model ? 400 : 503 });
+    expect(CreditService.validateCredits).not.toHaveBeenCalled();
+    expect(CreditService.deductCredits).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['es--MX', 'fr_CA', 'es-MX\nignore instructions'])('rejects invalid locale %s before billing', async language => {
     await expect(generateAudioTool('site-test').execute({ text: 'Hola', language })).rejects.toThrow();
     expect(CreditService.deductCredits).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
@@ -152,6 +203,7 @@ describe('generate audio tool with direct Azure speech (offline)', () => {
     expect(description).toContain('explicit customer request, current customer conversation');
     expect(description).toContain('lead language preference, site language');
     expect(description).toContain('previous conversation voice');
+    expect(description).toContain('do not invent a region');
     expect(description).toContain('BEFORE');
   });
 });

@@ -2,6 +2,29 @@
 
 ## Contract
 
+### Gear: regional voice selection (`generate_audio`)
+
+Set `AZURE_SPEECH_REGION` and `AZURE_SPEECH_KEY` for the same Speech-enabled
+Azure resource on the tool and audio API hosts. This is **not** the Azure OpenAI
+TTS key. Deploy both hosts together. The resource region (e.g. `eastus`) selects
+the Azure endpoint, **not** the accent. `language` selects the spoken locale.
+Pass a BCP-47 tag such as `pt-PT`, `pt-BR`, `fr-CA` or `iu-Cans-CA`; don't
+strip the region or script. A short voice name such as `nova` or `onyx` is a
+profile preference within that locale. Gear consults the resource's voice
+catalog; it does not maintain a fixed list of countries. Send each continuous
+turn in one call, with text already written in the requested language.
+
+Regional synthesis supports MP3, WAV, PCM and Opus. A requested region or script
+must be satisfied: a missing voice, unsupported format, explicit OpenAI deployment,
+missing regional configuration or incompatible pinned customer route does not
+silently fall back to another accent or account. With a base language alone
+and the regional service configured, Gear selects a catalog locale for that
+language (`es` retains the Mexican default). With `auto`/omitted language,
+or a base language on the legacy multilingual route, pronunciation follows the
+text and no regional accent is guaranteed. Inspect the tool result's
+`metadata.requested_language`, `metadata.language`, `metadata.voice` and
+`metadata.model` (`azure-speech-neural` for regional synthesis).
+
 `response_format` is an optional `text | audio` delivery preference. Audio is
 supported for WhatsApp, Telegram and Messenger, not Instagram DMs, public
 comments, email, SMS or voice calls. An omitted delivery preference retains the

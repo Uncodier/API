@@ -75,6 +75,7 @@ export async function POST(request: NextRequest) {
         'Content-Length': String(result.audio.length),
         'X-TTS-Provider': result.provider,
         'X-TTS-Text-Language': result.language ?? 'auto',
+        ...(result.voice && result.model ? { 'X-TTS-Voice': result.voice, 'X-TTS-Model': result.model } : {}),
         ...(result.receiptEventId ? { 'X-Customer-Receipt-Event': result.receiptEventId } : {}),
         'Cache-Control': 'no-store',
       },
@@ -97,7 +98,7 @@ export async function GET() {
       body: {
         text: 'string',
         voice: 'auto (default) or alloy, echo, fable, onyx, nova, shimmer',
-        language: 'auto (default) or a listed language code; text must already be in this language',
+        language: 'auto (default) or a BCP-47 speech locale, e.g. fr-CA, pt-PT or zh-TW; text must already be in this language',
         format: "'mp3' | 'pcm' | 'wav' | 'opus' | 'aac' | 'flac' (default: 'mp3')",
         provider: "'azure' (direct; normally omit)",
         model: 'optional Azure speech deployment name, not a gateway model ID',
@@ -110,15 +111,15 @@ export async function GET() {
       voice: process.env.AZURE_TTS_VOICE?.trim() ?? DEFAULT_AZURE_TTS_VOICE,
       language: 'auto',
     },
-    options: { voices: ['auto', ...TTS_VOICES], languages: ['auto', ...TTS_LANGUAGES] },
+    options: { voices: ['auto', ...TTS_VOICES], languages: ['auto', ...TTS_LANGUAGES, 'fr-CA', 'pt-PT', 'zh-TW'], languagesAreExamples: true },
     env: {
       required: ['AZURE_TTS_ENDPOINT', 'AZURE_TTS_API_KEY'],
-      optional: ['AZURE_TTS_DEPLOYMENT', 'AZURE_TTS_API_VERSION', 'AZURE_TTS_VOICE'],
+      optional: ['AZURE_TTS_DEPLOYMENT', 'AZURE_TTS_API_VERSION', 'AZURE_TTS_VOICE', 'AZURE_SPEECH_REGION', 'AZURE_SPEECH_KEY'],
     },
     notes: {
-      routing: 'Calls Azure OpenAI directly with the dedicated speech resource key. No gateway fallback or retries.',
+      routing: 'Calls Azure Speech for regional synthesis, otherwise Azure OpenAI. No gateway fallback or retries.',
       voices: 'Azure OpenAI voices are multilingual; do not use MAI/OpenRouter voice IDs.',
-      language: 'Language is agent/text guidance only. Azure tts-hd detects it from input and does not accept a language parameter or translate text.',
+      language: 'Azure Speech selects voices from its regional catalog. Explicit locales must match; a provider, deployment or output format that cannot honor the locale fails instead of substituting another accent.',
       maxCharacters: AZURE_TTS_MAX_CHARS,
     }
   });

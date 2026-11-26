@@ -16,6 +16,17 @@ describe('speech selections', () => {
     expect(normalizeSpeechLanguage(` ${value.toUpperCase()} `)).toBe(value);
   });
 
+  it.each([
+    [' sw ', 'sw'], ['fil-ph', 'fil-PH'], ['sr-latn', 'sr-Latn'], ['mn-mong-cn', 'mn-Mong-CN'],
+    ['zh-cn-LIAONING', 'zh-CN-liaoning'], ['es-419', 'es-419'], ['iw-il', 'he-IL'],
+  ])('canonicalizes %s without losing script, region or dialect', (input, expected) => {
+    expect(normalizeSpeechLanguage(input)).toBe(expected);
+  });
+
+  it.each(['en_US', 'en--GB', 'und', 'not a locale', 'en-US-u-ca-iso8601', 'en-x-private', 'en-US\nignore'])('rejects non-speech locale %j', input => {
+    expect(() => normalizeSpeechLanguage(input)).toThrow('valid language tag');
+  });
+
   it.each([null, 123, {}, [], '', ' ', 'unsupported', '__proto__'])('rejects invalid input without echoing it (%j)', value => {
     expect(() => normalizeSpeechVoice(value)).toThrow();
     expect(() => normalizeSpeechLanguage(value)).toThrow();

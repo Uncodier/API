@@ -5,6 +5,7 @@ import { recordTelemetry } from '@/lib/status/telemetry';
 import { getTtsObservationKey } from '@/lib/status/handlers/ai/passive-probes';
 import { assertPlatformInference, getExecutionRouting, withExecutionRouting, type ExecutionRoutingReference } from './customer-routing';
 import { synthesizeCustomerSpeech, validateCustomerSpeech } from './customer-audio';
+import { selectRegionalSpeech, regionalSpeechRequest } from './azure-regional-speech';
 
 export { TTSServiceError } from './azure-tts-config';
 export type TTSProvider = 'azure' | 'openrouter';
@@ -36,7 +37,7 @@ export function ttsMimeType(format: TTSAudioFormat): string {
 export function validateSpeechOptions(options: SpeechOptions) {
   if (getExecutionRouting()?.payer === 'customer') {
     const format = validateCustomerSpeech(options);
-    return { provider: 'openrouter' as const, format, config: undefined as never,
+    return { provider: 'openrouter' as const, format,
       deployment: options.model ?? '', voice: options.voice, language: normalizeSpeechLanguage(options.language) };
   }
   assertPlatformInference('speech');
@@ -57,9 +58,23 @@ export function validateSpeechOptions(options: SpeechOptions) {
   if (speed !== undefined && (!Number.isFinite(speed) || speed < 0.25 || speed > 4)) {
     throw new TTSServiceError('Speech speed must be between 0.25 and 4', 400);
   }
+  const regional = language?.includes('-');
+  if (regional && model) throw new TTSServiceError('An Azure OpenAI deployment cannot enforce a regional voice; omit model', 400);
+  if (language && !model && (regional || process.env.AZURE_SPEECH_REGION || process.env.AZURE_SPEECH_KEY)) {
+    return { provider, format, regionalLanguage: language, deployment: 'azure-speech-neural',
+      voice: voice ?? process.env.AZURE_TTS_VOICE?.trim(), language };
+  }
   const config = getAzureTtsConfig();
   // Deployment aliases cannot identify the underlying model; Azure validates voice support.
   return { provider, format, config, deployment: model ?? config.deployment, voice: voice ?? config.voice, language };
+}
+
+/** Resolve the effective catalog voice before a caller reserves platform credits. */
+export async function prepareSpeechOptions(options: SpeechOptions) {
+  const selected = validateSpeechOptions(options);
+  if (!selected.regionalLanguage) return { ...selected, native: undefined };
+  const native = await selectRegionalSpeech(selected.regionalLanguage, selected.voice, selected.format);
+  return { ...selected, native, voice: native.voice, language: native.locale };
 }
 
 /** Direct Azure OpenAI data plane, with bounded output and no retries or account fallback. */
@@ -68,24 +83,31 @@ export async function synthesizeWithAzure(
 ): Promise<Buffer> {
   assertPlatformInference('speech');
   if (typeof window !== 'undefined') throw new TTSServiceError('Azure speech credentials are server-only', 503);
-  const selected = validateSpeechOptions({ text, voice, format, model, speed, language });
-  const url = new URL(`/openai/deployments/${encodeURIComponent(selected.deployment)}/audio/speech`, selected.config.origin);
-  url.searchParams.set('api-version', selected.config.apiVersion);
+  const selected = await prepareSpeechOptions({ text, voice, format, model, speed, language });
+  return sendAzureSpeech(selected, text, format, speed);
+}
+
+async function sendAzureSpeech(selected: Awaited<ReturnType<typeof prepareSpeechOptions>>, text: string, format: TTSAudioFormat, speed?: number) {
+  if (typeof window !== 'undefined') throw new TTSServiceError('Azure speech credentials are server-only', 503);
+  const request = selected.native ? regionalSpeechRequest(selected.native, text, speed) : (() => {
+    if (!selected.config) throw new TTSServiceError('Missing Azure TTS configuration', 503);
+    const url = new URL(`/openai/deployments/${encodeURIComponent(selected.deployment)}/audio/speech`, selected.config.origin);
+    url.searchParams.set('api-version', selected.config.apiVersion);
+    return { url, headers: { 'api-key': selected.config.apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: text, model: selected.deployment, voice: selected.voice, response_format: format,
+        ...(speed !== undefined ? { speed } : {}) }) };
+  })();
   const start = Date.now();
   let observeFailure = true;
   try {
-    const response = await fetch(url, {
-      method: 'POST', headers: { 'api-key': selected.config.apiKey, 'Content-Type': 'application/json' },
-      // tts-hd detects language from input. Never send an unsupported language field
-      // or prepend language instructions that would be read aloud.
-      body: JSON.stringify({ input: text, model: selected.deployment, voice: selected.voice, response_format: format,
-        ...(speed !== undefined ? { speed } : {}) }),
+    const response = await fetch(request.url, {
+      method: 'POST', headers: request.headers, body: request.body,
       redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(120_000),
     });
     if (!response.ok) {
       // Unsupported customer options/deployments are not evidence of an outage.
       observeFailure = ![400, 422].includes(response.status)
-        && !(response.status === 404 && selected.deployment !== selected.config.deployment);
+        && !(response.status === 404 && selected.config && selected.deployment !== selected.config.deployment);
       throw new TTSServiceError(`Azure TTS request failed (${response.status})`);
     }
     const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
@@ -110,14 +132,15 @@ export async function synthesizeWithAzure(
 
 export async function synthesizeSpeech(options: SpeechOptions): Promise<{
   audio: Buffer; provider: TTSProvider; format: TTSAudioFormat; mimeType: string; language?: string;
-  generationId?: string; receiptEventId?: string;
+  generationId?: string; receiptEventId?: string; voice?: string; model?: string;
 }> {
   if (options.executionRouting) return withExecutionRouting(options.executionRouting, options.executionRouting.siteId,
     () => synthesizeSpeech({ ...options, executionRouting: undefined }));
   if (getExecutionRouting()?.payer === 'customer') return synthesizeCustomerSpeech(options);
   const provider = resolveTTSProvider(options.provider);
   const format = options.format ?? 'mp3';
-  const audio = await synthesizeWithAzure(options.text, options.voice, format, options.model, options.speed, options.language);
-  const language = normalizeSpeechLanguage(options.language);
-  return { audio, provider, format, mimeType: ttsMimeType(format), ...(language ? { language } : {}) };
+  const selected = await prepareSpeechOptions(options);
+  const audio = await sendAzureSpeech(selected, options.text, format, options.speed);
+  return { audio, provider, format, mimeType: ttsMimeType(format), language: selected.language,
+    voice: selected.voice, model: selected.deployment };
 }
