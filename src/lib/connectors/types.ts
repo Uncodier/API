@@ -18,6 +18,8 @@ export type ConnectorContext = {
   instanceId?: string;
   requestId?: string;
   sourceDigest?: string;
+  /** Host-only callback: restrict dispatch to a validated read and recheck every source. */
+  beforePrivateRead?: () => Promise<void>;
   /** A conversation selection can narrow authority, never supply it. */
   connectorIdHint?: string;
   /** Admitted from a verified non-anonymous user session, never a site API key. */

@@ -59,15 +59,17 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
     search:searchDirectTools,
     async describe(name: string) {
       const a = await admission(name);
-      const d = await describeDirectTool(a.target, await credentialFor(a), a.toolSlug);
+      const d = await describeDirectTool(a.target, await credentialFor(a), a.toolSlug, undefined, Boolean(a.context.beforePrivateRead));
       await recheck(name, a.stamp);
       const sql = supabaseSqlAction(a.target.connector.toolkit_slug, a.toolSlug);
       return {name, tool_origin:'provider' as const, ...modelAccountIdentity(a.target.connector.id), toolkit:a.target.connector.toolkit_slug,
         description:d.description, version:d.version, schema_hash:d.schemaHash, effect:d.effect,
         parameters:{type:'object',additionalProperties:false,required:['version','schema_hash','arguments'],properties:{
           version:{type:'string',const:d.version},schema_hash:{type:'string',const:d.schemaHash},arguments:d.parameters,
-          save_record:{type:'boolean',default:false,description:'Set true only when a private record or viewer link is useful for this task.'},
-        }}, expected_use:'Use this exact provider reference, account, version and schema. Answer using the returned data. Set save_record only when a separate private copy is useful; saving does not affect what you receive. Do not repeat a call to save it after the fact.' + (sql
+          ...(!a.context.beforePrivateRead && {save_record:{type:'boolean',default:false,description:'Set true only when a private record or viewer link is useful for this task.'}}),
+        }}, expected_use:'Use this exact provider reference, account, version and schema. Answer using the returned data. ' +
+          (a.context.beforePrivateRead ? 'Use the private answer as the deliverable; do not save a separate record.' :
+          'Set save_record only when a separate private copy is useful; saving does not affect what you receive. Do not repeat a call to save it after the fact.') + (sql
           ? ' For KPI requests, query the requested authorized aggregates. Cast exact decimals to text to preserve precision.' : '')};
     },
     async call(name: string, input: unknown) {
@@ -89,12 +91,14 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
         const credential = await credentialFor(a);
         const {version,schema_hash,arguments:args,save_record} = envelope.data;
         const digest = hashConnectorSchema(args);
+        if (a.context.beforePrivateRead && save_record) throw new ConnectorError('PRIVATE_DESTINATION_REQUIRED','Use the combined private answer for this report.',403);
         let claimId: string | undefined;
         const response = await executeDirectTool(a.target, credential, a.toolSlug, {version,schema_hash,arguments:args}, async () => {
           await recheck(name, a.stamp);
+          await a.context.beforePrivateRead?.();
           claimId = await claimDirectDispatch(a.context,a.target,a.toolSlug,version,schema_hash,digest);
           dispatchPossible = true;
-        });
+        }, Boolean(a.context.beforePrivateRead));
         // Never publish the raw execution envelope to the model.
         if (!dispatchPossible || !claimId) throw new ConnectorError('CONNECTOR_OUTCOME_UNKNOWN','Provider dispatch could not be verified.',502);
         await recheck(name, a.stamp);
@@ -121,7 +125,7 @@ export function createProviderDirectRuntime(resolveContext: ConnectorContextReso
         const facts = !sql && c.toolkit_slug === 'supabase' && a.toolSlug === 'SUPABASE_LIST_TABLES'
           ? askProviderResult(c.toolkit_slug, a.toolSlug, response.data) : undefined;
         const result = projected.result;
-        return {success:true as const, ...(result !== undefined ? {result,result_visibility:ASK_OWNER_RESULT,result_connector_id:c.id,result_claim_id:claimId,
+        return {success:true as const, result_visibility:ASK_OWNER_RESULT,result_connector_id:c.id,result_claim_id:claimId, ...(result !== undefined ? {result,
           ...(facts && {result_facts:facts}), ...(projected.truncated && {result_truncated:true as const}),
           ...(projected.withheld && {result_fields_omitted:true as const})} : {result_omitted:true as const,result_omission_reason:'no_supported_data'}),
           ...(receipt ? {receipt} : save_record === true ? {record_status:'unconfirmed' as const} : {}),

@@ -6,7 +6,7 @@ import {
   reuseInterventionMessage,
   type SavedInterventionMessage,
 } from './reuse-intervention-message';
-import { getConversationChannel, sendMessageByChannel } from './send-intervention-by-channel';
+import { getConversationChannel, sendMessageByChannel, type ChannelContactInfo } from './send-intervention-by-channel';
 import { authorizeIntervention, InterventionRequestError } from './authorize-intervention';
 import { SocialCommentError } from '@/lib/services/social-comments/metadata';
 import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
@@ -78,16 +78,17 @@ export async function POST(request: Request) {
       messageId: requestMessageId, title: conversationTitle,
       commentMetadata, responseFormat: requestedResponseFormat,
       mediaInput: requestedMediaInput,
+      supplierContact,
     } = await authorizeIntervention(request, body);
 
     // Resolve the stored conversation channel before any audio persistence or
     // retry claim. Caller-supplied channel hints are not accepted by the schema.
-    const preflightChannel = requestedResponseFormat === 'audio' || requestMessageId || requestedMediaInput?.media_url
+    const preflightChannel: ChannelContactInfo | null | undefined = supplierContact ?? (requestedResponseFormat === 'audio' || requestMessageId || requestedMediaInput?.media_url
       ? (commentMetadata
         ? { channel: commentMetadata.network as string, channelDelivery: true, leadId: lead_id,
           leadPhone: undefined, leadEmail: undefined, visitorPhone: undefined }
         : await getConversationChannel(conversationId))
-      : undefined;
+      : undefined);
     if (requestedResponseFormat === 'audio') {
       try { validateResponseFormat(requestedResponseFormat, preflightChannel?.channel || ''); }
       catch (error) { throw new InterventionRequestError((error as Error).message, 400); }
@@ -155,8 +156,8 @@ export async function POST(request: Request) {
         : await getConversationChannel(savedMessages.conversationId);
 
       if (conversationInfo && conversationInfo.channel) {
+        const channel = conversationInfo.channel;
         const {
-          channel,
           leadId: conversationLeadId,
           leadPhone,
           leadEmail,

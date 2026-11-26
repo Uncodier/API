@@ -85,6 +85,9 @@ export async function getConversationChannel(
 
     console.log(`📺 Canal detectado: "${channel || 'sin canal'}" para conversación ${conversationId}`);
 
+    // Supplier addresses are resolved only through intervention authorization with user-scoped RLS.
+    if (conversation.custom_data?.supplier_target !== undefined) return null;
+
     let leadPhone = null;
     let leadEmail = null;
     let visitorPhone = null;
@@ -169,12 +172,16 @@ export async function sendMessageByChannel(
   try {
     // Contact info can come from a caller or comment, not just the resolver.
     // Check the actual thread before starting any workflow or placing a call.
-    const { data, error } = await supabaseAdmin.from('conversations').select('channel')
+    const { data, error } = await supabaseAdmin.from('conversations').select('channel, title, custom_data')
       .eq('id', conversationId).eq('site_id', siteId).maybeSingle();
     if (error || !data || data.channel === 'internal_review') {
       return { success: false, workflowStarted: false, error: 'Conversation unavailable for delivery' };
     }
     validateResponseFormat(responseFormat, channel);
+    const savedTitle = data.title;
+    const emailSubject = data.custom_data?.lead_composer === true && typeof savedTitle === 'string'
+      && savedTitle.length <= 200 && /^[^\r\n\u0000]+$/.test(savedTitle) && savedTitle.trim()
+      ? savedTitle.trim() : 'Respuesta de nuestro equipo';
     const media = await validateOutboundMedia({ ...mediaInput, response_format: responseFormat }, channel);
     const mediaFields = media ? { message_type: media.messageType, media_url: media.content.mediaUrl,
       ...(media.content.mimeType ? { mime_type: media.content.mimeType } : {}) } : {};
@@ -237,7 +244,7 @@ export async function sendMessageByChannel(
     // Deploy the versioned worker first, then enable this switch on the API.
     // Otherwise an older worker would interpret a Zavu chat as a Twilio send.
     const routedWhatsAppText = process.env.WHATSAPP_ROUTED_TEXT_WORKER_READY === 'true'
-      && channel === 'whatsapp' && !!messageId && !media && responseFormat !== 'audio';
+      && data.custom_data?.supplier_target === undefined && channel === 'whatsapp' && !!messageId && !media && responseFormat !== 'audio';
     const useChannelDelivery =
       (contactInfo.channelDelivery === true && !routedWhatsAppText) ||
       channel === 'telegram' ||
@@ -274,7 +281,7 @@ export async function sendMessageByChannel(
         to: recipient,
         message,
         site_id: siteId,
-        subject: channel === 'email' ? 'Respuesta de nuestro equipo' : undefined,
+        subject: channel === 'email' ? emailSubject : undefined,
         agent_id: agentId || undefined,
         conversation_id: conversationId,
         lead_id: leadId,
@@ -345,7 +352,7 @@ export async function sendMessageByChannel(
         ...mediaFields,
         email,
         from: 'Equipo de Soporte',
-        subject: 'Respuesta de nuestro equipo',
+        subject: emailSubject,
         message,
         site_id: siteId,
         agent_id: agentId || undefined,

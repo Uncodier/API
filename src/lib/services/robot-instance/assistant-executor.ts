@@ -222,13 +222,15 @@ export async function executeAssistantStep(
                 onThinkingStreamStart: thinkingStreamCallbacks?.onThinkingStreamStart,
                 onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
                 onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
+                preserveToolExecution: options.ownerConnectorContext,
+                privateToolContext: options.ownerConnectorContext,
                 maxIterations: nodeMaxIterations,
                 executionBoundary: options.executionBoundary,
                 maxOutputTokens: options.maxOutputTokens,
                 enforceSingleTurn: options?.enforceSingleTurn,
                 toolOverrides: options?.tool_overrides,
                 enforceContextBudget: Boolean(instance_id && site_id),
-                onContextUsage: !instance_node_id && instance_id && site_id ? async snapshot => {
+                onContextUsage: !options.ownerConnectorContext && !instance_node_id && instance_id && site_id ? async snapshot => {
                   await new InstanceContextManager(instance_id, site_id).recordUsage(
                     measureInstanceContext(snapshot));
                 } : undefined,

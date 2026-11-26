@@ -72,7 +72,7 @@ function verifyLocal(target: DirectAuthorizedConnector, credential: DirectCreden
   if (/[^A-Z0-9_]/.test(slug) || !slug.startsWith(`${c.toolkit_slug.toUpperCase().replace(/-/g,'_')}_`)) unsupportedDirectTool();
 }
 
-async function prepare(target: DirectAuthorizedConnector, credential: DirectCredential, client: ComposioClient, slug: string, version?: string) {
+async function prepare(target: DirectAuthorizedConnector, credential: DirectCredential, client: ComposioClient, slug: string, version?: string, privateRead = false) {
   verifyLocal(target, credential, slug);
   if (version !== undefined) inputValue(release, version);
   const {connector, provider, directProof, policy} = target;
@@ -83,7 +83,10 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
   try { validateJson(raw); } catch { invalidProviderResponse(); }
   const tool = providerValue(metadataSchema, raw);
   if (tool.slug !== slug || tool.toolkit.slug !== connector.toolkit_slug || (version !== undefined && version !== tool.version)) changed();
-  const {parameters, injected} = directParameterPlan(tool.input_parameters, connector.supabase_project_ref ?? undefined);
+  const plan = directParameterPlan(tool.input_parameters, connector.supabase_project_ref ?? undefined);
+  const {injected} = plan;
+  let parameters = plan.parameters;
+  let read: ReturnType<typeof import('./private-read-plan').privateReadPlan>;
   const project = connector.supabase_project_ref;
   const projectMetadataRead = Boolean(project && projectScopedConnection(directProof) && projectMetadataAction(connector.toolkit_slug,slug));
   const effect = directEffect(effectTags.parse(tool.tags), connector.toolkit_slug, slug);
@@ -113,6 +116,11 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
   }
   if (directProof.kind==='connected_account' && directProof.authScheme &&
       !(directProof.authScheme==='API_KEY' ? account.apiKeyAuth : account.oauth2)) notReady();
+  if (privateRead) {
+    const { privateReadPlan } = await import('./private-read-plan');
+    read = privateReadPlan(raw, project, connector.granted_scopes, account);
+    if (read) parameters = read.parameters;
+  }
   if (project && connector.toolkit_slug==='supabase' && !account.hostedSupabasePat) notReady();
   if (!acceptsDirectAccount(account)) notReady();
   if (directProof.kind===undefined || directProof.kind==='attested') current(directProof.expiresAt);
@@ -123,7 +131,7 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
   if (descriptorContainsPrivateValue(parameters, [credential.apiKey, project, connectionAttempt(directProof),
     'resourceBoundary' in directProof ? directProof.resourceBoundary : undefined, connector.provider_account_id,
     connector.auth_config_id, provider.project_id, provider.provider_user_id, provider.credential_revision])) unsupportedDirectTool();
-  const schemaHash = hashConnectorSchema({ mode:'direct-account-v3', slug, toolkit:toolkit.slug, version:tool.version,
+  const schemaHash = hashConnectorSchema({ mode:privateRead ? 'private-refresh-v1' : 'direct-account-v3', slug, toolkit:toolkit.slug, version:tool.version,
     input:hashConnectorSchema(directSchemaContract(tool.input_parameters)),
     output:tool.output_parameters ? hashConnectorSchema(directSchemaContract(tool.output_parameters)) : null,
     parameters, injected, effect,
@@ -132,20 +140,20 @@ async function prepare(target: DirectAuthorizedConnector, credential: DirectCred
     userId:provider.provider_user_id });
   const descriptor: DirectDescriptor = {version:tool.version, schemaHash, parameters, effect,
     description:`${slug} on the selected private connection.`};
-  return { descriptor, injected, accountId:account.id, userId:provider.provider_user_id };
+  return { descriptor, injected, read, accountId:account.id, userId:provider.provider_user_id };
 }
 
-export async function describeDirectTool(target: DirectAuthorizedConnector, credential: DirectCredential, slug: string, version?: string): Promise<DirectDescriptor> {
+export async function describeDirectTool(target: DirectAuthorizedConnector, credential: DirectCredential, slug: string, version?: string, privateRead = false): Promise<DirectDescriptor> {
   // Do not retain mutable target/credential references across an async provider read.
   const creds = {...credential};
-  return (await prepare(structuredClone(target), creds, createComposioClient(creds.apiKey), slug, version)).descriptor;
+  return (await prepare(structuredClone(target), creds, createComposioClient(creds.apiKey), slug, version, privateRead)).descriptor;
 }
 
 /** Server-internal only. The caller reauthorizes and durably claims these exact arguments
  * in beforeDispatch. A host must project successful data for its audience, never
  * pass the raw result to a model. No retries, sessions, automatic auth, proxy calls or fallback accounts. */
 export async function executeDirectTool(target: DirectAuthorizedConnector, credential: DirectCredential, slug: string,
-  envelope: DirectEnvelope, beforeDispatch: () => Promise<void>): Promise<{data:unknown}> {
+  envelope: DirectEnvelope, beforeDispatch: () => Promise<void>, privateRead = false): Promise<{data:unknown}> {
   let dispatched = false;
   try {
     if (typeof beforeDispatch !== 'function') notReady();
@@ -153,9 +161,10 @@ export async function executeDirectTool(target: DirectAuthorizedConnector, crede
     const snapshot = structuredClone(target);
     const creds = {...credential};
     const client = createComposioClient(creds.apiKey);
-    const {descriptor, injected, accountId, userId} = await prepare(snapshot, creds, client, slug, pin.version);
+    const {descriptor, injected, read, accountId, userId} = await prepare(snapshot, creds, client, slug, pin.version, privateRead);
     if (pin.schema_hash !== descriptor.schemaHash) changed();
     assertDirectArguments(descriptor.parameters, pin.arguments);
+    read?.validate(pin.arguments);
     const body = {connected_account_id:accountId, user_id:userId, version:descriptor.version, arguments:{...pin.arguments,...injected}};
     await beforeDispatch();
     if (snapshot.directProof.kind===undefined || snapshot.directProof.kind==='attested') current(snapshot.directProof.expiresAt);
@@ -166,6 +175,7 @@ export async function executeDirectTool(target: DirectAuthorizedConnector, crede
     assertProviderToolSucceeded(response, {effect:'unknown', toolkit:snapshot.connector.toolkit_slug});
     const success = providerValue(z.object({successful:z.literal(true), error:z.null(), data:z.unknown()}), response, true);
     if (!Object.hasOwn(success, 'data')) invalidProviderResponse(true);
+    try { read?.outputContract(response,pin.arguments); } catch { invalidProviderResponse(true); }
     if (projectScopedConnection(snapshot.directProof) && snapshot.connector.supabase_project_ref && projectMetadataAction(snapshot.connector.toolkit_slug,slug)) {
       // Even metadata tools may return organization details, URLs or unrelated fields.
       const ref=snapshot.connector.supabase_project_ref;
@@ -178,6 +188,7 @@ export async function executeDirectTool(target: DirectAuthorizedConnector, crede
     }
     return {data:success.data};
   } catch (err) {
+    if ((err as Error)?.name === 'RecoveryError' || (err as Error)?.name === 'OpenRouterBillingError') throw err;
     if (dispatched) {
       if (err instanceof ConnectorError) throw err;
       invalidProviderResponse(true);

@@ -70,31 +70,32 @@ patterns, known private values and cell redaction still apply. For KPIs, request
 aggregates for the selected scope and prefer the dedicated read-only action.
 Return exact decimals as SQL text when precision matters.
 
-Tool results are available to the active model on the original turn only.
-After receiving data, the host limits follow-ups to the same authorized
-connection, rechecks release authority before inference, and does not publish
-assistant text, reasoning, or subsequent tool details to the shared log stream.
-The shared history and recovery checkpoint retain no derived answer or business
-rows; in-flight messages remain in the server's durable workflow state.
-Robots provides an owner-only answer link in the conversation, separate
-from any saved provider record. The private answer includes links to any
-records requested during that turn. The answer is tied to its original chat
-action and removed when that action or its instance is deleted. Opening it rechecks the owner, parent
-visibility, and the original connectors' current policy. After interruption,
-private context is not restored from the shared recovery checkpoint and tool
-effects must not be replayed. Support, public channels and approvals keep their
-existing output policies.
+Private interactive Ask passes the projected tool result to the model. After a result,
+follow-up calls are restricted to the authorized source connection; they are not
+an authorization to send the result to another account, workflow, or shared file.
+Shared instance logs and recovery checkpoints do not hold the answer or rows.
 
-A new authenticated Ask turn in the same owned conversation can use the latest
-saved private answer within the previous 30 trusted turns. Only the written
-answer is read, not the original tool result. The worker rechecks current source
-grants and parent visibility. Follow-up inference has no tools, is not streamed
-or recorded in shared history, and publishes a new private answer subject to the
-original grants. Use a new conversation for a fresh provider operation when
-private follow-up context is present. Apply `20261123175000_connector_ask_followup.sql`
-before rolling out the matching workers, then verify with an authenticated owner.
+The local turn-context implementation (`20261126010000_connector_ask_turn_context.sql`)
+retains the answer plus up to eight recent projected results (128 KiB database cap)
+in the owner's conversation. The next eligible turn resolves the latest answer within
+30 trusted user turns and rechecks parent visibility and the grants for **all** its
+sources. When there is a single eligible connection it can request fresh data rather
+than using yesterday's values as today's. During private inference the host checks the
+live read contract at describe and dispatch: bounded business reads require compatible
+schema, effect, and scopes, and project SQL requires the verified dedicated read-only
+release, not the beta flag. Writes, unclassified tools and secondary record saves are
+unavailable in this context; the Markdown answer is the combined-authority deliverable.
+A revocation denies the inherited content; interruption is not permission to replay a call. Older answers can supply their text
+but have no historical tool values to restore. Support, public channels, approvals
+and background execution keep their existing output policies.
 
-No separate provider record is created by default. To request one for this call, set the
+Deploy the forward migration before the matching workers. Serve private answers to
+the authenticated requester, not in the shared log row; a separate saved provider
+record is not required to use data in a report. Test a two-turn refresh and revoked
+access with a disposable connected account before rollout.
+
+Before private context has been introduced, an individual call can optionally save a
+separate provider record. To request one for that call, set the
 optional boolean `save_record: true` beside `version`, `schema_hash` and `arguments`.
 It does not enter provider arguments or the dispatch digest. A successful save adds
 `receipt.url` for the same owner-only viewer. If saving cannot be confirmed, return

@@ -97,7 +97,7 @@ function safeParseToolArgs(raw: string | undefined | null): {
 
 /** Repair the model transcript, then let the host approve final effective arguments before any effect. */
 export async function prepareToolCalls(message: Message, messages: Message[], finalTools: Tool[], provider: AIProvider,
-  { executionBoundary, toolOverrides, enforceSingleTurn }: ActOptions) {
+  { executionBoundary, toolOverrides, enforceSingleTurn, privateToolContext }: ActOptions) {
   if (!message.tool_calls?.length) return;
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] Received ${message.tool_calls.length} tool_call(s) from ${provider}`);
 
@@ -108,7 +108,9 @@ export async function prepareToolCalls(message: Message, messages: Message[], fi
   const unparseable: Array<{ id: string; name: string; error: string }> = [];
 
   for (const tc of message.tool_calls) {
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_PARSE] Parsing tool call: ${tc.id} - ${observedToolName(tc.function.name)}`);
+    const logName = privateToolContext ? 'private_tool' : observedToolName(tc.function.name);
+    const logId = privateToolContext ? 'private_call' : tc.id;
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_PARSE] Parsing tool call: ${logId} - ${logName}`);
     const parsed = safeParseToolArgs(tc.function.arguments);
 
     // CRITICAL: Mutate the assistant message in-place so the value
@@ -157,7 +159,7 @@ export async function prepareToolCalls(message: Message, messages: Message[], fi
       });
     } else {
       console.error(
-        `₍ᐢ•(ܫ)•ᐢ₎ [TOOL_PARSE] ❌ Unrecoverable arguments for ${observedToolName(tc.function.name)} (${tc.id})`
+        `₍ᐢ•(ܫ)•ᐢ₎ [TOOL_PARSE] ❌ Unrecoverable arguments for ${logName} (${logId})`
       );
       unparseable.push({
         id: tc.id,

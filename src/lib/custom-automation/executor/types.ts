@@ -94,6 +94,8 @@ export interface ActOptions {
   enforceSingleTurn?: boolean;
   /** SDK plan wrappers own their wait semantics and remote retries. */
   preserveToolExecution?: boolean;
+  /** Do not log model-supplied tool names or call IDs from owner-only inference. */
+  privateToolContext?: true;
   toolOverrides?: Record<string, any>;
   onContextUsage?: (params: { system: string; messages: Message[]; tools: unknown[];
     provider: AIProvider; model: string; providerInputTokens?: number;

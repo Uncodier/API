@@ -195,3 +195,12 @@ test('partial external discovery retains native tools, continuation and scoped r
   expect(response.tools.map((t:any) => t.name)).toContain('leads');
   expect(response).toMatchObject({connector_status:'partial', connector_error:'PROVIDER_RATE_LIMITED', connector_recovery:{action:'retry_later'}, connector_next_cursor:'cursor'});
 });
+
+
+test('calling the gateway by compatibility name preserves its owner-only result envelope', async () => {
+  const data = {success:true,result_visibility:'ask_owner',result_claim_id:randomUUID(),result_connector_id:randomUUID(),result:{value:3}};
+  runtime.call.mockResolvedValueOnce(data);
+  const router = toolsRouterTool([connectorGateway(async () => context)],scope);
+  const reply = await router.execute({action:'call',name:'use_composio_tools',args:JSON.stringify({action:'execute',action_name:name,action_params:'{}'})});
+  expect(reply).toEqual(data);
+});

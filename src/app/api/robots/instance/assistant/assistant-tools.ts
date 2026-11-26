@@ -325,11 +325,19 @@ export async function getInstanceAssistantTools(
   sourceDigest?: string,
   leadBulkUserSession?: true,
   catalogUserSession?: true,
+  beforePrivateRead?: () => Promise<void>,
 ) {
-  const connectorContext = assistantConnectorContext({ siteId, userId, instanceId, host: connectorHost, agentId: connectorAgentId, requestId: commandSource?.actionId, sourceDigest, connectorIdHint, ...(catalogUserSession === true && connectorHost === 'assistant' && { catalogUserSession: true as const }) });
+  const connectorContext = assistantConnectorContext({ siteId, userId, instanceId, host: connectorHost, agentId: connectorAgentId, requestId: commandSource?.actionId, sourceDigest, connectorIdHint, beforePrivateRead, ...(catalogUserSession === true && connectorHost === 'assistant' && { catalogUserSession: true as const }) });
+  const gateway = composioActionTool(connectorContext,{accountPinned:connectorIdHint!==undefined});
+  if (beforePrivateRead) {
+    // Construct the routed closure over the actual host gateway only. Filtering
+    // tool names after routing alone would leave native send/write tools inside.
+    if (!connectorIdHint || !catalogUserSession || connectorHost !== 'assistant') return [];
+    return routeTools([gateway], {siteId,userId});
+  }
   const instanceTools = [
     ...customTools.filter(tool => !['use_composio_tools', 'leads_bulk_operations'].includes(tool?.name)),
-    composioActionTool(connectorContext,{accountPinned:connectorIdHint!==undefined}),
+    gateway,
     // Bulk CRM writes need a verified interactive action, not an actor supplied by a background job.
     ...(leadBulkUserSession === true && connectorHost === 'assistant' && commandSource && commandSource.siteId === siteId
       && commandSource.userId === userId && commandSource.instanceId === instanceId

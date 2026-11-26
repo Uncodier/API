@@ -48,7 +48,7 @@ it('saves an opted-in redacted record for the same claim without forwarding the 
   expect(call).toMatchObject({success:true,receipt:{url:`/connectors/results/${f.receipt}`},result:{label:f.privateValue},
     result_visibility:'ask_owner',result_claim_id:f.claim,result_fields_omitted:true});
   const stored=jest.mocked(storeDirectResult).mock.calls[0];expect(stored[5].rows).toEqual([['$.label',f.privateValue]]);expect(stored[6]).toBe(f.claim);
-  expect(executeDirectTool).toHaveBeenCalledWith(expect.anything(),expect.anything(),f.slug,f.pin,expect.any(Function));
+  expect(executeDirectTool).toHaveBeenCalledWith(expect.anything(),expect.anything(),f.slug,f.pin,expect.any(Function),false);
   expect(confirmDirectResultRelease).not.toHaveBeenCalled();
   expect(jest.mocked(claimDirectDispatch).mock.calls[0].at(-1)).toMatch(/^[a-f0-9]{64}$/);
   expect(JSON.stringify(stored[5])).not.toContain(f.key);expect(JSON.stringify(call)).not.toContain(f.key);

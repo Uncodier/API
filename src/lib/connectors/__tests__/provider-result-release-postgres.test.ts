@@ -174,5 +174,44 @@ it('releases facts against the active claim and real parent RLS, without creatin
     expect(db.query(`BEGIN; UPDATE connector_result_private.fixture_grants SET enabled=false; ${asService(third)} ROLLBACK;`))
       .toContain('{"unavailable": true}');
     expect(db.query('SELECT count(*) FROM connector_direct_rpc.ask_followup_gate')).toBe('0');
+    db.migrate('20261126010000_connector_ask_turn_context.sql');
+    const context = (id:string) => `SELECT public.connector_ask_context('${id}');`;
+    const load = (id:string) => JSON.parse(db.query(asService(context(id))).split('\n').at(-1)!);
+    const freshClaim = randomUUID(), fourthAction = randomUUID();
+    const data = [{ claim_id:freshClaim, result:{ paid_accounts:925 } }];
+    expect(load(thirdAction)).toEqual({ source_id:nextAction, answer:derived, connector_ids:[connector], tool_context:[] });
+    db.query(`INSERT INTO connector_result_private.direct_claims SELECT '${freshClaim}','${thirdAction}',site_id,owner_id,instance_id,
+      agent_id,connector_id,authorization_id,attestation_id,connector_revision,policy_revision,direct_revision,clock_timestamp(),NULL
+      FROM connector_result_private.direct_claims WHERE id='${claim}';`);
+    const publish = `SELECT public.store_connector_ask_turn('${thirdAction}',ARRAY['${freshClaim}']::uuid[], 'Updated KPI', '${JSON.stringify(data)}', '${nextAction}');`;
+    denied(asService(publish.replace(nextAction,action))); // cannot drop the inherited source
+    denied(asService(publish.replace(`ARRAY['${freshClaim}']`,`ARRAY['${claim}']`))); // no foreign-turn dispatch
+    denied(actor(owner)+publish);
+    expect(db.query(asService(publish)).split('\n').at(-1)).toBe('t');
+    expect(db.query(asService(publish)).split('\n').at(-1)).toBe('t');
+    denied(asService(publish.replace('925','926')));
+    expect(db.query(`SELECT count(*),bool_and(message NOT LIKE '%925%') FROM public.instance_logs WHERE parent_log_id='${thirdAction}'`)).toBe('1|t');
+    expect(db.query(`SELECT cardinality(claims) FROM connector_result_private.ask_answers WHERE action_id='${thirdAction}'`)).toBe('2');
+    db.query(`INSERT INTO public.instance_logs(id,site_id,user_id,instance_id,agent_id,log_type,trusted_user_action,details)
+      SELECT '${fourthAction}',site_id,user_id,instance_id,agent_id,log_type,trusted_user_action,details FROM public.instance_logs WHERE id='${thirdAction}';
+      INSERT INTO connector_result_private.direct_ask_submissions VALUES ('${fourthAction}');
+      UPDATE connector_result_private.direct_turn_heads SET action_id='${fourthAction}';`);
+    expect(load(fourthAction)).toEqual({ source_id:thirdAction, answer:'Updated KPI', connector_ids:[connector], tool_context:data });
+    denied(actor(owner)+context(fourthAction));
+    denied(actor(owner)+'SELECT entries FROM connector_result_private.ask_turn_context;');
+    denied(`BEGIN; UPDATE public.remote_instances SET visible=false; ${asService(context(fourthAction))} ROLLBACK;`);
+    for (const id of [claim,freshClaim]) {
+      expect(db.query(`BEGIN; DELETE FROM connector_result_private.direct_claims WHERE id='${id}'; ${asService(context(fourthAction))} ROLLBACK;`))
+        .toContain('{"unavailable": true}');
+    }
+    const answerOnly = `SELECT public.store_connector_ask_turn('${fourthAction}',ARRAY[]::uuid[],'Same data, revised report','[]','${thirdAction}');`;
+    expect(db.query(asService(answerOnly)).split('\n').at(-1)).toBe('t');
+    expect(JSON.parse(db.query(`SELECT entries FROM connector_result_private.ask_turn_context WHERE action_id='${fourthAction}'`))).toEqual(data);
+    expect(db.query(actor(owner)+read.replace(action,fourthAction)).split('\n').at(-1)).toBe('Same data, revised report');
+    // A new conversation without prior private context can publish its first turn atomically.
+    const first = `SELECT public.store_connector_ask_turn('${action}',ARRAY['${claim}']::uuid[],'First report',
+      '[{"claim_id":"${claim}","result":{"count":1}}]');`;
+    expect(db.query(`BEGIN; DELETE FROM connector_result_private.ask_answers WHERE action_id='${action}';
+      UPDATE connector_result_private.direct_turn_heads SET action_id='${action}'; ${asService(first)} ROLLBACK;`)).toContain('\nt\n');
   } finally { db.stop(); }
 }, 20_000);

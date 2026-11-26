@@ -25,6 +25,7 @@ const id = '00000000-0000-4000-8000-000000000123';
 let storedChannel: string | null;
 const eq = jest.fn().mockReturnThis();
 beforeEach(() => {
+  jest.clearAllMocks();
   storedChannel = null;
   const result = async () => ({ data: { channel: storedChannel, custom_data: { channel: 'email' } } });
   (supabaseAdmin.from as jest.Mock).mockImplementation(() => ({ select: jest.fn().mockReturnThis(), eq,
@@ -43,6 +44,17 @@ it('rejects review threads before resolving contacts, even when an HTTP caller o
 
 it('retains legacy NULL-channel metadata resolution', async () => {
   expect(await getConversationChannel(id)).toMatchObject({ channel: 'email' });
+});
+
+it.each([false, true])('uses the saved email subject for Leads (connected sender: %s)', async channelDelivery => {
+  const send = jest.fn().mockResolvedValue({ success: true, workflowId: 'email-workflow' });
+  (WorkflowService.getInstance as jest.Mock).mockReturnValue({ sendEmailFromAgent: send, sendChannelMessageFromAgent: send });
+  (supabaseAdmin.from as jest.Mock).mockReturnValue({ select: jest.fn().mockReturnThis(), eq,
+    maybeSingle: async () => ({ data: { channel: 'email', title: 'Order update', custom_data: { lead_composer: true } } }) });
+  const result = await sendMessageByChannel('email', 'Hello', { leadEmail: 'lead@example.test', channelDelivery },
+    'site', null, id, 'lead', 'message', 'text');
+  expect(result.success).toBe(true);
+  expect(send).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Order update' }));
 });
 
 it.each(['instagram','voice','whatsapp'])('cannot route a review ID via explicit %s contacts', async channel => {

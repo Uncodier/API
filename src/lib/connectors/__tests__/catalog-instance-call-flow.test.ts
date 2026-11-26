@@ -169,9 +169,11 @@ it.each(['all','selected'] as const)('dispatches a new %s-mode action on the cho
   expect(dispatches).toBe(3);
 });
 
-it.each(['probe','beta report','read-only report'] as const)('delivers a confirmed Supabase %s through the Ask router', async mode => {
+it.each(['probe','beta report','read-only report','private refresh','private beta denied','private source revoked'] as const)('delivers a confirmed Supabase %s through the Ask router', async mode => {
   const siteId = randomUUID(), connectorId = randomUUID(), revision = secret(), apiKey = secret();
-  const ctx = {siteId,userId:randomUUID(),agentId:randomUUID(),requestId:randomUUID(),instanceId:randomUUID(),
+  const privateRead = mode.startsWith('private');
+  const beforePrivateRead = jest.fn(async () => { if (mode === 'private source revoked') throw Object.assign(new Error('Stopped'),{name:'RecoveryError'}); });
+  const ctx = {...(privateRead && {beforePrivateRead}),siteId,userId:randomUUID(),agentId:randomUUID(),requestId:randomUUID(),instanceId:randomUUID(),
     connectorIdHint:connectorId,catalogUserSession:true as const,host:'assistant' as const};
   const provider = {...providerFixture(),id:randomUUID(),site_id:siteId,provider_user_id:siteId,credential_revision:revision};
   const project = 'a'.repeat(20), toolkit = 'supabase';
@@ -179,10 +181,10 @@ it.each(['probe','beta report','read-only report'] as const)('delivers a confirm
       access_mode:'workspace',supabase_project_ref:project,revocation_dispatched:false,created_by:ctx.userId},provider,
     authority_kind:'verified_connection',connection_attempt_id:randomUUID(),direct_revision:3,
     policy:{revision:1,tool_access_mode:'all',allowed_tools:[],allowed_hosts:['assistant'],require_approval:false}};
-  const probe = mode === 'probe', beta = mode !== 'read-only report';
+  const probe = mode === 'probe' || privateRead, beta = mode === 'beta report' || mode === 'probe' || mode === 'private beta denied';
   const slug = beta ? 'SUPABASE_BETA_RUN_SQL_QUERY' : 'SUPABASE_RUN_READ_ONLY_QUERY';
   const input_parameters = beta ? {type:'object',properties:{ref:{type:'string'},query:{type:'string'},read_only:{type:'boolean'}},required:['ref','query']} : readOnlySql.input_parameters;
-  const tool = {...toolFixture(),slug,toolkit:{slug:toolkit},version:'20261116_00',input_parameters,output_parameters:readOnlySql.output_parameters};
+  const tool = {...toolFixture(),slug,toolkit:{slug:toolkit},version:'20261116_00',input_parameters,...(privateRead && {tags:['important','readOnlyHint','openWorldHint','Database'],scopes:['database_read']}),output_parameters:readOnlySql.output_parameters};
   const account = {...accountFixture(),user_id:siteId,toolkit:{slug:toolkit},state:{authScheme:'API_KEY',val:{full:'https://api.supabase.com'}}};
   const args = {query:probe ? 'SELECT 1 AS connector_probe' : 'SELECT COUNT(*) AS paid_accounts FROM public.test_fixture', ...(beta && {read_only:true})};
   const claimId = randomUUID(), receiptId = randomUUID(), paidAccounts = 68127;
@@ -227,8 +229,16 @@ it.each(['probe','beta report','read-only report'] as const)('delivers a confirm
   const router = toolsRouterTool([connectorGateway(async () => ctx,true)],ctx);
   const name = `connector:${connectorId}:${slug}`;
   const desc = await router.execute({action:'describe',name});
+  if (mode === 'private beta denied') { expect(desc).toMatchObject({success:false}); expect(dispatches).toBe(0); return; }
   expect(desc).toMatchObject({success:true,version:tool.version});
-  const call = await router.execute({action:'call',name,args:JSON.stringify({version:desc.version,schema_hash:desc.schema_hash,arguments:args,save_record:!probe})});
+  const operation = router.execute({action:'call',name,args:JSON.stringify({version:desc.version,schema_hash:desc.schema_hash,arguments:args,save_record:!probe})});
+  if (privateRead) expect(desc.parameters.properties).not.toHaveProperty('save_record');
+  if (mode === 'private source revoked') {
+    await expect(operation).rejects.toMatchObject({name:'RecoveryError'});
+    expect(dispatches).toBe(0); expect(mockRpc).not.toHaveBeenCalledWith('claim_connector_account_dispatch',expect.anything()); return;
+  }
+  const call = await operation;
+  if (privateRead) expect(beforePrivateRead).toHaveBeenCalledTimes(1);
   if (probe) {
     expect(call).toMatchObject({success:true,result:{rows:[{connector_probe:1}]}});
     expect(call).not.toHaveProperty('result_omitted');

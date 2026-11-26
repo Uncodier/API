@@ -12,7 +12,9 @@ import { invokeTool } from './tool-effect';
 
 export async function runToolTurn(options: ActOptions, message: Message, messages: Message[], finalTools: Tool[],
   provider: AIProvider, step: Step, iterations: number, screenshots: ScreenshotState) {
-  const { schema, executionBoundary, enforceSingleTurn } = options;
+  const { schema, executionBoundary, enforceSingleTurn, privateToolContext } = options;
+  const logName = privateToolContext ? () => 'private_tool' : observedToolName;
+  const logId = (id: string) => privateToolContext ? 'private_call' : id;
   const prepared = await prepareToolCalls(message, messages, finalTools, provider, options);
   if (!prepared) return 'retry_parse';
   const { toolCalls, unparseable } = prepared;
@@ -21,7 +23,7 @@ export async function runToolTurn(options: ActOptions, message: Message, message
 
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] Executing ${toolCalls.length} tool call(s):`);
   toolCalls.forEach((tc, idx) => {
-    console.log(`  ${idx + 1}. ${observedToolName(tc.toolName)} (${tc.toolCallId})`);
+    console.log(`  ${idx + 1}. ${logName(tc.toolName)} (${logId(tc.toolCallId)})`);
   });
 
   const toolResults: ToolResult[] = [];
@@ -33,9 +35,9 @@ export async function runToolTurn(options: ActOptions, message: Message, message
   let toolExecutionStarted = false;
 
   for (const toolCall of toolCalls) {
-    const loggedName = observedToolName(toolCall.toolName);
+    const loggedName = logName(toolCall.toolName);
     const toolStartTime = Date.now();
-    console.log(`⏱️ [TOOL_START] ${loggedName} (${toolCall.toolCallId}) - Starting execution...`);
+    console.log(`⏱️ [TOOL_START] ${loggedName} (${logId(toolCall.toolCallId)}) - Starting execution...`);
     const tool = finalTools.find(t => t.name === toolCall.toolName);
 
     if (executionBoundary) {
@@ -59,7 +61,7 @@ export async function runToolTurn(options: ActOptions, message: Message, message
 
     if (!tool) {
       const errorMsg = `Error: Tool ${toolCall.toolName} not found`;
-      console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_ERROR] Tool not found: ${loggedName} (${toolCall.toolCallId})`);
+      console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_ERROR] Tool not found: ${loggedName} (${logId(toolCall.toolCallId)})`);
 
       toolResults.push({
         toolCallId: toolCall.toolCallId,
@@ -75,7 +77,7 @@ export async function runToolTurn(options: ActOptions, message: Message, message
         content: errorMsg,
       });
 
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added tool message for ${toolCall.toolCallId}`);
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added tool message for ${logId(toolCall.toolCallId)}`);
 
       continue;
     }
@@ -127,7 +129,7 @@ export async function runToolTurn(options: ActOptions, message: Message, message
       const { cleanedResult, base64Image: extractedImage } = isDocument
         ? { cleanedResult: routedDocument ? { ...result, result: documentResultForText(documentResult) }
           : documentResultForText(documentResult), base64Image: null }
-        : extractBase64Image(result);
+        : privateToolContext ? {cleanedResult:result, base64Image:null} : extractBase64Image(result);
       // Azure-specific data URL coercion; skip for other providers since it
       // can drop otherwise-valid PNG/JPEG payloads.
       let base64Image: string | null;
@@ -153,7 +155,7 @@ export async function runToolTurn(options: ActOptions, message: Message, message
           if (screenshots.identicalCount >= 3) {
             console.error(`🚨 [SCREENSHOT_DUPLICATE] ${screenshots.identicalCount + 1} consecutive identical screenshots detected!`);
             console.error(`🚨 [SCREENSHOT_DUPLICATE] Browser is likely NOT responding to computer tool actions`);
-            console.error(`🚨 [SCREENSHOT_DUPLICATE] Recent actions: ${toolCalls.map(tc => observedToolName(tc.toolName)).join(', ')}`);
+            console.error(`🚨 [SCREENSHOT_DUPLICATE] Recent actions: ${toolCalls.map(tc => logName(tc.toolName)).join(', ')}`);
           }
         } else {
           if (screenshots.identicalCount > 0) {
@@ -190,7 +192,7 @@ export async function runToolTurn(options: ActOptions, message: Message, message
         content: typeof cleanedResult === 'string' ? cleanedResult : JSON.stringify(cleanedResult),
       });
 
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added tool message for ${toolCall.toolCallId}`);
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added tool message for ${logId(toolCall.toolCallId)}`);
 
     } catch (error: any) {
       if (error?.name === 'OpenRouterBillingError') throw error;
@@ -200,7 +202,7 @@ export async function runToolTurn(options: ActOptions, message: Message, message
       const toolEndTime = Date.now();
       const toolDuration = toolEndTime - toolStartTime;
       const errorMessage = error.message || String(error);
-      console.error(`⏱️ [TOOL_ERROR] ${loggedName} (${toolCall.toolCallId}) failed after ${toolDuration}ms (${(toolDuration/1000).toFixed(1)}s)`);
+      console.error(`⏱️ [TOOL_ERROR] ${loggedName} (${logId(toolCall.toolCallId)}) failed after ${toolDuration}ms (${(toolDuration/1000).toFixed(1)}s)`);
 
       const toolToExecute = finalTools.find(t => t.name === toolCall.toolName);
       const helpMessage = toolToExecute?.description ? `\n\nTool Help / Instructions:\n${toolToExecute.description}` : '';
@@ -234,7 +236,7 @@ export async function runToolTurn(options: ActOptions, message: Message, message
         content: errorContent,
       });
 
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added error tool message for ${toolCall.toolCallId}`);
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added error tool message for ${logId(toolCall.toolCallId)}`);
     }
   }
 
@@ -254,7 +256,7 @@ export async function runToolTurn(options: ActOptions, message: Message, message
   if (missingToolCallIds.length > 0) {
     console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ❌ CRITICAL: ${missingToolCallIds.length} tool_call_id(s) missing tool messages!`);
     missingToolCallIds.forEach(tc => {
-      console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ❌ Missing: ${tc.toolCallId} (${observedToolName(tc.toolName)})`);
+      console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ❌ Missing: ${logId(tc.toolCallId)} (${logName(tc.toolName)})`);
 
       messages.push({
         role: 'tool',

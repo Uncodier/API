@@ -7,7 +7,8 @@ jest.mock('@/lib/services/channels/audio-routing', () => ({
   ...jest.requireActual('@/lib/services/channels/audio-routing'), resolveAudioRouting: jest.fn(),
 }));
 const mockPermission = jest.fn();
-jest.mock('@supabase/supabase-js', () => ({ createClient: () => ({ rpc: mockPermission }) }));
+const mockSupplierRead = jest.fn();
+jest.mock('@supabase/supabase-js', () => ({ createClient: () => ({ rpc: mockPermission, from: mockSupplierRead }) }));
 
 jest.mock('@/lib/security/site-access', () => ({
   canAccessSite: jest.fn(),
@@ -82,6 +83,32 @@ describe('POST /api/agents/chat/intervention', () => {
       workflowId: 'wf-started',
       workflowStarted: true,
     });
+  });
+
+  it.each([true, false])('dispatches only a supplier contact readable at the saved version (%s)', async readable => {
+    const supplier_id = '55555555-5555-4555-8555-555555555555';
+    const contact_id = '66666666-6666-4666-8666-666666666666';
+    const supplier = createChain({ data: readable ? { supplier_contacts: [{ id: contact_id, email: 'supplier@example.test' }] } : null });
+    const conversation = createChain({ data: { id: CONV_ID, site_id: SITE_ID, channel: 'email',
+      custom_data: { supplier_target: { supplier_id, contact_id, version: 4, channel: 'email' } } } });
+    const messages = createChain({ data: { id: MSG_ID } });
+    mockSupplierRead.mockReturnValue(supplier);
+    fromMock.mockImplementation((table: string) => table === 'messages' ? messages : conversation);
+    const response = await POST(new Request('https://api.example.test/intervention', { method: 'POST',
+      headers: { authorization: `Bearer ${randomBytes(24).toString('hex')}` },
+      body: JSON.stringify({ conversation_id: CONV_ID, message: 'Order update', response_format: 'text' }) }));
+    expect(supplier.eq).toHaveBeenCalledWith('site_id', SITE_ID);
+    expect(supplier.eq).toHaveBeenCalledWith('version', 4);
+    expect(getConversationChannel).not.toHaveBeenCalled();
+    if (readable) {
+      expect(response.status).toBe(200);
+      expect(sendMessageByChannel).toHaveBeenCalledWith('email', 'Order update', expect.objectContaining({ leadEmail: 'supplier@example.test' }),
+        SITE_ID, undefined, CONV_ID, undefined, MSG_ID, 'text', expect.any(Object));
+    } else {
+      expect(response.status).toBe(409);
+      expect(messages.insert).not.toHaveBeenCalled();
+      expect(sendMessageByChannel).not.toHaveBeenCalled();
+    }
   });
 
   it('refuses an external intervention on an internal review conversation', async () => {

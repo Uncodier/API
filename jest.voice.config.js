@@ -14,6 +14,7 @@ export default {
     '<rootDir>/src/app/api/agents/tools/contact-human/__tests__/voice-route.test.ts',
     '<rootDir>/src/lib/services/__tests__/tool-execution-context.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/tool-execution-context.test.ts',
+    '<rootDir>/src/app/api/robots/instance/assistant/__tests__/private-connector-continuation.test.ts',
     '<rootDir>/src/app/api/agents/tools/*/__tests__/tool-execution-context.test.ts',
     '<rootDir>/src/app/api/agents/tools/placeVoiceCall/__tests__/*.test.ts',
     '<rootDir>/src/app/api/agents/tools/sendBulkMessages/voice-context.test.ts',

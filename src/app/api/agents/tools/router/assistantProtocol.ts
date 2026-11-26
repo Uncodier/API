@@ -292,6 +292,9 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
         if (issue) return { name: tool.name, ...argumentFailure(issue) };
         try {
           const result = await tool.execute(callArgs);
+          // The trusted compatibility facade owns its result audience and claim.
+          // A native result wrapper would hide them from logging and release guards.
+          if (screenName(tool.name) === 'connector_gateway') return result;
           return {
             success: result?.success !== false,
             name: tool.name,

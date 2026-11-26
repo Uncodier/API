@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { withCustomerOperation } from '@/lib/services/ai/customer-routing';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -8,19 +7,12 @@ import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-run
 import * as contextModule from '@/lib/services/tool-execution-context';
 import { SILENT_CONTINUE_PROMPT } from '@/lib/services/robot-instance/assistant-respawn-policy';
 import { RecoveryError } from '@/lib/services/robot-instance/assistant-recovery-schema';
-import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
-import { attachAssistantStepResult, readAssistantStepResult } from '../requirement-host';
+import { attachAssistantStepResult } from '../requirement-host';
 import { createAssistantStepResult } from '../step-result';
-import { createAssistantWorkspaceTools } from '../workspace-tools';
-import { withAssistantRouting } from '../execution-routing';
-import * as ownerTranscript from '@/lib/services/robot-instance/owner-connector-transcript';
-import * as connectorCheckpoint from '@/lib/services/robot-instance/connector-recovery-checkpoint';
+import { turn, siteId, instanceId, nodeId } from './assistant-turn-fixture';
 jest.mock('@vercel/sandbox', () => ({ Sandbox: {} }));
 
-const siteId = randomUUID();
-const instanceId = randomUUID();
-const nodeId = randomUUID();
 const utilsPath = 'src/app/api/robots/instance/assistant/assistant-tools.ts';
 
 // Execute the actual catalog and router with fail-closed I/O. All unrelated
@@ -241,112 +233,6 @@ describe('assistant private execution context wiring', () => {
     expect(privateContext.source).toEqual({});
   });
 
-  function turn(creditExhausted = false, failure?: Error) {
-    const getTools = jest.fn<Promise<any[]>, any[]>(async (..._args: any[]) => []);
-    const executor = jest.fn(async (_messages: any, _instance: any, _options: any): Promise<any> => {
-      if (failure) throw failure;
-      if (creditExhausted) throw Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' });
-      return { messages: [] };
-    });
-    const ownerAnswers = {confirmOwnerConnectorContext:jest.fn(async (_claims: string[]) => undefined),
-      ownerConnectorAnswerAvailable:jest.fn(async () => true),
-      loadOwnerConnectorFollowup:jest.fn(async (_scope:unknown): Promise<undefined | {source_id:string,answer:string} | {unavailable:true}> => undefined),
-      publishOwnerConnectorFollowup:jest.fn(async (_scope:unknown,_source:string,_text:string) => 'Open your owner answer'),
-      publishOwnerConnectorAnswer:jest.fn(async (_scope:unknown,_claims:string[],_text:string) => 'Open your owner answer')};
-    const run = loadRuntimeModule<typeof import('../assistant-turn-core')>(
-      'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
-      'node:crypto': { createHash },
-      '@/lib/services/ai/customer-routing': { withCustomerOperation },
-        './requirement-host': { readRequirementAssistantHost: () => undefined, readAssistantStepResult },
-        './execution-routing': { withAssistantRouting },
-        './workspace-tools': { createAssistantWorkspaceTools },
-        './deployment-tools': { createAssistantDeploymentTools: () => [] },
-        './cloud-context': { resolveAssistantFileEnvironment: jest.fn(async () => ({})) },
-        '@/lib/cloud-files/tools': { createCloudFileTools: jest.fn(() => []) },
-        '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
-        './utils': { getInstanceAssistantTools: getTools },
-        './publish-node-binding': { resolvePublishNodeBinding: async () => null },
-        '@/lib/messaging/publish-destinations': {},
-        './conversation-recovery-tools': { CONVERSATION_RECOVERY_INSTRUCTION: '', getConversationRecoveryTools: () => [] },
-        '@/lib/services/tool-execution-context': contextModule,
-         '@/lib/services/robot-instance/owner-connector-transcript': ownerTranscript,
-         '@/lib/services/robot-instance/connector-recovery-checkpoint': connectorCheckpoint,
-         '@/lib/services/robot-instance/owner-connector-answer': ownerAnswers,
-        '@/lib/services/robot-instance/assistant-respawn-policy': { SILENT_CONTINUE_PROMPT },
-        '@/lib/services/robot-instance/assistant-recovery': { assertAssistantRecoveryActive: async () => undefined,
-          runAssistantRecoveryTool: async (_scope: unknown, _name: string, _args: unknown, execute: () => Promise<unknown>) => execute() },
-        '@/lib/services/workflow-robot/execution-tracker': {},
-        '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: executor },
-        '@/lib/services/robot-instance/vision-message-images': {
-          hydrateMessageImages: async (messages: unknown) => messages, dehydrateMessageImages: (messages: unknown) => messages,
-        },
-      }).processAssistantTurn;
-    const context: any = { initialMessage: 'Call to confirm availability', systemPrompt: 'DO NOT COPY SYSTEM',
-      toolOverrides: { private: 'DO NOT COPY OVERRIDES' }, customTools: [], instance: {}, instanceNodeId: nodeId,
-      executionOptions: { site_id: siteId, instance_id: instanceId } };
-    return { getTools, run, context, executor, ownerAnswers };
-  }
-
-  it('lets the next model step analyze the live result but publishes only the owner answer link', async () => {
-    const f = turn(), connector = randomUUID(), claim = randomUUID(), actionId = randomUUID();
-    const scope = {siteId,instanceId,userId:randomUUID(),userMessageLogId:actionId};
-    Object.assign(f.context,{instanceNodeId:undefined,callerSource:'interactive',catalogUserSession:true,recoveryScope:scope,conversationRecoveryOnly:undefined});
-    const privateText = `Verified ${randomUUID()}`;
-    const record = `/connectors/results/${randomUUID()}`;
-    const messages = [{role:'user',content:'My quarterly KPIs'},
-      {role:'assistant',tool_calls:[{id:'sql',function:{name:'tools',arguments:'{}'}}]},
-      {role:'tool',tool_call_id:'sql',content:JSON.stringify({success:true,result_visibility:'ask_owner',result_connector_id:connector,
-        result_claim_id:claim,result:{label:privateText},receipt:{status:'private_result_ready',url:record}})}];
-    const execute = jest.fn(async (_args:unknown) => ({success:true}));
-    f.getTools.mockResolvedValue([{name:'tools',execute},{name:'send',execute}]);
-    f.executor.mockImplementationOnce(async (input,_instance,options) => {
-      expect(JSON.stringify(input)).toContain(privateText);
-      expect(options.ownerConnectorContext).toBe(true);
-      expect(options.custom_tools.map((tool:{name:string}) => tool.name)).toEqual(['tools']);
-      expect(await options.custom_tools[0].execute({action:'call',name:`connector:${randomUUID()}:APP_SEND`,args:'{}'}))
-        .toMatchObject({success:false,executed:false,code:'PRIVATE_CONNECTOR_DESTINATION_REQUIRED'});
-      return {messages:[...input,{role:'assistant',content:privateText}],text:privateText,isDone:true,
-        output:{text:privateText},steps:[{text:privateText,finishReason:'stop'}]};
-    });
-    const out = await f.run(f.context,messages);
-    expect(f.ownerAnswers.confirmOwnerConnectorContext).toHaveBeenCalledWith([claim]);
-    expect(f.ownerAnswers.publishOwnerConnectorAnswer).toHaveBeenCalledWith(scope,[claim],`${privateText}\n\n[Open saved connector result](${record})`);
-    expect(out).toMatchObject({text:'Open your owner answer',isDone:true,steps:[{finishReason:'stop'}]});
-    expect(JSON.stringify(out)).not.toContain(privateText);
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it.each([true, false])('keeps saved private context and derived text inside the private boundary (access=%s)', async allowed => {
-    const f = turn(), source = randomUUID(), text = `Private data ${randomUUID()}`;
-    const scope = {siteId,instanceId,userId:randomUUID(),userMessageLogId:randomUUID()};
-    Object.assign(f.context,{instanceNodeId:undefined,callerSource:'interactive',catalogUserSession:true,recoveryScope:scope});
-    const messages = [{role:'user',content:'Explain those KPIs'}];
-    f.ownerAnswers.loadOwnerConnectorFollowup.mockResolvedValueOnce(allowed ? {source_id:source,answer:text} : {unavailable:true});
-    f.executor.mockImplementationOnce(async (input,_instance,options) => {
-      expect(JSON.stringify(input).includes(text)).toBe(allowed);
-      expect(options.ownerConnectorContext).toBe(allowed ? true : undefined);
-      expect(options.custom_tools).toEqual([]);
-      const reply = allowed ? text : 'Previous answer is unavailable.';
-      return {messages:[...input,{role:'assistant',content:reply}],text:reply,isDone:true,output:{reply},steps:[{text:reply,finishReason:'stop'}]};
-    });
-    const out = await f.run(f.context,messages);
-    expect(f.getTools).not.toHaveBeenCalled();
-    expect(f.ownerAnswers.publishOwnerConnectorAnswer).not.toHaveBeenCalled();
-    if (allowed) expect(f.ownerAnswers.publishOwnerConnectorFollowup).toHaveBeenCalledWith(scope,source,text);
-    else expect(f.ownerAnswers.publishOwnerConnectorFollowup).not.toHaveBeenCalled();
-    expect(JSON.stringify(out)).not.toContain(text);
-    expect(out.text).toBe(allowed ? 'Open your owner answer' : 'Previous answer is unavailable.');
-  });
-  it('discards an incomplete private answer without persisting or replaying it', async () => {
-    const f = turn(), text = `Private data ${randomUUID()}`;
-    const scope = {siteId,instanceId,userId:randomUUID(),userMessageLogId:randomUUID()};
-    Object.assign(f.context,{instanceNodeId:undefined,callerSource:'interactive',catalogUserSession:true,recoveryScope:scope});
-    const messages = [{role:'user',content:'Summarize the comparison'}];
-    f.ownerAnswers.loadOwnerConnectorFollowup.mockResolvedValueOnce({source_id:randomUUID(),answer:text});
-    f.executor.mockImplementationOnce(async input => ({messages:[...input,{role:'assistant',content:text}],
-      text,isDone:false,steps:[{text,finishReason:'length'}]}));
-    expect(await f.run(f.context,messages)).toEqual({text:'',isDone:false,resumable:false,messages,steps:[{finishReason:'length'}]});
-  });
   it('keeps the durable wrapper non-replaying while forwarding to the shared core', async () => {
     const processTurn = jest.fn(async (..._args: any[]) => ({ isDone: false, messages: [] }));
     const { processAssistantTurn } = loadRuntimeModule<typeof import('../assistant-turn')>(

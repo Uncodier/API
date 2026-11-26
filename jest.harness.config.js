@@ -30,6 +30,7 @@ export default {
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/user-message-log.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/command-plan-guard.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/tool-execution-context.test.ts',
+    '<rootDir>/src/app/api/robots/instance/assistant/__tests__/private-connector-continuation.test.ts',
     '<rootDir>/src/app/api/robots/instance/delete/__tests__/**/*.test.ts',
     '<rootDir>/src/lib/custom-automation/__tests__/ai-agent-executor*.test.ts',
     '<rootDir>/src/lib/services/__tests__/cron-*.test.ts',

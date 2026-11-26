@@ -4,6 +4,7 @@ import { canAccessSite, getRequestSitePrincipal } from '@/lib/security/site-acce
 import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
 import { createClient } from '@supabase/supabase-js';
 import { interventionCommentMetadata } from '@/lib/services/social-comments/reply-target';
+import { resolveSupplierTarget } from './supplier-target';
 
 const optionalId = z.string().uuid().nullish();
 const requestSchema = z.object({
@@ -69,6 +70,7 @@ export async function authorizeIntervention(request: Request, body: unknown) {
     || !await canAccessSite(request, conversation.site_id)) {
     throw new InterventionRequestError('Conversation access denied', 403);
   }
+  let supplierContact: { leadEmail?: string; leadPhone?: string; channel: string; channelDelivery: boolean } | undefined;
   if (!keyData) {
     const authorization = request.headers.get('authorization');
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -87,6 +89,16 @@ export async function authorizeIntervention(request: Request, body: unknown) {
     if (permissionError || allowed !== true) {
       throw new InterventionRequestError('Intervention write access denied', 403);
     }
+    if (conversation.custom_data?.supplier_target !== undefined) {
+      const contact = await resolveSupplierTarget(userClient, conversation.site_id, conversation.channel, conversation.custom_data.supplier_target);
+      if (!contact || conversation.lead_id || conversation.visitor_id || input.response_format === 'audio') {
+        throw new InterventionRequestError('Supplier contact is unavailable or has changed', 409);
+      }
+      supplierContact = { ...contact, channel: conversation.channel,
+        channelDelivery: conversation.channel !== 'email' || conversation.custom_data.channel_delivery === true };
+    }
+  } else if (conversation.custom_data?.supplier_target !== undefined) {
+    throw new InterventionRequestError('Supplier messages require an authenticated workspace user', 403);
   }
   for (const [supplied, stored] of [
     [input.agentId, conversation.agent_id], [input.lead_id, conversation.lead_id],
@@ -101,6 +113,7 @@ export async function authorizeIntervention(request: Request, body: unknown) {
       retryMessageId: input.message_id || undefined, userId: principal.userId,
     }),
     conversationId,
+    supplierContact,
     siteId: conversation.site_id as string,
     userId: principal.userId,
     agentId: conversation.agent_id as string | undefined,
