@@ -263,7 +263,7 @@ export class OutstandClient {
     return this.request('/social-accounts/bluesky', {
       method: 'POST',
       headers,
-      body: JSON.stringify(params),
+      body: JSON.stringify({ handle: params.handle, appPassword: params.app_password, tenantId }),
     });
   }
 
