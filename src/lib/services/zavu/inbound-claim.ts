@@ -9,6 +9,10 @@ export interface InboundClaimIdentity {
   provider: string; eventId: string; fallbackMessageId: string | null; bindingHash: string;
 }
 
+export function zavuInboundBindingHash(binding: InboundBinding, originMessageId: string, from: string): string {
+  return digest(JSON.stringify([binding.siteId, binding.connectionId, binding.senderId, binding.channel, originMessageId, from]));
+}
+
 /** Signed sender identity, not the contact, account label or a forwarded site ID. */
 export function inboundSender(event: any): string | undefined {
   const ids = [event.senderId, event.data?.senderId, event.sender?.id].filter(id => id != null);
@@ -37,7 +41,6 @@ export function inboundClaimIdentity(event: any, rawBody: string, binding: Inbou
   // immutable binding is checked separately so a replay cannot follow the move.
   const eventId = fallbackMessageId ? digest(JSON.stringify([binding.senderId, binding.channel, fallbackMessageId]))
     : explicit || digest(rawBody);
-  const bindingHash = digest(JSON.stringify([binding.siteId, binding.connectionId, binding.senderId,
-    binding.channel, message || eventId, String(from)]));
+  const bindingHash = zavuInboundBindingHash(binding, message || eventId, String(from));
   return { provider: fallbackMessageId ? fallbackProvider : 'zavu', eventId, fallbackMessageId, bindingHash };
 }

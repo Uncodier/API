@@ -42,6 +42,7 @@ const mocks: Record<string, Record<string, unknown>> = {
   '@/lib/services/workflow-robot/materialize': { materializeRunFromGraph: businessCall },
   '@/lib/services/workflow-robot/run-plan': { runWorkflowPlan: businessCall },
   '@/app/api/cron/workflows/workflow': { executeScheduledWorkflow: businessCall },
+  '@/app/api/cron/workflows/connector-workflow': { executeScheduledConnectorWorkflow: businessCall },
   '@/lib/services/workflow-robot/cron-window': { isCronDueInWindow: businessCall, WORKFLOW_CRON_WINDOW_MS: 60_000 },
   '@/lib/timezone': { DEFAULT_TIMEZONE: 'UTC', normalizeTimezone: businessCall, resolveClientTimezone: businessCall },
   '@/lib/services/robot-instance/assistant-respawn': { countRecentRespawns: businessCall, evaluateInstanceStall: businessCall, LOOKBACK_MS: 60_000, spawnSilentContinueWorkflow: businessCall },
@@ -136,6 +137,24 @@ describe('execution/accepted dispatch receipts', () => {
     expect(businessCall).toHaveBeenCalledTimes(21);
     expect(businessCall).toHaveBeenNthCalledWith(20, 'assistant_lead_job_select_tick');
     expect(businessCall).toHaveBeenLastCalledWith('assistant_lead_job_prune');
+  });
+  it('reports a missing lead selection RPC without leaking database details or reporting success', async () => {
+    const privateDetail = randomBytes(32).toString('hex');
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    businessCall.mockImplementation(((name: string) => ({
+      abortSignal: async () => name === 'assistant_lead_job_tick'
+        ? { data: { success: true, processed: false }, error: null }
+        : { data: null, error: { code: 'PGRST202', message: privateDetail } },
+    })) as unknown as typeof businessCall);
+
+    const response = await routes.find(job => job.key === 'lead-bulk')!.GET(request());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ success: false, error: 'Lead bulk worker unavailable' });
+    expect(businessCall.mock.calls).toEqual([['assistant_lead_job_tick'], ['assistant_lead_job_select_tick']]);
+    expect(log.mock.calls).toEqual([['[LeadBulkCron] Worker unavailable', {
+      rpc: 'assistant_lead_job_select_tick', reason: 'rpc_missing_from_schema_cache', code: 'PGRST202',
+    }]]);
+    expect(recordTelemetry).toHaveBeenCalledWith('cron_lead-bulk', 'down', expect.any(String), expect.any(Number));
   });
   it('the actual catalog route skips disabled work with no business call or receipt', async () => {
     process.env.CATALOG_INDEXING_ENABLED = 'false';

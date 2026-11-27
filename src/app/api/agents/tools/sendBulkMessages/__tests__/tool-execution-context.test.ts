@@ -132,7 +132,7 @@ describe('recipient-private execution context', () => {
     expect(await sendBulkMessagesTool(siteId).execute({ audience_id: audienceId, channel: 'sms', message: 'Hello.' }, context))
       .toMatchObject({ success: false, error: 'Audience must be ready and belong to this site.' });
     expect(await sendBulkMessagesTool(siteId).execute({ audience_id: '', channel: 'sms', message: 'Hello.' }, context))
-      .toMatchObject({ success: false, error: 'audience_id and message are required.' });
+      .toMatchObject({ success: false, error: 'audience_id and message or media are required.' });
     expect(mockPage).not.toHaveBeenCalled();
     expect(messages).toHaveLength(0);
     expect(conversations).toHaveLength(0);

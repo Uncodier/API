@@ -1,9 +1,12 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { fetchSiteNameForMerge } from '@/lib/messaging/lead-merge-fields';
-import { loadRoutedText, writeRoutedText } from '../routed-text-store';
+import { loadRoutedText, reconcileRoutedLeadPhone, writeRoutedText } from '../routed-text-store';
 import { RoutedTextRecipientError } from '../routed-text-identity';
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+import { verifyLegacyTwilioTurn } from '../routed-text-legacy-inbound';
+import { inboundClaimIdentity } from '../../zavu/inbound-claim';
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/messaging/lead-merge-fields', () => ({ ...jest.requireActual('@/lib/messaging/lead-merge-fields'), fetchSiteNameForMerge: jest.fn() }));
+jest.mock('../routed-text-legacy-inbound', () => ({ ...jest.requireActual('../routed-text-legacy-inbound'), verifyLegacyTwilioTurn: jest.fn() }));
 
 const id = { site_id: 'site', conversation_id: 'chat', message_id: 'saved' };
 const rows: Record<string, any[]> = {};
@@ -21,13 +24,19 @@ beforeEach(() => {
   rows.visitor_sessions = [{ visitor_id: 'visitor', site_id: 'site' }];
   rows.segments = [];
   (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
-    const filters: Array<[string, unknown]> = []; let write = false;
+    const filters: Array<[string, unknown]> = []; let update: Record<string, unknown> | undefined;
     let selection = '';
-    const stmt = { select: (columns: string) => { selection = columns; return stmt; }, update: () => { write = true; return stmt; },
+    const stmt = { select: (columns: string) => { selection = columns; return stmt; }, update: (data: Record<string, unknown>) => { update = data; return stmt; },
       eq: (k: string, v: unknown) => { filters.push([k,v]); reads.push([table,k,v]); return stmt; }, in: (k: string, v: unknown) => { reads.push([table,k,v]); return stmt; }, order: () => stmt,
+      is: (k: string, v: unknown) => { filters.push([k,v]); return stmt; },
       limit: async () => ({ data: history, error: historyError }),
       maybeSingle: async () => {
-        if (write) { writeFilters = filters; return { data: { id: 'saved' }, error: null }; }
+        if (update) {
+          writeFilters = filters;
+          if (table === 'messages') return { data: { id: 'saved' }, error: null };
+          const row = rows[table].find(row => filters.every(([key, value]) => row[key] === value));
+          return { data: row ? Object.assign(row, update) : null, error: null };
+        }
         if (table === 'visitors' && filters.some(([k]) => k === 'site_id')) {
           return { data: null, error: { code: '42703' } };
         }
@@ -36,7 +45,7 @@ beforeEach(() => {
             && rows.visitor_sessions.some(s => s.visitor_id === row.id && s.site_id === v);
           if (k === 'segments.site_id') return selection.includes('segments!inner(')
             && rows.segments.some(s => s.id === row.segment_id && s.site_id === v);
-          return row[k] === v;
+           return k === 'custom_data' ? JSON.stringify(row[k]) === v : row[k] === v;
         })) || null, error: null };
       } };
     return stmt;
@@ -143,4 +152,77 @@ it.each(['unavailable','truncated'])('incomplete history is not a permanent reci
   if (reason === 'truncated') history = Array(1000).fill(inbound('+15555550101'));
   else historyError = { code: 'timeout' };
   await expect(loadRoutedText(id)).rejects.toThrow('history unavailable');
+});
+
+function legacyReply() {
+  const turn = { id: 'turn', lead_id: 'lead', conversation_id: 'chat', role: 'user', content: 'Hello',
+    created_at: '2026-11-20T12:00:00Z', custom_data: { source: 'whatsapp', status: 'received',
+      whatsapp_message_id: `SM${'1'.repeat(32)}`, whatsapp_phone: '14155550100' } };
+  rows.messages.push(turn);
+  history.push(turn);
+  delete rows.conversations[0].visitor_id;
+  rows.messages[0].custom_data.dispatch_owner = 'chat_intervention';
+  rows.leads[0].updated_at = '2026-11-19T12:00:00Z';
+  const sid = turn.custom_data.whatsapp_message_id;
+  jest.mocked(verifyLegacyTwilioTurn).mockResolvedValue({ ...turn, custom_data: { ...turn.custom_data, origin_message_id: sid,
+    twilio_whatsapp_inbound: { sid, account: `AC${'2'.repeat(32)}`, from: '+14155550100', to: '+14155550110', received_at: turn.created_at } } });
+}
+
+it('repairs only the same-site linked lead from provider-confirmed legacy evidence', async () => {
+  legacyReply();
+  rows.leads[0].voice_call_consent_status = 'granted';
+  const result = await loadRoutedText(id);
+  expect(result.recipient).toBe('+14155550100');
+  expect(rows.leads[0].phone).toBe('+15555550101');
+  await reconcileRoutedLeadPhone(id, result);
+  expect(rows.leads[0]).toMatchObject({ phone: '+14155550100', voice_call_consent_status: 'unknown', voice_call_consent_at: null });
+  expect(writeFilters).toEqual([['id', 'lead'], ['site_id', 'site'], ['updated_at', '2026-11-19T12:00:00Z'],
+    ['voice_call_consent_status', 'granted'], ['phone', '+15555550101']]);
+  expect((await loadRoutedText(id)).leadPhoneRepair).toBeUndefined();
+});
+
+it('does not replace a phone that was edited after the inbound turn', async () => {
+  legacyReply();
+  rows.leads[0].updated_at = '2026-11-21T12:00:00Z';
+  await expect(loadRoutedText(id)).rejects.toBeInstanceOf(RoutedTextRecipientError);
+  expect(rows.leads[0].phone).toBe('+15555550101');
+});
+
+it.each(['signed', 'unbound', 'unavailable'])('requires a signed Zavu inbound binding to repair a stale phone (%s)', async state => {
+  const turn = inbound('whatsapp:+14155550100');
+  history.push(turn);
+  delete rows.conversations[0].visitor_id;
+  rows.messages[0].custom_data.dispatch_owner = 'chat_intervention';
+  Object.assign(rows.leads[0], { updated_at: '2026-11-19T12:00:00Z', voice_call_consent_status: 'unknown' });
+  jest.mocked(supabaseAdmin.rpc).mockResolvedValueOnce({ data: state === 'signed',
+    error: state === 'unavailable' ? { message: 'unavailable' } : null } as never);
+  const load = loadRoutedText(id);
+  if (state === 'signed') {
+    const ctx = await load;
+    await reconcileRoutedLeadPhone(id, ctx);
+    expect(rows.leads[0].phone).toBe('+14155550100');
+    expect((await loadRoutedText(id)).leadPhoneRepair).toBeUndefined();
+  } else {
+    await expect(load).rejects.toThrow(state === 'unbound' ? 'Verify the WhatsApp recipient' : 'verification unavailable');
+    expect(rows.leads[0].phone).toBe('+15555550101');
+  }
+  const claim = inboundClaimIdentity({ id: 'webhook-event', data: { messageId: 'event', from: 'whatsapp:+14155550100' } }, '',
+    { siteId: 'site', connectionId: 'z', senderId: 'sender', channel: 'whatsapp' });
+  expect(supabaseAdmin.rpc).toHaveBeenCalledTimes(1);
+  expect(supabaseAdmin.rpc).toHaveBeenCalledWith('has_signed_zavu_inbound_binding', { p_binding_hash: claim?.bindingHash });
+  expect(verifyLegacyTwilioTurn).not.toHaveBeenCalled();
+});
+
+it('rejects unverified legacy hints and preserves concurrent changes and opt-outs', async () => {
+  legacyReply();
+  const providerProof = await loadRoutedText(id);
+  rows.leads[0].phone = '+14155550109';
+  rows.leads[0].voice_call_consent_status = 'revoked';
+  rows.leads[0].do_not_call = true;
+  await expect(reconcileRoutedLeadPhone(id, providerProof)).rejects.toThrow('changed during verification');
+  expect(rows.leads[0].phone).toBe('+14155550109');
+  jest.mocked(verifyLegacyTwilioTurn).mockResolvedValueOnce(undefined);
+  await expect(loadRoutedText(id)).rejects.toBeInstanceOf(RoutedTextRecipientError);
+  await reconcileRoutedLeadPhone(id, await loadRoutedText(id));
+  expect(rows.leads[0]).toMatchObject({ phone: '+14155550100', do_not_call: true, voice_call_consent_status: 'revoked' });
 });

@@ -1,3 +1,7 @@
+import { jest } from '@jest/globals';
+import * as billingErrors from '@/lib/services/billing/credit-exhaustion-message';
+import { ASSISTANT_FAILURE_MESSAGE } from '@/lib/services/robot-instance/assistant-failure-policy';
+import { redactRuntimeSecrets } from '../runtime-log-context';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { isAssistantExecutionMode } from '@/app/api/robots/instance/assistant/execution-mode';
 import type { CronExecutionOwnership } from '../cron-execution-ownership';
@@ -17,9 +21,6 @@ const params = {
   eventId: 'cycle-1:credits_exhausted',
   planId: 'plan-1', stepId: 'step-1', requirementId: 'requirement-1',
 };
-const billingErrors = loadRuntimeModule<typeof import('@/lib/services/billing/credit-exhaustion-message')>(
-  'src/lib/services/billing/credit-exhaustion-message.ts', {},
-);
 const { RecoveryError } = loadRuntimeModule<typeof import('@/lib/services/robot-instance/assistant-recovery-schema')>(
   'src/lib/services/robot-instance/assistant-recovery-schema.ts', {
     './assistant-respawn-policy': { MAX_RESPAWNS: 3 },
@@ -96,14 +97,16 @@ function createDatabase() {
 
 function loadService(realUserStatus = false) {
   const database = createDatabase();
-  const getCreditExhaustionNotice = jest.fn().mockResolvedValue(billingNotice);
+  const getCreditExhaustionNotice = jest.fn(async () => billingNotice);
   const userStatus = realUserStatus
     ? loadRuntimeModule<typeof import('@/app/api/robots/instance/assistant/user-message-log')>(
         'src/app/api/robots/instance/assistant/user-message-log.ts', {
           '@/lib/database/supabase-client': { supabaseAdmin: database.supabaseAdmin },
+          '@/lib/services/robot-instance/assistant-failure-policy': { ASSISTANT_FAILURE_MESSAGE },
+          '@/app/api/cron/shared/runtime-log-context': { redactRuntimeSecrets },
         },
       ).setUserMessageStatus
-    : jest.fn().mockResolvedValue(true);
+    : async () => true;
   const setUserMessageStatus = jest.fn(userStatus);
   const service = loadRuntimeModule<typeof import('@/lib/services/robot-instance/credit-exhaustion')>(
     'src/lib/services/robot-instance/credit-exhaustion.ts', {
@@ -241,7 +244,7 @@ describe('persistCreditExhaustionNotice', () => {
   it('rechecks ownership after billing read and before any user CAS, instance or log writes', async () => {
     const h = loadService();
     const stale = new Error('ownership lost during billing read');
-    const beforeWrite = jest.fn().mockRejectedValue(stale);
+    const beforeWrite = jest.fn<() => Promise<void>>().mockRejectedValue(stale);
     await expect(h.persistCreditExhaustionNotice({ ...params, userMessageLogId: 'action-1', expectedGeneration: 2, beforeWrite }))
       .rejects.toBe(stale);
     expect(h.getCreditExhaustionNotice.mock.invocationCallOrder[0]).toBeLessThan(beforeWrite.mock.invocationCallOrder[0]);
@@ -295,8 +298,8 @@ describe('persistCreditExhaustionNotice', () => {
 });
 
 function loadSteps() {
-  const requireCredits = jest.fn().mockResolvedValue(undefined);
-  const assertCronExecutionOwnership = jest.fn().mockResolvedValue(undefined);
+  const requireCredits = jest.fn(async () => undefined);
+  const assertCronExecutionOwnership = jest.fn(async () => undefined);
   const persistCreditExhaustionNotice = jest.fn(async (input: { beforeWrite?: () => Promise<void> }) => {
     await input.beforeWrite?.();
     return visibleNotice;
@@ -361,7 +364,7 @@ describe('credit exhaustion durable steps', () => {
   it('rejects ownership lost during the billing read, before the real service writes anything', async () => {
     const h = loadService();
     const stale = Object.assign(new Error('ownership expired during billing read'), { name: 'CronExecutionOwnershipError' });
-    const assertCronExecutionOwnership = jest.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(stale);
+    const assertCronExecutionOwnership = jest.fn<() => Promise<void>>().mockResolvedValueOnce(undefined).mockRejectedValueOnce(stale);
     const steps = loadRuntimeModule<typeof import('../credit-exhaustion-step')>(
       'src/app/api/cron/shared/credit-exhaustion-step.ts', {
         '@/lib/services/billing/CreditService': { CreditService: {} },

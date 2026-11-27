@@ -1,14 +1,14 @@
 import { getSiteLicensedResources } from '@/lib/billing/licensed-resources';
 import { assertAutomationSendAllowed } from '../../channels/automation-send-guard';
 import { attemptRoutedText } from '../routed-text-provider';
-import { loadRoutedText, writeRoutedText, type RoutedContext } from '../routed-text-store';
+import { loadRoutedText, reconcileRoutedLeadPhone, writeRoutedText, type RoutedContext } from '../routed-text-store';
 import { sendRoutedText } from '../routed-text';
 import { RoutedTextRecipientError } from '../routed-text-identity';
 
 jest.mock('@/lib/billing/licensed-resources', () => ({ getSiteLicensedResources: jest.fn(),
   isLicensedChannelConnection: (ch: string, row: any) => row.type === ch && row.status === 'connected' && !row.license_suspended }));
 jest.mock('../../channels/automation-send-guard', () => ({ assertAutomationSendAllowed: jest.fn(), AutomationSendSuppressed: class extends Error {} }));
-jest.mock('../routed-text-store', () => ({ loadRoutedText: jest.fn(), writeRoutedText: jest.fn() }));
+jest.mock('../routed-text-store', () => ({ loadRoutedText: jest.fn(), reconcileRoutedLeadPhone: jest.fn(), writeRoutedText: jest.fn() }));
 jest.mock('../routed-text-provider', () => ({ attemptRoutedText: jest.fn() }));
 
 const id = { site_id: 'site', conversation_id: 'chat', message_id: 'outbound' };
@@ -93,6 +93,26 @@ it.each(['provider_message_id', 'twilio_message_id', 'exact_delivery_receipt', '
 it('does not treat an inventory read failure as a reason to dispatch', async () => {
   jest.mocked(getSiteLicensedResources).mockRejectedValue(new Error('read outage'));
   await expect(sendRoutedText(id)).rejects.toThrow('read outage');
+  expect(attempt).not.toHaveBeenCalled();
+  expect(writeRoutedText).not.toHaveBeenCalled();
+});
+
+it('continues the same send after repairing a verified lead phone', async () => {
+  ctx.leadPhoneRepair = { leadId: 'lead', previous: null, updatedAt: 'version', voiceConsent: 'unknown' };
+  jest.mocked(reconcileRoutedLeadPhone).mockImplementationOnce(async () => { delete ctx.leadPhoneRepair; });
+  attempt.mockImplementationOnce(async input => {
+    expect(reconcileRoutedLeadPhone).toHaveBeenCalledWith(id, expect.objectContaining({ recipient: input.recipient }));
+    await input.verifyBinding();
+    return { kind: 'accepted', providerMessageId: 'receipt' };
+  });
+  expect(await sendRoutedText(id)).toMatchObject({ status: 'accepted' });
+  expect(attempt).toHaveBeenCalledTimes(1);
+});
+
+it('does not dispatch if the phone repair loses its compare-and-set', async () => {
+  ctx.leadPhoneRepair = { leadId: 'lead', previous: null, updatedAt: 'version', voiceConsent: 'unknown' };
+  jest.mocked(reconcileRoutedLeadPhone).mockRejectedValueOnce(new Error('WhatsApp lead phone changed during verification'));
+  await expect(sendRoutedText(id)).rejects.toThrow('changed during verification');
   expect(attempt).not.toHaveBeenCalled();
   expect(writeRoutedText).not.toHaveBeenCalled();
 });

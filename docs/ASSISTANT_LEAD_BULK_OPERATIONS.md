@@ -33,3 +33,19 @@ Use the manual path for specific IDs or create drafts. Stage at most 50 items pe
 Batches commit in order, independently. Each worker transaction rechecks live permissions, assignee access and existing lead revisions, and records its progress atomically with the mutation. Transient database failures back off and retry; a permanent failure stops the job at that batch without rolling back earlier batches. Completed items are removed as they commit; terminal receipts and any unprocessed drafts are pruned after seven days. Drafts can contain contact data and are accessible only to the service RPCs.
 
 Deploy the bulk operations (`20261120233000`), team assignment (`20261123120000`), jobs (`20261123180000`), cursor index (`20261123181000`, run outside a transaction), and selection/review (`20261123181100`) migrations before publishing the assistant change. The job worker runs every minute at `/api/cron/lead-bulk` using the existing `CRON_SECRET`. Each invocation handles at most 20 processing batches and selection pages combined, within a wall-clock budget. On non-Vercel deployments, configure the same authenticated cron route.
+
+### Worker recovery after an incomplete rollout
+
+If production has the base jobs migration but the worker reports `PGRST202` for
+`assistant_lead_job_select_tick`, read the migration ledger and check the SQL
+function with `to_regprocedure('public.assistant_lead_job_select_tick()')`.
+When absent, apply the pending cursor-index migration outside a transaction,
+verify `public.assistant_lead_bulk_leads_site_cursor` is valid, then apply the
+selection/review migration, which also requests a PostgREST schema reload.
+Do not reapply the base migrations or skip the selection RPC to make status green.
+If the function already exists, check its service-role grant and PostgREST schema
+cache before considering any migration. Use the next scheduled execution and its
+receipt to verify recovery; do not invoke the mutating worker as a probe.
+
+The worker logs the failed RPC and a bounded error code without database messages
+or job payloads. A failed RPC still returns `503` and records a failed check.

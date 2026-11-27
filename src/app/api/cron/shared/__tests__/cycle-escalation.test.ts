@@ -3,9 +3,11 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ensureCycleTechnicalEscalation } from '@/lib/services/harness-diagnostics/cycle-escalation';
 import type { HarnessDiagnosticContext } from '@/lib/services/harness-diagnostics/context';
 import { deliverHarnessSupportTicket } from '@/lib/services/harness-diagnostics/support';
+import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/services/harness-diagnostics/support', () => ({ deliverHarnessSupportTicket: jest.fn() }));
+jest.mock('@/lib/services/workflow-robot/procurement-access', () => ({ canReadProcurementWorkflowInstanceAsActor: jest.fn() }));
 
 const SITE = '00000000-0000-4000-8000-000000000001';
 const INSTANCE = '00000000-0000-4000-8000-000000000002';
@@ -36,6 +38,7 @@ function receipt(args: Record<string, any>, overrides: Record<string, any> = {})
 
 type Lookup = { data: any; error?: any; reject?: unknown };
 function fixture() {
+  jest.mocked(canReadProcurementWorkflowInstanceAsActor).mockResolvedValue(true);
   const h = {
     requirement: requirement() as Record<string, any>,
     instance: { id: INSTANCE, site_id: SITE, is_archived: false },
@@ -84,6 +87,15 @@ function fixture() {
 
 const rpcArgs = (call = 0) => (supabaseAdmin.rpc as jest.Mock).mock.calls[call][1];
 beforeEach(() => jest.resetAllMocks());
+
+it('does not record or deliver a ticket when instance read access is denied', async () => {
+  fixture();
+  jest.mocked(canReadProcurementWorkflowInstanceAsActor).mockResolvedValue(false);
+  expect(await ensureCycleTechnicalEscalation(context(), {})).toEqual(UNAVAILABLE);
+  expect(canReadProcurementWorkflowInstanceAsActor).toHaveBeenCalledWith(SITE, INSTANCE, null);
+  expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
+  expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();
+});
 
 it('records only a support decision via the guarded RPC, never repairs or customer approval', async () => {
   const h = fixture();

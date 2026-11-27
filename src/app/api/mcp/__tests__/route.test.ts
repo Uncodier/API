@@ -9,6 +9,8 @@ import { NextRequest } from 'next/server';
 import * as argumentContract from '@/lib/tools/argument-contract';
 import * as routingPolicy from '@/app/api/agents/tools/router/tool-routing-policy';
 import * as searchContext from '@/app/api/agents/tools/router/search-context';
+import * as connectorObservation from '@/lib/connectors/connector-observation';
+import * as instanceLogProjection from '@/lib/connectors/instance-log-projection';
 import * as connectorResolver from '@/lib/connectors/tool-resolver';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 
@@ -19,6 +21,8 @@ const validateApiKey = jest.fn(async (_key: string) => ({ isValid: false }));
 const reader = loadRuntimeModule<typeof import('@/lib/services/robot-instance/instance-history-reader')>(
   'src/lib/services/robot-instance/instance-history-reader.ts', {
     zod: { z }, '@/lib/database/supabase-client': { supabaseAdmin: { from } },
+    '@/lib/connectors/connector-observation': connectorObservation,
+    '@/lib/connectors/instance-log-projection': instanceLogProjection,
     '@/lib/services/workflow-robot/procurement-access': {
       canReadProcurementWorkflowInstanceAsActor: async () => true,
     },

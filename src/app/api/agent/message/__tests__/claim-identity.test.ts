@@ -3,6 +3,7 @@ import { POST as neutral } from '../route';
 import { POST as callback } from '@/app/api/integrations/zavu/webhook/route';
 import { freshPostgres } from '@/lib/procurement/__tests__/fixtures/workflow-postgres';
 import { inboundDatabase, SITE, OTHER_SITE } from '@/lib/services/zavu/__tests__/inbound-lead-test-database';
+import { zavuInboundBindingHash } from '@/lib/services/zavu/inbound-claim';
 
 // Real signed routes, settings selection, claim helper, migrations and token-fenced
 // finish. Only the transport to this socket-only DB and external work are replaced.
@@ -74,6 +75,7 @@ beforeAll(() => {
   for (const state of ['completed','busy','failed','expired']) seedUnbound(`explicit-${state}`,state);
   seedUnbound('ambiguous-origin','failed','message.sent');
   db.migrate('20261121001000_zavu_inbound_claim_binding.sql');
+  db.migrate('20261126220000_read_zavu_inbound_binding.sql');
   process.env.ZAVUDEV_WEBHOOK_SECRET = project;
 }, 60000);
 beforeEach(() => {
@@ -85,6 +87,25 @@ beforeEach(() => {
 afterAll(() => {
   db?.stop();
   if (oldSecret === undefined) delete process.env.ZAVUDEV_WEBHOOK_SECRET; else process.env.ZAVUDEV_WEBHOOK_SECRET = oldSecret;
+});
+
+test('only an exact signed Zavu WhatsApp binding is visible to the service role', async () => {
+  settings(site(SITE, conn('one', 'whatsapp')));
+  const from = 'whatsapp:+14155550100', messageId = 'signed-whatsapp-repair';
+  const base = payload('one', messageId, 'whatsapp');
+  const event = { ...base, data: { ...base.data, from } };
+  const binding = { siteId: SITE, connectionId: 'connection-one-whatsapp', senderId: 'one', channel: 'whatsapp' };
+  const lookup = (hash: string) => db.query(`SET ROLE service_role; SELECT public.has_signed_zavu_inbound_binding(${lit(hash)})`).split('\n').at(-1);
+  const exact = zavuInboundBindingHash(binding, messageId, from);
+  expect((await send(neutral, event, other + 'invalid')).status).toBe(401);
+  expect(lookup(exact)).toBe('f');
+  expect((await send(neutral, event)).status).toBe(200);
+  expect(lookup(exact)).toBe('t');
+  expect(lookup(zavuInboundBindingHash(binding, messageId, 'whatsapp:+14155550109'))).toBe('f');
+  expect(lookup(zavuInboundBindingHash({ ...binding, siteId: OTHER_SITE }, messageId, from))).toBe('f');
+  for (const role of ['anon', 'authenticated']) {
+    expect(db.query(`SELECT has_function_privilege('${role}', 'public.has_signed_zavu_inbound_binding(text)', 'EXECUTE')`)).toBe('f');
+  }
 });
 
 test('equal no-event-ID provider message IDs on distinct accounts, channels and sites are independently admitted once across both URLs', async () => {

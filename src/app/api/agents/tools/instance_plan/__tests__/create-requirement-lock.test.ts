@@ -3,6 +3,8 @@ const builder: Record<string, jest.Mock> = {};
 builder.select = jest.fn(() => builder);
 builder.eq = jest.fn(() => builder);
 builder.insert = jest.fn(() => builder);
+const updateEq = jest.fn().mockResolvedValue({ error: null });
+builder.update = jest.fn(() => ({ eq: updateEq }));
 builder.delete = jest.fn(() => builder);
 builder.single = single;
 const from = jest.fn(() => builder);
@@ -46,13 +48,14 @@ const INSTANCE_ID = '11111111-1111-4111-8111-111111111111';
 const SITE_ID = '22222222-2222-4222-8222-222222222222';
 const USER_ID = '33333333-3333-4333-8333-333333333333';
 const REQUIREMENT_ID = '44444444-4444-4444-8444-444444444444';
+const PLAN_ID = '55555555-5555-4555-8555-555555555555';
 
 function mockSuccessfulInsert() {
   single
     .mockResolvedValueOnce({ data: { site_id: SITE_ID }, error: null })
     .mockResolvedValueOnce({
       data: {
-        id: '55555555-5555-4555-8555-555555555555',
+        id: PLAN_ID,
         instance_id: INSTANCE_ID,
         created_at: '2026-09-16T07:00:00.000Z',
       },
@@ -103,8 +106,11 @@ describe('createInstancePlanCore requirement lock', () => {
 
     expect(getBlockingActivePlans).toHaveBeenCalledTimes(2);
     expect(completeInProgressPlans).not.toHaveBeenCalled();
+    expect(builder.update).toHaveBeenCalledWith({ status: 'pending' });
+    expect(updateEq).toHaveBeenCalledWith('id', PLAN_ID);
     expect(builder.insert).toHaveBeenCalledWith(
       expect.objectContaining({
+        status: 'blocked',
         metadata: { requirement_id: REQUIREMENT_ID },
         steps: [
           expect.objectContaining({
@@ -210,6 +216,7 @@ describe('createInstancePlanCore requirement lock', () => {
 
     expect(getBlockingActivePlans).not.toHaveBeenCalled();
     expect(completeInProgressPlans).not.toHaveBeenCalled();
+    expect(builder.update).not.toHaveBeenCalled();
   });
 
   it('persists normalized browser capabilities on created steps', async () => {
@@ -428,7 +435,7 @@ describe('createInstancePlanCore requirement lock', () => {
           createdAt: '2026-09-16T06:59:00.000Z',
         },
         {
-          id: '55555555-5555-4555-8555-555555555555',
+          id: PLAN_ID,
           title: 'Replacement plan',
           status: 'pending',
           createdAt: '2026-09-16T07:00:00.000Z',

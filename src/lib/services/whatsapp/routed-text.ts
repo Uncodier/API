@@ -3,7 +3,7 @@ import { getSiteLicensedResources } from '@/lib/billing/licensed-resources';
 import { assertAutomationSendAllowed, AutomationSendSuppressed } from '../channels/automation-send-guard';
 import { hasTextWindow, textRoutePlan, textRoutes } from './routed-text-policy';
 import { attemptRoutedText, type TextRoute, type TextTemplate } from './routed-text-provider';
-import { loadRoutedText, writeRoutedText, type RoutedContext, type RoutedIdentity } from './routed-text-store';
+import { loadRoutedText, reconcileRoutedLeadPhone, writeRoutedText, type RoutedContext, type RoutedIdentity } from './routed-text-store';
 import { RoutedTextRecipientError } from './routed-text-identity';
 
 const field = 'whatsapp_text_delivery';
@@ -109,6 +109,10 @@ export async function sendRoutedText(id: RoutedIdentity) {
       const reason = 'No eligible WhatsApp connection remains for this message.';
       return write({ ...receipt, state: 'failed', reason }, 'failed', { command_status: 'failed', error_message: reason });
     }
+    if (ctx.leadPhoneRepair) {
+      if (previous[field]) throw conflict();
+      await reconcileRoutedLeadPhone(id, ctx);
+    }
     const claim: Receipt = { ...receipt, route, attempt_id: randomUUID(), state: 'attempting' };
     // Not `sending`: the hourly stuck-message reset must not release a live/ambiguous provider attempt.
     const owned = { ...previous, [field]: claim, status: 'placement_unknown', command_status: 'pending' };
@@ -116,7 +120,7 @@ export async function sendRoutedText(id: RoutedIdentity) {
     const forceTemplate = receipt.refused.length > 0 || !hasTextWindow(route, ctx.inbound, ctx.recipient, Date.now());
     const verifyBinding = async () => {
       const live = await loadRoutedText(id);
-      if (scopeKey(id, live) !== key || live.metadata[field]?.attempt_id !== claim.attempt_id
+      if (live.leadPhoneRepair || scopeKey(id, live) !== key || live.metadata[field]?.attempt_id !== claim.attempt_id
         || live.metadata[field]?.state !== 'attempting' || live.metadata.status !== 'placement_unknown'
         || live.metadata.provider_message_id || live.metadata.twilio_message_id || live.metadata.automation_skipped
         || !(await currentPlan(id.site_id, live)).some(r => sameRoute(r, route))
