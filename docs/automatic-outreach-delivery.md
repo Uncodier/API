@@ -86,13 +86,13 @@ Saved `message_type`, `media_url`, `mime_type` and voice guidance survive genera
 
 ## Atomic limits, recovery, and operational trade-offs
 
-Uses existing `REDIS_CACHE_URL` or `REDIS_URL` infrastructure; no migrations/deployment dependencies. Missing/unavailable Redis means **no send**. One Lua transaction reserves site/activity/local-day capacity, global message identity, and a per-lead lease across channels. No in-process counter fallback. Counters last three days; message/ambiguous lead leases do not expire automatically.
+The ledger uses existing `REDIS_CACHE_URL` or `REDIS_URL` infrastructure. Missing/unavailable Redis means **no send**. One Lua transaction reserves site/activity/local-day capacity, global message identity, and a per-lead lease across channels. No in-process counter fallback. Counters last three days; message/ambiguous lead leases do not expire automatically.
 
 Before transport, a compare-and-set writes `custom_data.outreach_delivery` with `state: dispatching`, `attempt_id`, `activity`, `account_id`, `local_day`, `timezone`, `started_at`. A durable site/day reservation count seeds Redis after resets and is rechecked after claim. This guards against counter loss without a SQL function. Reservation counting intentionally includes blocked/uncertain attempts and may under-utilize the daily budget; it never refunds an ambiguous send. All writers must preserve this marker. Daily durable count queries are unindexed JSON lookups and may need indexing later for large tenants.
 
 Transport is called once. Confirmed provider identity writes `state: sent`/`sent_at` and finalizes Redis. Any timeout/error/missing provider ID after dispatch retains the durable marker and non-expiring lease: later calls only defer `delivery_uncertain`, not resend. This prioritizes avoiding duplicates over automatic recovery and can block further outreach to that lead until an operator reconciles provider logs. Do not clear a lease solely because time elapsed. Reconcile confirmed sends to sent state; only proven never-delivered attempts can be manually released after checking both DB and Redis. No automatic reconciliation/reset endpoint is provided.
 
-History paginates tenant conversation joins; histories at/above 20,000 rows defer rather than silently undercount. Recipient removal/unsubscribe/assignment/quarantine and inactive/segment/day changes defer without deleting contact data.
+Deploy the canonical DB migration `20261127210000_outreach_history_page.sql` **before the API**. The service-only history RPC joins the lead's site-scoped conversations to their messages and reads up to 1,000 rows per ID cursor (requires the standard PostgREST row cap of at least 1,000). It uses the existing lead and conversation indexes. Generation and both delivery checks read fresh history; errors and histories at/above 20,000 rows block outreach rather than silently undercount. Do not fall back to the global messages scan. Recipient removal/unsubscribe/assignment/quarantine and inactive/segment/day changes defer without deleting contact data.
 
 ## Verification
 

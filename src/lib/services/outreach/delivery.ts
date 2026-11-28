@@ -50,14 +50,16 @@ export const outreachRepository: OutreachRepository = {
     const messages: any[] = [];
     // Explicit pagination avoids Supabase's implicit 1000-row truncation. Very
     // large histories fail closed instead of undercounting previous sends.
-    for (let offset = 0; offset < 20000; offset += 1000) {
-      const { data, error } = await supabaseAdmin.from('messages')
-        .select('id,role,created_at,custom_data,conversations!inner(site_id,lead_id)')
-        .eq('conversations.site_id', siteId).eq('conversations.lead_id', leadId)
-        .order('id').range(offset, offset + 999);
+    let afterId: string | null = null;
+    while (messages.length < 20000) {
+      const { data, error } = await supabaseAdmin.rpc('outreach_history_page', {
+        p_site_id: siteId, p_lead_id: leadId, p_after_id: afterId,
+      }).order('id');
       if (error) throw error;
-      messages.push(...(data || []));
-      if (!data || data.length < 1000) return messages;
+      if (!Array.isArray(data)) throw new Error('Outreach history unavailable');
+      messages.push(...data);
+      if (data.length < 1000) return messages;
+      afterId = data[data.length - 1].id;
     }
     throw new Error('Outreach history too large to safely evaluate');
   },
