@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { GET } from '@/app/api/cron/maintenance/sandbox-housekeeping/route';
 import { Sandbox } from '@vercel/sandbox';
-import { housekeepingRows } from '../sandbox-housekeeping-db';
+import { housekeepingRows, requirementStatusReferences } from '../sandbox-housekeeping-db';
 import { listHousekeepingSandboxes } from '../sandbox-housekeeping-list';
 import { reconcileSandboxBilling, retireSandboxBilling, SandboxBillingError } from '../sandbox-billing';
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
@@ -12,7 +12,7 @@ import { deleteSandboxAndOrphans } from '@/lib/services/sandbox-lifecycle';
 jest.mock('../sandbox-cleanup-fence',()=>({claimSandboxCleanup:jest.fn()}));
 jest.mock('@/lib/status/telemetry',()=>({recordTelemetry:jest.fn().mockResolvedValue(undefined)}));
 jest.mock('@vercel/sandbox',()=>({Sandbox:{get:jest.fn()}}));
-jest.mock('../sandbox-housekeeping-db',()=>({housekeepingRows:jest.fn()}));
+jest.mock('../sandbox-housekeeping-db',()=>({housekeepingRows:jest.fn(),requirementStatusReferences:jest.fn()}));
 jest.mock('../sandbox-housekeeping-list',()=>({listHousekeepingSandboxes:jest.fn()}));
 jest.mock('../sandbox-billing',()=>({...jest.requireActual('../sandbox-billing'),reconcileSandboxBilling:jest.fn(),retireSandboxBilling:jest.fn()}));
 jest.mock('@/lib/services/sandbox-stop',()=>({stopSandboxQuiet:jest.fn()}));
@@ -24,6 +24,7 @@ const credentials={CRON_SECRET:randomBytes(24).toString('hex'),VERCEL_TOKEN:rand
 let saved:Record<string,string|undefined>;
 beforeEach(()=>{
   jest.clearAllMocks();jest.mocked(housekeepingRows).mockReset();jest.mocked(Sandbox.get).mockReset();
+  jest.mocked(requirementStatusReferences).mockResolvedValue({activeSandboxIds:new Set(),activeSnapshotIds:new Set()});
   saved=Object.fromEntries([...Object.keys(credentials),'VERCEL'].map(key=>[key,process.env[key]]));
   Object.assign(process.env,credentials);delete process.env.VERCEL;
   jest.mocked(housekeepingRows).mockResolvedValue([]);jest.mocked(listHousekeepingSandboxes).mockResolvedValue([]);
@@ -92,9 +93,17 @@ it('keeps explicit non-Vercel credentials all-or-nothing',async()=>{
   expect((await GET(request())).status).toBe(500);
   expect(listHousekeepingSandboxes).not.toHaveBeenCalled();expect(Sandbox.get).not.toHaveBeenCalled();
 });
+it('aborts before provider inventory or cleanup when the status scan fails', async () => {
+  jest.mocked(requirementStatusReferences).mockRejectedValueOnce(new Error('incomplete status scan'));
+  expect((await GET(request())).status).toBe(500);
+  expect(listHousekeepingSandboxes).not.toHaveBeenCalled();
+  expect(Sandbox.get).not.toHaveBeenCalled();
+  expect(deleteSnapshotQuiet).not.toHaveBeenCalled();
+  expect(stopSandboxQuiet).not.toHaveBeenCalled();
+});
 it('ignores only confirmed obsolete reference 404 without retiring billing or deleting snapshots',async()=>{
   const name=`obsolete-${randomUUID()}`;
-  jest.mocked(housekeepingRows).mockImplementation(async table=>table==='requirement_status'?[{active_sandbox_id:name}]:[]);
+  jest.mocked(requirementStatusReferences).mockResolvedValue({activeSandboxIds:new Set([name]),activeSnapshotIds:new Set()});
   const notFound={response:{status:404}};
   jest.mocked(Sandbox.get).mockRejectedValue(notFound);jest.mocked(isSandboxNotFoundError).mockImplementation(error=>error===notFound);
   expect((await GET(request())).status).toBe(200);
@@ -103,7 +112,7 @@ it('ignores only confirmed obsolete reference 404 without retiring billing or de
 });
 it.each([403,500])('fails closed on active-reference lookup HTTP %s before destructive cleanup',async status=>{
   const name=`active-${randomUUID()}`;
-  jest.mocked(housekeepingRows).mockImplementation(async table=>table==='requirement_status'?[{active_sandbox_id:name}]:[]);
+  jest.mocked(requirementStatusReferences).mockResolvedValue({activeSandboxIds:new Set([name]),activeSnapshotIds:new Set()});
   jest.mocked(listHousekeepingSandboxes).mockResolvedValue([{id:'orphan',createdAt:0}]);
   const error={response:{status},message:credentials.VERCEL_TOKEN};jest.mocked(Sandbox.get).mockRejectedValue(error);
   const log=jest.spyOn(console,'error').mockImplementation(()=>{});

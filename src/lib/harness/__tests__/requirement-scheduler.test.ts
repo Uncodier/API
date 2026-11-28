@@ -16,13 +16,15 @@ beforeEach(() => {
 
 it('queries recurring requirements created OR updated since the inclusive fixed cutoff', async () => {
   query.limit.mockResolvedValue({ data: [
-    { id: 'legacy-updated', cron: '* * * * *', updated_at: '2026-11-03T20:29:50Z', metadata: {} },
-    { id: 'held', cron: '* * * * *', updated_at: '2026-11-03T20:29:50Z', metadata: { execution_hold: true } },
-    { id: 'not-due', cron: '* * * * *', updated_at: '2026-11-03T20:31:00Z', metadata: {} },
-    { id: 'invalid-cron', cron: 'invalid', updated_at: '2026-11-03T20:29:50Z', metadata: {} },
+    { id: 'legacy-updated', cron: '* * * * *', updated_at: '2026-11-03T20:29:50Z', execution_hold: null },
+    { id: 'held', cron: '* * * * *', updated_at: '2026-11-03T20:29:50Z', execution_hold: { reason: 'paused' } },
+    { id: 'not-due', cron: '* * * * *', updated_at: '2026-11-03T20:31:00Z', execution_hold: null },
+    { id: 'invalid-cron', cron: 'invalid', updated_at: '2026-11-03T20:29:50Z', execution_hold: null },
   ], error: null });
   expect(await dueScheduledRequirements(new Date('2026-11-03T20:31:30Z'))).toEqual(['legacy-updated']);
   expect(from).toHaveBeenCalledWith('requirements');
+  expect(query.select).toHaveBeenCalledWith('id,cron,updated_at,execution_hold:metadata->execution_hold');
+  expect(query.order).toHaveBeenCalledWith('updated_at', { ascending: true });
   expect(query.or).toHaveBeenCalledWith('created_at.gte.2026-09-01T00:00:00Z,updated_at.gte.2026-09-01T00:00:00Z');
   expect(query.in).toHaveBeenCalledWith('status', ['done', 'on-review']);
   expect(query.not).toHaveBeenCalledWith('cron', 'is', null);

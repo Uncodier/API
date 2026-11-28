@@ -77,10 +77,26 @@ another scan. Redis admission failure or missing configuration serves only an
 unexpired local result; otherwise history is unavailable, preventing database
 fan-out during a Redis outage. The existing page labels unavailable history.
 
-This repair reduces duplicate computation; it does not precompute historical
-states. A single snapshot still runs the existing JSON normalizer. After approved
-rollout, check RPC request counts, latency and timeout logs before considering
-persisted observed states or daily summaries. No timeout increase is required.
+### Exact snapshot normalization (migration `20261128035000`)
+
+Both snapshots call `status_observed_state` once per qualifying row. The forward
+migration `20261128035000_status_snapshot_normalization.sql` removes two synthetic
+JSON arrays and their SQL scans per `up`/`degraded` observation. Only actual route
+arrays are expanded for HTTP checks, and JSON numbers are compared as numbers.
+It changes no snapshot RPC, time predicate, caller grant, table policy or cache.
+
+The tradeoff is still a scan proportional to rows in the window. There is no
+rollup, backfill, write trigger or new index. On the next database read, even a
+late or corrected closed-day record is counted using its event time. Today's
+partial UTC day and historical partial days both stop at the caller's exact
+inclusive cutoff; the existing application cache TTLs still apply.
+
+In a disposable PostgreSQL 17.11 database, 20 systems × 2,160 hourly samples
+(43,200 synthetic rows, mixed route, HTTP, configuration and provider evidence)
+took **306 → 143 ms** for the 90-day daily snapshot and **101 → 47 ms** for the
+30-day observed-SLA snapshot (median of three warm calls before/after).
+These are local SQL timings, not a production latency guarantee. After an
+approved rollout, compare snapshot latency and timeouts on the real evidence mix.
 
 ## Passive evidence
 

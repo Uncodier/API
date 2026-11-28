@@ -212,6 +212,21 @@ test.each(['duplicate site','duplicate connection','duplicate ID','deleted conne
   expect(db.operations.some(op => op.kind === 'update')).toBe(false);
 });
 
+test.each(['top-level', 'pinned_text_delivery', 'native_media_delivery', 'template_delivery', 'audio_delivery'])(
+  'provider ID at %s conflicts with a different local attempt but not a foreign tenant', async path => {
+    const { db, event } = fixture();
+    const value = { provider_message_id: 'provider-1' };
+    const other: Row = { id: 'other', role: 'user', 'conversations.site_id': SITE,
+      custom_data: path === 'top-level' ? value : { [path]: value } };
+    db.tables.messages.push(other);
+    await expect(reconcile(event('read'))).rejects.toThrow('inconsistent');
+    expect(db.operations.some(op => op.kind === 'update')).toBe(false);
+    other['conversations.site_id'] = OTHER_SITE;
+    await expect(reconcile(event('read'))).resolves.toBe(true);
+    expect(other.custom_data).toEqual(path === 'top-level' ? value : { [path]: value });
+  },
+);
+
 test('a stale event or generic pre-pin media is not evidence for a pinned send', async () => {
   const { db, meta, event, attempt } = fixture(true);
   meta.native_media_delivery = {provider:'zavu', id:attempt.id, state:'accepted'};

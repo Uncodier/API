@@ -68,6 +68,45 @@ try {
   const current=functions();assert.deepEqual(current[0],old[0],'public command wrapper unchanged');
   assert.deepEqual({...current[1],definition:null},{...old[1],definition:null});
   assert.equal(evidence(),before,'migration/reapply performs no data writes');
+  // Use the installed candidate SELECT, including its locks and joins, rather
+  // than a lookalike query that could use an index the scheduler cannot.
+  reset();
+  sql(`INSERT INTO requirements(id,site_id,user_id,status,created_at,updated_at,metadata)
+    SELECT gen_random_uuid(),'${site}','${user}',CASE WHEN n%3=0 THEN 'blocked' ELSE 'done' END,
+      now(),now(),CASE WHEN n%3=0 THEN '{"execution_hold":true}'::jsonb ELSE '{}'::jsonb END
+    FROM generate_series(1,20000) n;
+    CREATE INDEX idx_requirements_status ON requirements(status);
+    CREATE INDEX idx_requirements_site_id ON requirements(site_id);
+    ANALYZE requirements; ANALYZE billing; ANALYZE sites;`);
+  const candidate = current[1].definition.split('FOR r IN ')[1].split('\n  LOOP')[0]
+    .replaceAll('p_excluded_ids', '$1').replaceAll('p_scheduled_ids', '$2').replace(/([><]=?)t\b/g, (_, op) => op + '$3');
+  const plan = () => JSON.parse(sql(`SET plan_cache_mode=force_generic_plan;
+    PREPARE candidates(uuid[],uuid[],timestamptz) AS ${candidate};
+    EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE candidates('{}','{}',now())`))[0].Plan;
+  const baseline = plan();
+  const claimIndex = '20261128033000_requirement_claim_candidates.sql';
+  load(claimIndex);
+  const indexed = plan();
+  assert.match(JSON.stringify(indexed), /requirements_claim_candidates_idx/);
+  assert.equal(indexed['Actual Rows'], 0);
+  assert.ok(indexed['Shared Hit Blocks'] < baseline['Shared Hit Blocks']);
+  assert.deepEqual(functions(),current,'index leaves claim definitions, identity and grants unchanged');
+  console.log(`Idle candidate shared hits: ${baseline['Shared Hit Blocks']} -> ${indexed['Shared Hit Blocks']}`);
+  // Two claim transactions, one slot: the waiter sees the committed lease,
+  // not an idle snapshot. The tie on updated_at is resolved by requirement ID.
+  reset();seed();
+  sql(`INSERT INTO requirements(id,site_id,user_id,status,created_at,updated_at,metadata)
+    SELECT '${id(10)}',site_id,user_id,status,created_at,updated_at,metadata FROM requirements;`);
+  const oneSlot = "SELECT public.claim_agent_requirement_run('{}',1,300,'{}');";
+  const first = connection(`SET application_name='claim-slot-first'; BEGIN; ${oneSlot}\n`);
+  await waitFor(()=>sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='claim-slot-first' AND state='idle in transaction'")==='1');
+  const waiter = connection(`SET application_name='claim-slot-waiter'; SET statement_timeout='10s'; ${oneSlot}\n`);
+  waiter.child.stdin.end();
+  await waitFor(()=>sql("SELECT count(*) FROM pg_stat_activity WHERE application_name='claim-slot-waiter' AND wait_event_type='Lock'")==='1');
+  first.child.stdin.end('COMMIT;\n');
+  assert.equal(JSON.parse(await first.result).run.requirementId, requirement);
+  assert.deepEqual(JSON.parse(await waiter.result), {state:'capacity_full'});
+  assert.equal(sql('SELECT count(*) FROM requirements WHERE cron_lock_active AND cron_lock_expires_at>now()'), '1');
   for(const obstruction of ['archived','missing','null','zero','negative']) {
     reset();seed();
     if(obstruction==='archived') sql(`UPDATE sites SET archived_at=now() WHERE id='${site}'`);

@@ -15,11 +15,20 @@ async function runCron(request: Request) {
   if (!secret || request.headers.get('authorization') !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  type Stage = 'scheduled' | 'claim' | 'dispatch' | 'finish' | 'cloud_git';
+  const timings = new Map<Stage, number>();
+  async function measure<T>(stage: Stage, work: () => Promise<T>) {
+    const started = performance.now();
+    try { return await work(); }
+    finally { timings.set(stage, (timings.get(stage) ?? 0) + (performance.now() - started)); }
+  }
+  // Aggregate repeated stages. Cloud Git runs concurrently, so durations are not additive.
+  const headers = () => ({ 'Server-Timing': Array.from(timings, ([stage, ms]) => `${stage};dur=${ms.toFixed(1)}`).join(', ') });
   try {
     // Runs independently of model admission; a completed document can still have
     // pending Git evidence. Keep the existing cron and bound the retry workload.
-    const evidence = retryPendingCloudGit().catch(() => ({ attempted: 0, committed: 0 }));
-    const scheduledIds = await dueScheduledRequirements();
+    const evidence = measure('cloud_git', () => retryPendingCloudGit()).catch(() => ({ attempted: 0, committed: 0 }));
+    const scheduledIds = await measure('scheduled', () => dueScheduledRequirements());
     const excluded: string[] = [];
     const results: Array<Record<string, unknown>> = [];
     const maximum = getMaxConcurrentRequirementRuns();
@@ -27,22 +36,22 @@ async function runCron(request: Request) {
     let capacityReached = false;
     const deadline = Date.now() + 45000;
     while (excluded.length < limit && Date.now() < deadline) {
-      const claim = await claimRequirementRun(excluded, maximum, scheduledIds);
+      const claim = await measure('claim', () => claimRequirementRun(excluded, maximum, scheduledIds));
       if (!claim) break;
       if (claim.state === 'capacity_full') { capacityReached = true; break; }
       excluded.push(claim.run.requirementId);
       try {
-        const workflow = await start(runCronAppsWorkflow, [claim.run]);
+        const workflow = await measure('dispatch', () => start(runCronAppsWorkflow, [claim.run]));
         results.push({ reqId: claim.run.requirementId, sessionId: claim.run.sessionId, runId: workflow.runId, started: true });
       } catch {
-        await finishRequirementCycle(claim.run, 'waiting', 'dispatch_unavailable', 'Execution could not be dispatched. A later cron tick will retry this same session.');
+        await measure('finish', () => finishRequirementCycle(claim.run, 'waiting', 'dispatch_unavailable', 'Execution could not be dispatched. A later cron tick will retry this same session.'));
         results.push({ reqId: claim.run.requirementId, sessionId: claim.run.sessionId, started: false });
       }
     }
     const cloudGit = await evidence;
-    return NextResponse.json({ results, capacityReached, evaluatedRequirements: excluded.length, cloudGit });
+    return NextResponse.json({ results, capacityReached, evaluatedRequirements: excluded.length, cloudGit }, { headers: headers() });
   } catch {
-    return NextResponse.json({ error: 'Requirement scheduler unavailable; no legacy executor fallback was started' }, { status: 503 });
+    return NextResponse.json({ error: 'Requirement scheduler unavailable; no legacy executor fallback was started' }, { status: 503, headers: headers() });
   }
 }
 

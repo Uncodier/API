@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 
 const sql = readFileSync(new URL('../../supabase/migrations/20261111223000_instance_asset_summaries.sql', import.meta.url), 'utf8');
+const batchedCounts = readFileSync(new URL('../../supabase/migrations/20261128034000_batch_instance_asset_counts.sql', import.meta.url), 'utf8');
 test('bounded invoker summaries preserve RLS, ordering, counts and image paths', async () => {
   const db = new PGlite();
   try {
@@ -20,7 +21,8 @@ test('bounded invoker summaries preserve RLS, ordering, counts and image paths',
         USING(site_id::text=current_setting('test.site',true));
       GRANT SELECT ON remote_instances,assets TO authenticated,service_role;`);
     await db.exec(sql);
-    await db.exec(sql);
+    await db.exec(batchedCounts);
+    await db.exec(batchedCounts);
     const site = randomUUID(), other = randomUUID(), instance = randomUUID(), hidden = randomUUID(), empty = randomUUID();
     await db.query('INSERT INTO remote_instances VALUES ($1,$2),($3,$4),($5,$2)', [instance,site,hidden,other,empty]);
     for (let i=0;i<5;i++) await db.query(`INSERT INTO assets VALUES($1,$2,$3,$4,$5,$6,$7)`,

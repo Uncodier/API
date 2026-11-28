@@ -3,13 +3,13 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import type { RequirementClaim, RequirementRun } from './requirement-types';
 
 export async function dueScheduledRequirements(now = new Date()): Promise<string[]> {
-  const { data, error } = await supabaseAdmin.from('requirements').select('id,cron,updated_at,metadata')
+  const { data, error } = await supabaseAdmin.from('requirements').select('id,cron,updated_at,execution_hold:metadata->execution_hold')
     .not('cron', 'is', null).in('status', ['done', 'on-review'])
     .or('created_at.gte.2026-09-01T00:00:00Z,updated_at.gte.2026-09-01T00:00:00Z')
     .order('updated_at', { ascending: true }).limit(100);
   if (error) throw new Error('Scheduled requirements unavailable');
   return (data || []).filter(row => {
-    if (row.metadata?.execution_hold) return false;
+    if (row.execution_hold) return false;
     try {
       const previous = CronExpressionParser.parse(row.cron, { currentDate: now }).prev().toDate();
       return previous.getTime() > Date.parse(row.updated_at);

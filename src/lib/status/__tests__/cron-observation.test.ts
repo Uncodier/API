@@ -32,7 +32,7 @@ const mocks: Record<string, Record<string, unknown>> = {
   '@/lib/services/billing/sandbox-billing': { reconcileSandboxBilling: businessCall, retireSandboxBilling: businessCall, SandboxBillingError: class extends Error {} },
   '@/lib/services/sandbox-missing-snapshot': { isSandboxNotFoundError: businessCall },
   '@/lib/services/billing/sandbox-housekeeping-list': { listHousekeepingSandboxes: businessCall },
-  '@/lib/services/billing/sandbox-housekeeping-db': { housekeepingRows: businessCall },
+  '@/lib/services/billing/sandbox-housekeeping-db': { housekeepingRows: businessCall, requirementStatusReferences: businessCall },
   '@/lib/services/sandbox-sdk': { sandboxSdkMajor: businessCall },
   '@/lib/services/sandbox-lifecycle': { deleteSandboxAndOrphans: businessCall },
   '@/lib/services/session-event-retention': { runSessionEventRetention: businessCall },

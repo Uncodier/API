@@ -5,7 +5,7 @@ import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { reconcileSandboxBilling, retireSandboxBilling, SandboxBillingError } from '@/lib/services/billing/sandbox-billing';
 import { isSandboxNotFoundError } from '@/lib/services/sandbox-missing-snapshot';
 import { listHousekeepingSandboxes, type HousekeepingCredentials } from '@/lib/services/billing/sandbox-housekeeping-list';
-import { housekeepingRows } from '@/lib/services/billing/sandbox-housekeeping-db';
+import { housekeepingRows, requirementStatusReferences } from '@/lib/services/billing/sandbox-housekeeping-db';
 import { sandboxSdkMajor } from '@/lib/services/sandbox-sdk';
 import { deleteSandboxAndOrphans } from '@/lib/services/sandbox-lifecycle';
 import { claimSandboxCleanup } from '@/lib/services/billing/sandbox-cleanup-fence';
@@ -61,15 +61,7 @@ async function runCron(request: Request) {
 
     // 1. Fetch active references from requirement_status
     // Age is not proof that a paused workspace/restore point is disposable.
-    const statusRows = await housekeepingRows('requirement_status','active_sandbox_id, snapshot_id');
-
-    const activeSandboxIds = new Set<string>();
-    const activeSnapshotIds = new Set<string>();
-
-    for (const row of statusRows || []) {
-      if (row.active_sandbox_id) activeSandboxIds.add(row.active_sandbox_id);
-      if (row.snapshot_id) activeSnapshotIds.add(row.snapshot_id);
-    }
+    const { activeSandboxIds, activeSnapshotIds } = await requirementStatusReferences();
     // Portable harness workspaces are absent from legacy requirement_status.
     const harnessRows = await housekeepingRows('harness_sessions','id,site_id,snapshot');
     for (const row of harnessRows || []) {
