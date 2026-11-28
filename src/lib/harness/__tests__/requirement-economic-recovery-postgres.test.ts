@@ -84,7 +84,22 @@ nativeTest('native PG skips busy recovery dependencies and revisits without bloc
 
     const evidence = () => JSON.parse(sql(`SELECT json_build_object('requirement',to_jsonb(r),'mapping',to_jsonb(h),'session',to_jsonb(s),'receipt',to_jsonb(p)) FROM requirements r JOIN harness_requirement_runs h ON h.requirement_id=r.id JOIN harness_sessions s ON s.id=h.session_id JOIN requirement_economic_pauses p ON p.requirement_id=r.id WHERE r.id='${id}'`));
     const baseline = evidence();
-    const claim = () => JSON.parse(sql("SET ROLE service_role; SELECT claim_agent_requirement_run('{}',10,300,'{}');"));
+    const signature = 'claim_agent_requirement_run(uuid[],integer,integer,uuid[])';
+    const identity = () => sql(`SELECT oid,proowner,proacl,proconfig,prosecdef FROM pg_proc WHERE oid='${signature}'::regprocedure`);
+    const originalIdentity = identity();
+    sql(readFileSync('supabase/migrations/20261128040000_requirement_claim_stage_timings.sql', 'utf8'));
+    expect(identity()).toBe(originalIdentity);
+    const timedClaim = (max = 10) => {
+      const envelope = JSON.parse(sql(`SET ROLE service_role; SET request.headers='{"x-claim-timings":"1"}';
+        SELECT claim_agent_requirement_run('{}',${max},300,'{}');`));
+      expect(Object.keys(envelope).sort()).toEqual(['claim', 'stage_ms']);
+      expect(envelope.stage_ms).toEqual({ economic_pause: expect.any(Number), pending_commands: expect.any(Number), reservation: expect.any(Number) });
+      for (const ms of Object.values<number>(envelope.stage_ms)) {
+        expect(Number.isInteger(ms) && ms >= 0 && ms <= 60000).toBe(true);
+      }
+      return envelope.claim;
+    };
+    const claim = () => timedClaim();
     const dependencies = [
       `SELECT 1 FROM requirement_economic_pauses WHERE requirement_id='${id}' FOR UPDATE`,
       `SELECT 1 FROM harness_requirement_runs WHERE requirement_id='${id}' FOR UPDATE`,
@@ -107,11 +122,19 @@ nativeTest('native PG skips busy recovery dependencies and revisits without bloc
       await release();
       sql(`DELETE FROM requirements WHERE id='${ordinary}';`);
     }
+    // The timed result is not an independent reservation: caller rollback must
+    // undo both economic recovery and reservation, including session ownership.
+    sql(`BEGIN; SET LOCAL ROLE service_role; SET LOCAL request.headers='{"x-claim-timings":"1"}';
+      SELECT claim_agent_requirement_run('{}',10,300,'{}'); ROLLBACK;`);
+    expect(evidence()).toEqual(baseline);
     const recovered = claim();
     expect(recovered.run.requirementId).toBe(id);
     expect(recovered.run.sessionId).toBe(sessionId);
     expect(recovered.run.executionGeneration).toBe(fixture.run.executionGeneration);
     expect(sql(`SELECT count(*) FROM requirement_status WHERE requirement_id='${id}' AND cycle LIKE 'economic-recovery:%'`)).toBe('1');
+    expect(timedClaim(1)).toEqual({ state: 'capacity_full' });
+    expect(timedClaim()).toBeNull();
+    expect(sql("SET ROLE service_role; SELECT claim_agent_requirement_run('{}',10,300,'{}') IS NULL")).toBe('t');
     expect(sql('SHOW lock_timeout')).toBe('0');
     for (const role of ['anon', 'authenticated', 'service_role']) {
       expect(sql(`SELECT has_function_privilege('${role}','recheck_requirement_economic_pauses(uuid[])','EXECUTE')`)).toBe('f');

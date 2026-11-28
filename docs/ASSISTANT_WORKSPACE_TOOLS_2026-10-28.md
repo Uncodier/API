@@ -33,7 +33,7 @@ Migración nueva:
 - `register_sandbox_billing` añade owner `instance`, derivando el sitio de `remote_instances`; mantiene reglas anteriores y liquidación por sesiones reales.
 - VM privada: duración de sesión acotada a 180 s, herramientas de comandos hasta 120 s; archivos en snapshot persistente sin caducidad automática, una revisión conservada hasta eliminación de la instancia. No implica retención eterna tras eliminación ni procesos ilimitados.
 - Copias de inspección: red denegada, environment vacío, sin puertos, parada al terminar y snapshots temporales. No se promueve una copia de datos gestionados a entorno ejecutable.
-- Eliminación de instancia: cola durable `assistant_workspace_deletions`, independiente del campo del ledger que prueba borrado preliquidado. Housekeeping conserva recursos con lease activo y usa el camino existente stop → settle → retire → delete. No se perdona uso no liquidado por borrar una fila.
+- Instance deletion records intent in `assistant_workspace_deletions`. Housekeeping reconciles billing but [defers unfenced provider deletion](SANDBOX_HOUSEKEEPING_RECOVERY.md#why-an-apparently-ownerless-vm-is-retained); removing an instance does not forgive usage.
 
 ## Despliegue y límites
 

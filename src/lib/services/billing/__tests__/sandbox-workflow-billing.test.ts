@@ -1,4 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { GET as housekeeping } from '@/app/api/cron/maintenance/sandbox-housekeeping/route';
+import { requirementStatusReferences, housekeepingRows } from '../sandbox-housekeeping-db';
+import { listHousekeepingSandboxes } from '../sandbox-housekeeping-list';
 import { Sandbox } from '@vercel/sandbox';
 import { ensureWorkflowSandbox, stopWorkflowSandbox } from '@/lib/services/workflow-robot/sandbox-workspace';
 import { workflowSandboxName } from '@/lib/services/workflow-robot/workspace-identity';
@@ -6,9 +9,12 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { registerSandboxBilling, reconcileSandboxBilling, SandboxBillingError } from '../sandbox-billing';
+jest.mock('../sandbox-housekeeping-db', () => ({ requirementStatusReferences: jest.fn(), housekeepingRows: jest.fn() }));
+jest.mock('../sandbox-housekeeping-list', () => ({ listHousekeepingSandboxes: jest.fn() }));
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn() }));
 jest.mock('@vercel/sandbox',()=>({Sandbox:{get:jest.fn(),create:jest.fn()}}));
 jest.mock('@/lib/database/supabase-client',()=>({supabaseAdmin:{from:jest.fn()}}));
-jest.mock('@/lib/services/sandbox-sdk',()=>({getSandboxHandle:jest.fn(),sandboxIdentity:(s:{name:string})=>s.name}));
+jest.mock('@/lib/services/sandbox-sdk',()=>({sandboxSdkMajor:()=>3,getSandboxHandle:jest.fn(),sandboxIdentity:(s:{name:string})=>s.name}));
 jest.mock('@/lib/services/sandbox-stop',()=>({stopSandboxQuiet:jest.fn()}));
 jest.mock('@/lib/services/sandbox-missing-snapshot',()=>({isSandboxNotFoundError:(error:any)=>error?.response?.status===404}));
 jest.mock('@/lib/services/sandbox-create-params',()=>({buildSandboxCreateParams:(p:unknown)=>p}));
@@ -51,4 +57,45 @@ it('billing outage on recovery stops VM and never falls through to replacement',
 it('workflow stop uses shared final-timestamp billing cleanup',async()=>{
   const sandbox={name:'existing'};jest.mocked(getSandboxHandle).mockResolvedValue(sandbox as never);
   await stopWorkflowSandbox(sandbox.name);expect(stopSandboxQuiet).toHaveBeenCalledWith(sandbox);
+});
+
+it('preserves a workflow that resumes its stored VM after housekeeping read the inactive plan', async () => {
+  const name = workflowSandboxName(runPlanId);
+  plan.metadata.active_sandbox_id = name;
+  let status = 'completed';
+  jest.mocked(requirementStatusReferences).mockResolvedValue({ activeSandboxIds: new Set(), activeSnapshotIds: new Set() });
+  jest.mocked(housekeepingRows).mockImplementation(async table => table === 'instance_plans'
+    ? [{ status, metadata: { ...plan.metadata } }]
+    : table === 'sandbox_billing_resources' ? [{ sandbox_name: name }] : []);
+  let inventoryStarted!: () => void, releaseInventory!: () => void;
+  const started = new Promise<void>(resolve => { inventoryStarted = resolve; });
+  const hold = new Promise<void>(resolve => { releaseInventory = resolve; });
+  jest.mocked(listHousekeepingSandboxes).mockImplementationOnce(async () => {
+    inventoryStarted(); await hold;
+    return [{ id: name, createdAt: Date.now() - 3600000 }];
+  });
+  const vm = { name, status: 'stopped', delete: jest.fn() };
+  jest.mocked(getSandboxHandle).mockResolvedValue(vm as never);
+  jest.mocked(Sandbox.get).mockImplementation(async opts => {
+    if (opts.resume) vm.status = 'running';
+    return vm as never;
+  });
+  const env = { CRON_SECRET: randomBytes(24).toString('hex'), VERCEL: '1' };
+  const original = { CRON_SECRET: process.env.CRON_SECRET, VERCEL: process.env.VERCEL };
+  Object.assign(process.env, env);
+  try {
+    const sweep = housekeeping(new Request('https://api.example.test/cron', {headers: {authorization: `Bearer ${env.CRON_SECRET}`}}));
+    await started;
+    status = 'running';
+    const attached = await ensureWorkflowSandbox({runPlanId, siteId, instanceId});
+    expect(attached.sandboxId).toBe(name); expect(vm.status).toBe('running');
+    releaseInventory();
+    expect((await (await sweep).json()).results).toMatchObject({unfencedSandboxCandidates: 1, sandboxesBilled: 1});
+    expect(stopSandboxQuiet).not.toHaveBeenCalled(); expect(vm.delete).not.toHaveBeenCalled();
+  } finally {
+    releaseInventory();
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
 });

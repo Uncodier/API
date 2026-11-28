@@ -1,13 +1,11 @@
 import { NextResponse } from 'next/server';
 import { Sandbox } from '@vercel/sandbox';
-import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { reconcileSandboxBilling, retireSandboxBilling, SandboxBillingError } from '@/lib/services/billing/sandbox-billing';
 import { isSandboxNotFoundError } from '@/lib/services/sandbox-missing-snapshot';
 import { listHousekeepingSandboxes, type HousekeepingCredentials } from '@/lib/services/billing/sandbox-housekeeping-list';
 import { housekeepingRows, requirementStatusReferences } from '@/lib/services/billing/sandbox-housekeeping-db';
 import { sandboxSdkMajor } from '@/lib/services/sandbox-sdk';
-import { deleteSandboxAndOrphans } from '@/lib/services/sandbox-lifecycle';
 import { claimSandboxCleanup } from '@/lib/services/billing/sandbox-cleanup-fence';
 import { withCronObservation } from '@/lib/status/cron-observation';
 
@@ -55,9 +53,11 @@ async function runCron(request: Request) {
       missingResources: 0,
       reconciliationPending: 0,
       sandboxesAlreadyStopped: 0,
+      unfencedSandboxCandidates: 0,
+      deferredDeletionIntents: 0,
     };
 
-    console.log('[SandboxHousekeeping] Starting orphan cleanup...');
+    console.log('[SandboxHousekeeping] Starting reconciliation...');
 
     // 1. Fetch active references from requirement_status
     // Age is not proof that a paused workspace/restore point is disposable.
@@ -76,7 +76,7 @@ async function runCron(request: Request) {
     const assistantWorkspaces = await housekeepingRows('assistant_workspaces',
       'instance_id,sandbox_name,active_sandbox_name,lease_expires_at', 'instance_id');
     for (const row of assistantWorkspaces) {
-      // Idle instance VMs may stop; a live operation/inspection lease is not an orphan.
+      // Exclude live operations from the advisory inventory.
       if (Date.parse(row.lease_expires_at || '') > Date.now()) {
         activeSandboxIds.add(row.active_sandbox_name || row.sandbox_name);
       }
@@ -84,13 +84,13 @@ async function runCron(request: Request) {
     const assistantDeletions = new Set((await housekeepingRows('assistant_workspace_deletions', 'sandbox_name', 'sandbox_name'))
       .map(row => row.sandbox_name));
 
-    // 2. Fetch all running sandboxes
     console.log(`[SandboxHousekeeping] Fetched ${activeSandboxIds.size} active sandbox IDs and ${activeSnapshotIds.size} active snapshot IDs from DB.`);
     
     const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000;
 
     stage = 'sandbox_inventory';
     const listed = await listHousekeepingSandboxes(credentials);
+    const deleted = new Set<string>();
     // Reconcile ALL registered resources, including stopped sessions after auto
     // timeout and resources omitted from a provider list page. No implicit resume.
     stage = 'billing_inventory';
@@ -99,7 +99,6 @@ async function runCron(request: Request) {
       let sandbox: Sandbox | undefined;
       try {
         sandbox = await Sandbox.get({ ...credentials, name: row.sandbox_name, resume: false });
-        if (sandbox.currentSnapshotId) activeSnapshotIds.add(sandbox.currentSnapshotId);
         await reconcileSandboxBilling(sandbox);
         const terminal = harnessRows.find(session => row.sandbox_name === `h-${session.id}` &&
           ['completed','cancelled','failed'].includes(session.snapshot?.status) && session.site_id &&
@@ -116,9 +115,14 @@ async function runCron(request: Request) {
             await sandbox.delete({ deleteOrphanSnapshots: true });
             await retireSandboxBilling(row.sandbox_name,'finish');
             await fence.finish();
+            deleted.add(row.sandbox_name);
             results.terminalSandboxesDeleted++;
           }
-        } else if (row.deletion_requested_at || assistantDeletions.has(row.sandbox_name)) await deleteSandboxAndOrphans(row.sandbox_name);
+        }
+        if (!deleted.has(row.sandbox_name) && (row.deletion_requested_at || assistantDeletions.has(row.sandbox_name))) {
+          // A request to retire is not exclusive ownership of a provider handle.
+          results.deferredDeletionIntents++;
+        }
         results.sandboxesBilled++;
       } catch (error) {
         if (!sandbox && isSandboxNotFoundError(error)) {
@@ -133,129 +137,16 @@ async function runCron(request: Request) {
         if (reason === 'missing_resource') results.missingResources++;
         else if (reason === 'insufficient_credits') results.fundingPending++;
         else results.reconciliationPending++;
-        // A known unpaid/outage interval must not authorize more running time.
-        if (sandbox && ['running', 'pending', 'snapshotting', 'stopping'].includes(sandbox.status)) await stopSandboxQuiet(sandbox);
+        // A billing or claim failure is not a stop fence.
       }
     }
-    // Preserve restore points even for not-yet-registered persistent workspaces.
-    // Any failed lookup aborts destructive snapshot cleanup rather than guessing.
-    for (const name of activeSandboxIds) {
-      if (tracked.some(row => row.sandbox_name === name)) continue;
-      stage = 'active_snapshot_lookup';
-      try {
-        const active = await Sandbox.get({ ...credentials, name, resume:false });
-        if (active.currentSnapshotId) activeSnapshotIds.add(active.currentSnapshotId);
-      } catch (error) {
-        // Old requirement_status references can outlive provider resources.
-        // Only a confirmed 404 is absence; auth/timeouts still abort cleanup.
-        // Do not retire billing or mutate historical references here.
-        if (!isSandboxNotFoundError(error)) throw error;
-      }
-    }
+
+    // No common lease across requirement, workflow and assistant reuse. Inventory
+    // can identify candidates for review, never authorize stop or snapshot deletion.
     for (const sb of listed) {
-      const id = sb.id || sb.name;
-      if (!id) continue;
-      const isActive = activeSandboxIds.has(sb.id) || (sb.name ? activeSandboxIds.has(sb.name) : false);
-      if (isActive) continue;
+      if (deleted.has(sb.id) || activeSandboxIds.has(sb.id) || (sb.name && activeSandboxIds.has(sb.name))) continue;
       const createdAt = sb.createdAt ? new Date(sb.createdAt).getTime() : 0;
-      if (createdAt && createdAt >= thirtyMinutesAgo) continue;
-      try {
-        const sandboxInstance = await Sandbox.get({ ...credentials, name: id, resume: false });
-        const alreadyStopped = ['stopped', 'failed', 'aborted'].includes(sandboxInstance.status);
-        if (!alreadyStopped) console.log(`[SandboxHousekeeping] Stopping orphaned sandbox ${id}`);
-        const stopped = await stopSandboxQuiet(sandboxInstance);
-        if (stopped && alreadyStopped) results.sandboxesAlreadyStopped++;
-        else if (stopped) results.sandboxesStopped++;
-        else results.sandboxErrors++;
-      } catch (stopErr: unknown) {
-        console.warn('[SandboxHousekeeping] Sandbox stop failed; cleanup remains pending.');
-        results.sandboxErrors++;
-      }
-    }
-
-    // v3 owns persistent restore snapshots via keepLastSnapshots. A global list
-    // cannot reliably prove ownership, so do not delete paused/new stop snapshots.
-    if (sandboxSdkMajor() >= 3) {
-      // Bounded aggregate facts only. Never log provider errors, payloads or credentials.
-      // Keep billingErrors: unresolved funding/history is not a false recovery.
-      console.log('[SandboxHousekeeping] Cleanup complete.', results);
-      return NextResponse.json({ success: true, results });
-    }
-
-    // 3. Clean up legacy orphaned snapshots (SDK Snapshot.list when present, else REST)
-    const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
-    const sdkSnapshots = await listSnapshotsViaSdk(credentials as { token: string; projectId: string; teamId: string });
-    if (sdkSnapshots.length > 0) {
-      for (const snap of sdkSnapshots) {
-        if (!snap.id || snap.status !== 'ready' || activeSnapshotIds.has(snap.id)) continue;
-        const createdAt = snap.createdAt ? new Date(snap.createdAt).getTime() : 0;
-        if (createdAt && createdAt >= twentyFourHoursAgo) continue;
-        try {
-          await deleteSnapshotQuiet(snap.id);
-          results.snapshotsDeleted++;
-        } catch {
-          results.snapshotErrors++;
-        }
-      }
-    } else {
-    
-    try {
-      let next: string | undefined = undefined;
-      let hasMoreSnapshots = true;
-      let pages = 0;
-
-      while (hasMoreSnapshots && pages < 100) {
-        pages++;
-        const url = new URL(`https://api.vercel.com/v1/sandboxes/snapshots`);
-        // The API parameter is 'project', not 'projectId'
-        url.searchParams.append('project', projectId!);
-        if (teamId) url.searchParams.append('teamId', teamId);
-        if (next) url.searchParams.append('until', next);
-        
-        const snapRes = await fetch(url.toString(), {
-          headers: { Authorization: `Bearer ${vercelToken}` },
-        });
-        
-        if (snapRes.ok) {
-          const snapshotsResult = await snapRes.json();
-          const snapshots = snapshotsResult.snapshots || [];
-          
-          if (!snapshots.length) break;
-          
-          let added = 0;
-          for (const snap of snapshots) {
-            added++;
-            // Skip already deleted snapshots
-            if (snap.status !== 'ready') continue;
-
-            if (!activeSnapshotIds.has(snap.id)) {
-              const createdAt = new Date(snap.createdAt).getTime();
-              if (createdAt < twentyFourHoursAgo) {
-                console.log(`[SandboxHousekeeping] Deleting orphaned snapshot ${snap.id} (created ${new Date(createdAt).toISOString()})`);
-                try {
-                  await deleteSnapshotQuiet(snap.id);
-                  results.snapshotsDeleted++;
-                } catch (delErr: unknown) {
-                  console.warn('[SandboxHousekeeping] Snapshot deletion failed.');
-                  results.snapshotErrors++;
-                }
-              }
-            }
-          }
-          
-          if (!snapshotsResult.pagination?.next || added === 0) {
-            hasMoreSnapshots = false;
-          } else {
-            next = String(snapshotsResult.pagination.next);
-          }
-        } else {
-          console.warn(`[SandboxHousekeeping] Failed to list snapshots (HTTP ${snapRes.status}).`);
-          break;
-        }
-      }
-    } catch (e: unknown) {
-      console.error('[SandboxHousekeeping] Snapshot processing failed.');
-    }
+      if (!createdAt || createdAt < thirtyMinutesAgo) results.unfencedSandboxCandidates++;
     }
 
     console.log('[SandboxHousekeeping] Cleanup complete.', results);
@@ -271,18 +162,3 @@ async function runCron(request: Request) {
 }
 
 export const GET = withCronObservation('sandbox-housekeeping', runCron);
-
-async function listSnapshotsViaSdk(
-  credentials: { token: string; projectId: string; teamId: string },
-): Promise<Array<{ id: string; createdAt?: string; status?: string }>> {
-  const snapApi = (Sandbox as unknown as {
-    listSnapshots?: (opts: Record<string, unknown>) => Promise<{ snapshots?: Array<{ id?: string; createdAt?: string; status?: string }> }>;
-  }).listSnapshots;
-  if (typeof snapApi !== 'function') return [];
-  try {
-    const res = await snapApi({ ...credentials });
-    return (res.snapshots || []).filter((s): s is { id: string; createdAt?: string; status?: string } => !!s.id);
-  } catch {
-    return [];
-  }
-}

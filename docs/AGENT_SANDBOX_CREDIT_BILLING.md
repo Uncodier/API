@@ -144,7 +144,7 @@ bucket/actual-cost evidence was not recorded. Audit them separately; do not infe
 refundable money from an estimate or reset balances.
 
 The existing `/api/cron/maintenance/sandbox-housekeeping` job reconciles tracked
-VMs as well as cleaning orphaned resources. Keep its cron authentication and SDK
+VMs and [reports unfenced candidates without reclaiming them](SANDBOX_HOUSEKEEPING_RECOVERY.md#why-an-apparently-ownerless-vm-is-retained). Keep its cron authentication and SDK
 project/team credentials configured server-side. No new scheduled agent task or
 paid provider smoke test is needed for offline verification.
 

@@ -1,5 +1,6 @@
 import { CronExpressionParser } from 'cron-parser';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import type { ClaimFailure } from '@/lib/status/requirement-scheduler-observation';
 import type { RequirementClaim, RequirementRun } from './requirement-types';
 
 export async function dueScheduledRequirements(now = new Date()): Promise<string[]> {
@@ -17,19 +18,29 @@ export async function dueScheduledRequirements(now = new Date()): Promise<string
   }).map(row => row.id);
 }
 
-export async function claimRequirementRun(excluded: string[], maxConcurrent: number, scheduledIds: string[]): Promise<RequirementClaim | { state: 'capacity_full' } | null> {
-  const { data, error } = await supabaseAdmin.rpc('claim_agent_requirement_run', {
+export async function claimRequirementRun(excluded: string[], maxConcurrent: number, scheduledIds: string[],
+  observation?: { claimStages(raw: unknown): void; claimFailure(category: ClaimFailure): void },
+): Promise<RequirementClaim | { state: 'capacity_full' } | null> {
+  const query = supabaseAdmin.rpc('claim_agent_requirement_run', {
     p_excluded_ids: excluded, p_max_concurrent: maxConcurrent, p_ttl_seconds: 300, p_scheduled_ids: scheduledIds,
   });
+  const { data, error } = await (observation ? query.setHeader('x-claim-timings', '1') : query);
   if (error) {
     // RPC installation is not inferred from unrelated database/transport failures.
     // Never include database error bodies: they can contain tenant data or SQL.
     if (error.code === 'PGRST202' || error.code === '42883') {
+      observation?.claimFailure('rpc_unavailable');
       throw new Error('Agent cron admission RPC unavailable; verify installed functions and schema cache');
     }
-    const category = error.code === '57014' ? 'database timeout'
-      : ['55P03', '40P01'].includes(error.code) ? 'database contention' : 'database request failed';
-    throw new Error(`Agent cron admission unavailable (${category})`);
+    const category: ClaimFailure = error.code === '57014' ? 'timeout'
+      : ['55P03', '40P01'].includes(error.code) ? 'contention' : 'request_failed';
+    observation?.claimFailure(category);
+    throw new Error(`Agent cron admission unavailable (database ${category === 'request_failed' ? 'request failed' : category})`);
+  }
+  // An older database ignores the opt-in header. Never retry a mutating RPC.
+  if (observation && data && Object.prototype.hasOwnProperty.call(data, 'claim')) {
+    observation.claimStages(data.stage_ms);
+    return data.claim;
   }
   return data;
 }

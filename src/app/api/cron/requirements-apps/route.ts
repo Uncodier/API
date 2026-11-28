@@ -4,6 +4,7 @@ import { runCronAppsWorkflow } from './workflow';
 import { getMaxConcurrentRequirementRuns, getRequirementEvaluationLimit } from './scheduler-config';
 import { claimRequirementRun, dueScheduledRequirements, finishRequirementCycle } from '@/lib/harness/requirement-scheduler';
 import { withCronObservation } from '@/lib/status/cron-observation';
+import { schedulerObservation } from '@/lib/status/requirement-scheduler-observation';
 import { retryPendingCloudGit } from '@/lib/cloud-files/retry';
 
 export const maxDuration = 60;
@@ -15,15 +16,8 @@ async function runCron(request: Request) {
   if (!secret || request.headers.get('authorization') !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  type Stage = 'scheduled' | 'claim' | 'dispatch' | 'finish' | 'cloud_git';
-  const timings = new Map<Stage, number>();
-  async function measure<T>(stage: Stage, work: () => Promise<T>) {
-    const started = performance.now();
-    try { return await work(); }
-    finally { timings.set(stage, (timings.get(stage) ?? 0) + (performance.now() - started)); }
-  }
-  // Aggregate repeated stages. Cloud Git runs concurrently, so durations are not additive.
-  const headers = () => ({ 'Server-Timing': Array.from(timings, ([stage, ms]) => `${stage};dur=${ms.toFixed(1)}`).join(', ') });
+  const observation = schedulerObservation();
+  const { measure, headers, complete } = observation;
   try {
     // Runs independently of model admission; a completed document can still have
     // pending Git evidence. Keep the existing cron and bound the retry workload.
@@ -33,12 +27,13 @@ async function runCron(request: Request) {
     const results: Array<Record<string, unknown>> = [];
     const maximum = getMaxConcurrentRequirementRuns();
     const limit = Math.min(getRequirementEvaluationLimit(), 100);
-    let capacityReached = false;
+    let stop: 'empty' | 'capacity_full' | 'limit' | 'deadline' = 'deadline';
     const deadline = Date.now() + 45000;
     while (excluded.length < limit && Date.now() < deadline) {
-      const claim = await measure('claim', () => claimRequirementRun(excluded, maximum, scheduledIds));
-      if (!claim) break;
-      if (claim.state === 'capacity_full') { capacityReached = true; break; }
+      const claim = await measure('claim', () => claimRequirementRun(excluded, maximum, scheduledIds, observation));
+      if (!claim) { stop = 'empty'; break; }
+      if (claim.state === 'capacity_full') { stop = 'capacity_full'; break; }
+      observation.claimed();
       excluded.push(claim.run.requirementId);
       try {
         const workflow = await measure('dispatch', () => start(runCronAppsWorkflow, [claim.run]));
@@ -49,9 +44,10 @@ async function runCron(request: Request) {
       }
     }
     const cloudGit = await evidence;
-    return NextResponse.json({ results, capacityReached, evaluatedRequirements: excluded.length, cloudGit }, { headers: headers() });
+    if (excluded.length >= limit) stop = 'limit';
+    return complete(NextResponse.json({ results, capacityReached: stop === 'capacity_full', evaluatedRequirements: excluded.length, cloudGit }, { headers: headers() }), stop);
   } catch {
-    return NextResponse.json({ error: 'Requirement scheduler unavailable; no legacy executor fallback was started' }, { status: 503, headers: headers() });
+    return complete(NextResponse.json({ error: 'Requirement scheduler unavailable; no legacy executor fallback was started' }, { status: 503, headers: headers() }), 'error');
   }
 }
 

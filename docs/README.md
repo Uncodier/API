@@ -16,6 +16,8 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 ## Current architecture
 
+- [Requirement scheduler admission and stage history](REQUIREMENT_ADMISSION_AND_WORKSPACE_RECOVERY.md#diagnosing-a-slow-scheduler-tick) — bounded cron receipts, atomic claim timings, and failure interpretation.
+
 - [Provider-direct Robots execution](CONNECTOR_PROVIDER_DIRECT.md) — shared discovery/dispatch, per-account policy, private delivery and rollout gates.
 - [Private connector analytics datasets](CONNECTOR_ANALYTICS_DATASETS.md) — legacy scoped analytics and saved-result revocation, not the direct connector execution contract.
 - [Connectors runtime and API](CONNECTORS.md) — per-account grants, category/skill discovery, pinned REST execution, local migrations and explicit live/deployment gates.
@@ -64,6 +66,8 @@ Read these first when changing the code-agent harness:
 - [Secret scanning and synthetic test credentials](./SECRET_SCANNING.md) — safe fixtures, preserved redaction coverage, and GitGuardian incident handling without disabling detectors.
 
 ## Availability audits
+
+- [Sandbox housekeeping](SANDBOX_HOUSEKEEPING_RECOVERY.md) — cleanup claims, retained ownerless candidates, capacity monitoring and unresolved billing.
 
 - [Redis/Upstash availability and consistency audit — 2026-09-20](./REDIS_UPSTASH_AVAILABILITY_AUDIT_2026-09-20.md)
 - [CORS preflight admission](./CORS_PREFLIGHT_RATE_LIMITS.md) — independent preflight budgets and Finder `429` diagnosis.

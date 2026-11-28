@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { recordTelemetry } from '@/lib/status/telemetry';
 import type { SystemHealthStatus } from '@/lib/status/types';
+import { schedulerReceipt } from './requirement-scheduler-observation';
 
 const MINUTE = 60_000;
 
@@ -142,6 +143,11 @@ export function withCronObservation<RequestType extends Request, Context extends
     }
     // A handler-level authorization rejection is not execution evidence either.
     if (response.status === 401 || response.status === 403) return response;
+    const scheduler = jobKey === 'requirements-apps' && schedulerReceipt(response);
+    if (scheduler) {
+      await emit(scheduler.status, scheduler.message);
+      return response;
+    }
     let status: SystemHealthStatus = 'skipped';
     try { status = await receiptStatus(jobKey, response); } catch { /* Uninspectable is unverified. */ }
     if (status !== 'skipped') {

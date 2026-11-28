@@ -39,14 +39,22 @@ Future automatic recovery must recheck settlement and all user/ownership guards;
 ## Housekeeping
 
 The existing 15-minute job continues reconciling all non-retired meters. The
-response and v3 completion log now include bounded aggregate counts:
+response and completion log include bounded aggregate counts:
 
 - `fundingPending`: confirmed funding rejection;
 - `missingResources`: tracked lookup returned a confirmed missing resource;
 - `reconciliationPending`: remaining errors in tracked processing, including
   technical/cleanup failures not proven to be funding or resource absence;
-- `sandboxesAlreadyStopped`: idle orphan handles already terminal, distinct from
-  newly stopped handles.
+- `unfencedSandboxCandidates`: listed names absent from the reference scan, at
+  least approximately 30 minutes old (or without a usable creation time), not
+  deleted under a terminal claim. This counts observations, not distinct owners,
+  running VMs, or capacity reclaimed. The same VM can appear on every sweep;
+- `deferredDeletionIntents`: successfully reconciled, still-present metered VMs
+  with a billing deletion intent or assistant deletion queue entry but no
+  completed fenced cleanup. This can overlap the candidate count;
+- `sandboxesAlreadyStopped`, `sandboxesStopped` and `snapshotsDeleted` remain
+  zero for the disabled generic sweeps. `terminalSandboxesDeleted` separately
+  counts completed fenced terminal deletions.
 
 `billingErrors` is preserved. Funding and historical disappearance still cause a
 degraded receipt; this change does not manufacture a healthy monitor. Missing
@@ -57,6 +65,40 @@ The cron can still emit a settlement error once per cadence for unpaid usage.
 This patch stops requirement execution retry loops, not historical reconciliation
 polling. Durable per-resource backoff/audit queues and separation of observed
 consumption from collection are follow-up migrations, not part of this repair.
+
+### Why an apparently ownerless VM is retained
+
+A requirement worker can open a workspace **before** inserting `active_sandbox_id`
+(`robots/instance/assistant/requirement-runtime.ts`). A workflow can register and
+resume a stored name or create its canonical VM before persisting plan metadata
+(`services/workflow-robot/sandbox-workspace.ts`). Assistant operations claim and
+renew a separate per-instance lease (`claim_assistant_workspace`) and can resume
+via `workspace-provider.ts`. Snapshot restore also reads saved IDs independently
+(`services/sandbox-persisted-snapshot.ts`). None of these protocols grants the
+inventory reader an exclusive claim across all writers. A second read just
+moves the race to the interval between that read and the provider operation.
+
+Housekeeping therefore does not stop an unreferenced VM or delete an apparently
+unused snapshot on **any** SDK version. Neither a queue entry, a previously
+settled deletion intent nor a billing error authorizes a stop/delete by name.
+The existing canonical terminal harness path still requires its DB cleanup
+claim, a confirmed stop and final settlement before provider deletion. A claim
+failure does not fall through to another stop. The existing billing RPC can
+still finish a proven retirement after a provider 404; this issues no delete.
+
+**Capacity tradeoff:** a genuinely abandoned running VM can occupy a provider
+slot and incur usage until provider timeout or authorized cleanup. Persistent
+VMs and snapshots may continue consuming storage/quota after compute stops.
+New work can be delayed or refused at quota. Registered usage is still metered;
+no tenant is inferred or charged from an ownerless inventory entry. Funding
+failures remain pending and a running interval can grow while unpaid. Monitor
+provider concurrent usage, quota, storage and the counts above across sweeps.
+If headroom is low, reduce new admissions or arrange capacity; do not bulk-stop
+aged names. For manual reclamation, quiesce reuse writers, verify ownership,
+restore dependencies and final billing, and keep reuse excluded through the
+provider outcome. Otherwise leave the resource pending. Automatic generic
+reclamation needs a claim honored by every attach/resume/restore writer, not a
+longer grace period. This policy change needs no new migration or schedule.
 
 ## Validation after deployment
 

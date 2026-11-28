@@ -6,8 +6,10 @@ jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn() }));
 jest.mock('workflow/api', () => ({ start }));
 jest.mock('../workflow', () => ({ runCronAppsWorkflow: jest.fn() }));
 jest.mock('@/lib/harness/requirement-scheduler', () => ({ claimRequirementRun, dueScheduledRequirements, finishRequirementCycle }));
+import { recordTelemetry } from '@/lib/status/telemetry';
 import { GET } from '../route';
 
+const receipt = () => JSON.parse(jest.mocked(recordTelemetry).mock.calls.at(-1)![2]!);
 const run = () => ({ requirementId: randomUUID(), siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(), sessionId: randomUUID(), runId: randomUUID(), executionGeneration: 0 });
 let secret: string;
 beforeEach(() => {
@@ -22,6 +24,7 @@ it('keeps existing cron authentication and performs no work without it', async (
   expect(response.headers.has('server-timing')).toBe(false);
   expect(dueScheduledRequirements).not.toHaveBeenCalled();
   expect(claimRequirementRun).not.toHaveBeenCalled();
+  expect(recordTelemetry).not.toHaveBeenCalled();
 });
 it('dispatches the same familiar cron directly to the agent with host identity, not gates or plans', async () => {
   const identity = run(); claimRequirementRun.mockResolvedValueOnce({ state: 'claimed', run: identity, requirement: { backlog: { items: [] } } }).mockResolvedValue(null);
@@ -29,7 +32,10 @@ it('dispatches the same familiar cron directly to the agent with host identity, 
   expect(response.headers.get('server-timing')!.split(', ').sort()).toEqual(
     ['claim', 'cloud_git', 'dispatch', 'scheduled'].map(stage => expect.stringMatching(new RegExp(`^${stage};dur=\\d+\\.\\d$`))));
   expect(start).toHaveBeenCalledWith(expect.anything(), [identity]);
-  expect(claimRequirementRun).toHaveBeenLastCalledWith([identity.requirementId], expect.any(Number), []);
+  expect(claimRequirementRun).toHaveBeenLastCalledWith([identity.requirementId], expect.any(Number), [], expect.anything());
+  expect(receipt()).toMatchObject({ stop: 'empty', claimed: 1, dispatch_failed: 0 });
+  const history = JSON.stringify(jest.mocked(recordTelemetry).mock.calls);
+  for (const value of [...Object.values(identity).filter(v => typeof v === 'string'), secret, 'workflow-run']) expect(history).not.toContain(String(value));
 });
 it('failed dispatch records a retry of the same session and never starts a fallback engine', async () => {
   const identity = run(); claimRequirementRun.mockResolvedValueOnce({ state: 'claimed', run: identity }).mockResolvedValue(null);
@@ -38,13 +44,87 @@ it('failed dispatch records a retry of the same session and never starts a fallb
   expect(result.results[0]).toMatchObject({ sessionId: identity.sessionId, started: false });
   expect(finishRequirementCycle).toHaveBeenCalledWith(identity, 'waiting', 'dispatch_unavailable', expect.any(String));
   expect(start).toHaveBeenCalledTimes(1);
+  expect(jest.mocked(recordTelemetry).mock.calls.at(-1)![1]).toBe('degraded');
+  expect(receipt()).toMatchObject({ stop: 'empty', claimed: 1, dispatch_failed: 1 });
 });
 it('does not overlap existing capacity or revive another executor on migration failure', async () => {
   claimRequirementRun.mockResolvedValue({ state: 'capacity_full' });
   expect((await (await GET(request())).json()).capacityReached).toBe(true); expect(start).not.toHaveBeenCalled();
+  expect(receipt()).toMatchObject({ stop: 'capacity_full', claimed: 0 });
   claimRequirementRun.mockRejectedValue(new Error('missing migration'));
   const failed = await GET(request());
+  expect(receipt()).toMatchObject({ stop: 'error', failed_stage: 'claim', measured_claims: 0 });
+  expect(receipt().ms).not.toHaveProperty('reservation');
+  expect(jest.mocked(recordTelemetry).mock.calls.at(-1)![1]).toBe('down');
   expect(failed.status).toBe(503); expect(start).not.toHaveBeenCalled();
   expect(failed.headers.get('server-timing')!.split(', ').sort()).toEqual(
     ['claim', 'cloud_git', 'scheduled'].map(stage => expect.stringMatching(new RegExp(`^${stage};dur=\\d+\\.\\d$`))));
+});
+
+it('aggregates only bounded, allowlisted observations once per tick even if persistence fails', async () => {
+  const identity = run();
+  const privateData = randomUUID();
+  const stages = { economic_pause: 23, pending_commands: 2, reservation: 49999, extra: privateData };
+  claimRequirementRun.mockImplementationOnce(async (_a, _b, _c, observer) => {
+    observer.claimStages(stages);
+    return { state: 'claimed', run: identity };
+  }).mockImplementationOnce(async (_a, _b, _c, observer) => {
+    observer.claimStages(stages);
+    return null;
+  });
+  jest.mocked(recordTelemetry).mockRejectedValue(new Error(privateData));
+  const req = request(); req.headers.set('Server-Timing', privateData);
+  expect((await GET(req)).status).toBe(200);
+  expect(recordTelemetry).toHaveBeenCalledTimes(1);
+  expect(recordTelemetry).toHaveBeenCalledWith('cron_requirements-apps', 'up', expect.any(String), expect.any(Number));
+  expect(receipt()).toMatchObject({ stop: 'empty', claimed: 1, measured_claims: 2,
+    ms: { economic_pause: 46, pending_commands: 4, reservation: 60000 } });
+  expect(JSON.stringify(receipt())).not.toContain(privateData);
+  expect(JSON.stringify(receipt()).length).toBeLessThan(512);
+});
+
+it('keeps successful samples on a later claim failure without assigning it a SQL stage', async () => {
+  const privateData = randomUUID();
+  claimRequirementRun.mockImplementationOnce(async (_a, _b, _c, observer) => {
+    observer.claimStages({ economic_pause: 3, pending_commands: 4, reservation: 5 });
+    return { state: 'claimed', run: run() };
+  }).mockImplementationOnce(async (_a, _b, _c, observer) => {
+    observer.claimFailure('timeout');
+    throw new Error(privateData);
+  });
+  expect((await GET(request())).status).toBe(503);
+  expect(receipt()).toMatchObject({ stop: 'error', claimed: 1, measured_claims: 1,
+    failed_stage: 'claim', claim_failure: 'timeout', ms: { economic_pause: 3, pending_commands: 4, reservation: 5 } });
+  expect(JSON.stringify(receipt())).not.toContain(privateData);
+  expect(claimRequirementRun).toHaveBeenCalledTimes(2);
+});
+
+it('classifies a bounded scan separately from an empty queue', async () => {
+  const previous = process.env.CRON_REQUIREMENT_EVALUATION_LIMIT;
+  try {
+    process.env.CRON_REQUIREMENT_EVALUATION_LIMIT = '1';
+    claimRequirementRun.mockResolvedValue({ state: 'claimed', run: run() });
+    expect((await GET(request())).status).toBe(200);
+    expect(receipt()).toMatchObject({ stop: 'limit', claimed: 1 });
+    expect(claimRequirementRun).toHaveBeenCalledTimes(1);
+  } finally {
+    if (previous === undefined) delete process.env.CRON_REQUIREMENT_EVALUATION_LIMIT;
+    else process.env.CRON_REQUIREMENT_EVALUATION_LIMIT = previous;
+  }
+});
+
+it('omits an invalid SQL sample and classifies expiry without another claim', async () => {
+  const now = Date.now();
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
+  try {
+    claimRequirementRun.mockImplementationOnce(async (_a, _b, _c, observer) => {
+      observer.claimStages({ economic_pause: 1, pending_commands: NaN, reservation: -1 });
+      clock.mockReturnValue(now + 46_000);
+      return { state: 'claimed', run: run() };
+    });
+    expect((await GET(request())).status).toBe(200);
+    expect(receipt()).toMatchObject({ stop: 'deadline', claimed: 1, measured_claims: 0 });
+    expect(Object.keys(receipt().ms).sort()).toEqual(['claim', 'cloud_git', 'dispatch', 'scheduled']);
+    expect(claimRequirementRun).toHaveBeenCalledTimes(1);
+  } finally { clock.mockRestore(); }
 });

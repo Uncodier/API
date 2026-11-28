@@ -47,3 +47,51 @@ not. No successful preview, build or deployment is implied by recovery.
 This change does not resume sessions paused for
 `assistant_execution_requires_reconciliation`, clear uncertain operations, alter
 the assistant execution boundary, or deploy application code to Vercel.
+
+## Diagnosing a slow scheduler tick
+
+The authenticated `/api/cron/requirements-apps` handler enriches its existing
+`cron_requirements-apps` receipt in `system_telemetry`. No per-claim log rows,
+new table, cleanup job or client reporting endpoint are needed. For operators
+with existing telemetry access:
+
+```sql
+SELECT created_at, status, latency_ms, message
+FROM public.system_telemetry
+WHERE system_key = 'cron_requirements-apps'
+  AND created_at >= now() - interval '24 hours'
+ORDER BY created_at DESC LIMIT 100;
+```
+
+New messages are version-1 JSON; older receipts are plain text. `ms` contains
+per-tick **sums**, not per-claim percentiles. `claim` includes the database
+round trip. Its `economic_pause` (economic-pause recheck), `pending_commands`
+(command drain), and `reservation` (capacity, candidate selection and lease)
+measure elapsed time inside the same transaction. They are not additional time
+on top of `claim`. `scheduled`, `dispatch`, `finish` and `cloud_git` measure the
+route stages; Cloud Git overlaps admission. Omitted durations were not observed,
+whereas zero is a measured duration rounded to milliseconds.
+
+`stop` distinguishes `empty` (no further candidate), `capacity_full`, `limit`,
+`deadline` and `error`. `claimed` counts reservations, `dispatch_failed` counts
+rejected dispatch attempts, and `measured_claims` counts complete sets of SQL
+timings (including empty and full results). An empty/full tick is `up`, a
+handled dispatch rejection is `degraded`, and a scheduler 503 is `down`.
+These are invocation results, not proof of downstream workflow or Git success.
+
+One receipt per completed authorized invocation; at most 100 claims attempted,
+eight allowlisted timing keys, and each stage total saturates at 60,000 ms.
+No IDs, credentials, query text, error bodies, workflow inputs or request
+headers enter the receipt. Its existing best-effort write has a three-second
+timeout and runs outside admission. Missing receipts are not successful ticks.
+
+The forward migration `20261128040000_requirement_claim_stage_timings.sql`
+adds a service-caller opt-in to the existing RPC; its arguments, grants, locks
+and validation are unchanged. Old callers still get the original result. A new
+API with an older database still claims once and reports only route timings.
+A failed/cancelled RPC cannot return its internal measurements. Earlier successful
+calls in the tick still count; `failed_stage: "claim"` refers to the **whole**
+RPC, not a guessed SQL stage. When available, `claim_failure` is `timeout`,
+`contention`, `rpc_unavailable` or `request_failed`. A transport failure does not
+prove rollback; the API does not retry a claim to obtain telemetry. A hard process
+timeout can prevent even the outer receipt. No historical backfill is performed.
